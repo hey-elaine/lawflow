@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>律析 LawFlow｜法律材料工作台</title>
+  <link rel="stylesheet" href="/styles.css?v=20260908-0915" />
+</head>
+<body>
+  <header class="nav shell">
+    <a class="brand" href="#top" aria-label="律析 LawFlow 首页"><span class="brand-mark">律</span><span>律析 <strong>LawFlow</strong></span></a>
+    <nav><a href="#workspace">工作台</a><a href="#workflow">处理流程</a><a href="#trust">可信原则</a><a href="#skill">Skill</a></nav>
+    <button class="button button-quiet" id="open-settings">✨ 模型设置</button>
+  </header>
+
+  <main id="top">
+    <section class="hero shell">
+      <div class="hero-copy">
+        <p class="eyebrow">面向执业律师与法务团队</p>
+        <h1>将长篇法律材料，<br/><em>提炼为可复核的专业底稿。</em></h1>
+        <p class="hero-description">通过长文结构解析与大模型受控编排，将案卷、法规与调研报告拆解为带精确出处的工作备忘录与待核验清单。</p>
+        <div class="hero-actions"><a href="#workspace" class="button button-primary">开始处理材料</a><a href="#workflow" class="button button-outline">了解工作流</a></div>
+        <div class="hero-facts"><span>✨ 长文结构解析</span><span>✨ 限定域事实提炼</span><span>✨ 原文一键溯源</span><span>本地数据隔离</span></div>
+      </div>
+      <div class="hero-visual" aria-label="律析工作成果示意">
+        <div class="visual-layout">
+          <div class="visual-card visual-source"><span class="mini-label">材料输入</span><b>法规、合同、尽调与项目文件</b><small>DOCX · PDF · TXT · Markdown</small></div>
+          <svg class="workflow-arrows" viewBox="0 0 72 312" aria-hidden="true" preserveAspectRatio="none">
+            <defs>
+              <marker id="workflow-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#5d8d7c"></path>
+              </marker>
+            </defs>
+            <circle cx="1" cy="156" r="3.5" fill="#5d8d7c"></circle>
+            <path d="M 1 156 C 25 156, 40 78, 71 78" marker-end="url(#workflow-arrow)"></path>
+            <path d="M 1 156 C 25 156, 40 234, 71 234" marker-end="url(#workflow-arrow)"></path>
+          </svg>
+          <div class="visual-card visual-output"><span class="flow-step">✨ 受控生成</span><span class="mini-label">审阅成果</span><b>备忘录、简报与培训稿</b><p>材料摘录 · 引用定位<br/>版本与审核记录</p><span class="verified">● 可回看原文</span></div>
+          <div class="visual-card visual-task"><span class="flow-step">✨ 义务挖掘</span><span class="mini-label">待核验事项</span><b>事实确认与责任分配</b><small>风险分级 · 负责人 · 截止时间</small></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="workflow" class="section shell">
+      <div class="section-heading"><p class="eyebrow">处理流程</p><h2>先锁定材料范围，<br/>再进行受控推理。</h2></div>
+      <div class="workflow-grid">
+        <article><span>01</span><h3>长篇材料结构化解析</h3><p>高保真识别法规与卷宗的目录层级、条文编号与段落拓扑，建立稳定材料索引。</p></article>
+        <article><span>02</span><h3>大模型分篇编排</h3><p>根据材料篇幅自动聚类核心议题，由律师确认拆解范围与风格，避免粗暴截断。</p></article>
+        <article><span>03</span><h3>限定域事实与要点提炼</h3><p>严格限定在输入材料边界内归纳，不做无依据引申，正文逐句内嵌证据引用标号。</p></article>
+        <article><span>04</span><h3>合规义务与事项流转</h3><p>自动识别材料中的审批、限制、禁止等义务性要求，生成可分配、可跟踪的任务表。</p></article>
+      </div>
+    </section>
+
+    <section id="trust" class="trust-section"><div class="shell trust-grid"><div><p class="eyebrow light">可信原则</p><h2>结论不凭空引申，<br/>论述皆有出处可查。</h2></div><div class="trust-points"><div><b>限定材料边界，拒绝虚构</b><p>提炼与归纳严格受限于案卷与法规原文，不引入未经验证的材料外主张。</p></div><div><b>原文一键溯源</b><p>正文关键表述均附带段落索引标号，审阅时支持一键定位并查看材料原文上下文。</p></div><div><b>区分既有事实与待核验判断</b><p>材料不足以支撑的个案判断自动分流至待办任务，承办律师把握最终法律定性。</p></div></div></div></section>
+
+    <section id="skill" class="skill-home shell">
+      <div class="section-heading"><div><p class="eyebrow">Agent Skill</p><h2>在 AI Agent 中直接调用<br/>LawFlow 工作流。</h2></div><span class="tag" id="home-skill-status">检测本地服务中</span></div>
+      <div class="skill-home-grid">
+        <article><span class="skill-index">A</span><h3>复用 App 模型配置</h3><p>Skill 调用 LawFlow 本地服务，复用 DeepSeek、OpenAI 或企业网关配置，完成大纲、长文和 DOCX 导出。</p><small>适合团队统一模型与数据外发策略。</small></article>
+        <article><span class="skill-index">B</span><h3>复用 Codex/CatPaw 模型</h3><p>无需额外 API Key。Skill 读取受控材料块，由当前宿主模型生成内容后回写 App，继续审阅和导出。</p><small>适合在 Agent 对话中直接处理本地项目。</small></article>
+        <article class="skill-invoke"><p class="eyebrow">调用方式</p><code>$lawflow</code><p>在新会话中直接描述要处理的法律材料、写作画像和交付形式即可。</p><button class="button button-outline button-small" id="copy-skill-invoke">复制 <code>$lawflow</code></button></article>
+      </div>
+    </section>
+
+    <section id="workspace" class="workspace shell">
+      <div class="workspace-top"><div><p class="eyebrow">本地工作台</p><h2>新建一个法律工作项目</h2><p>先创建项目，再上传材料。首版支持 DOCX、TXT 和 Markdown。</p></div><button class="button button-primary" id="new-project">新建项目</button></div>
+      <div id="workspace-message" class="message hidden"></div>
+      <div id="project-list" class="project-grid"><div class="empty-state"><b>还没有项目</b><p>创建一个项目，开始处理法律材料。</p></div></div>
+      <div id="project-detail" class="project-detail hidden"></div>
+    </section>
+  </main>
+
+  <footer class="footer shell"><span>律析 LawFlow · 本地法律材料工作台</span><span>内部工作底稿 · 审阅后使用</span></footer>
+
+  <dialog id="project-dialog" class="dialog"><form id="project-form"><div class="dialog-header"><h2>新建项目</h2><button type="button" aria-label="关闭" class="icon-button" data-close-dialog="project-dialog">×</button></div><label>项目名称<input required name="name" maxlength="120" placeholder="例如：出海与 AI 合规专题" /></label><label>客户/专题（可选）<input name="client_name" maxlength="120" placeholder="例如：内部培训材料" /></label><label>项目说明（可选）<textarea name="description" maxlength="1000" placeholder="记录项目目标、交付对象或审核边界"></textarea></label><div class="dialog-actions"><button type="button" class="button button-outline" data-close-dialog="project-dialog">取消</button><button type="submit" class="button button-primary">创建项目</button></div></form></dialog>
+
+  <dialog id="settings-dialog" class="dialog"><form id="settings-form"><div class="dialog-header"><h2>本地设置</h2><button type="button" aria-label="关闭" class="icon-button" data-close-dialog="settings-dialog">×</button></div><p class="form-note">模型密钥和导出路径均只保存在本机。导出完成后，成果包会直接写入所设目录，无需再下载。</p><fieldset><legend>模型服务</legend><label>服务商名称<input name="provider_name" placeholder="例如：DeepSeek / OpenAI / 企业网关" /></label><label>Base URL<input name="base_url" placeholder="https://api.example.com/v1" /></label><label>模型名称<input name="model_name" placeholder="例如：deepseek-chat" /></label><label>API Key<input type="password" name="api_key" placeholder="仅保存在本机，不会回显" /></label><label class="check-label"><input type="checkbox" name="allow_source_upload" /> 允许将原始材料发送至外部模型服务</label></fieldset><fieldset><legend>成果导出</legend><label>导出目录<input name="output_directory" placeholder="~/Desktop/ai_law" /></label><p class="field-hint">默认：<code>~/Desktop/ai_law</code>。首次导出时会自动创建该目录。</p></fieldset><div class="dialog-actions"><button type="button" class="button button-outline" data-close-dialog="settings-dialog">取消</button><button type="submit" class="button button-primary">保存设置</button></div></form></dialog>
+
+  <script src="/app.js?v=20260908-0915"></script>
+</body>
+</html>
