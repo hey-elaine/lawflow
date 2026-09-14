@@ -52,7 +52,7 @@ class LawFlowApiTest(unittest.TestCase):
         return output.getvalue()
 
     def test_end_to_end_project_workflow(self):
-        project = self.client.post("/api/projects", json={"name": "测试项目", "client_name": "测试客户"})
+        project = self.client.post("/api/projects", json={"name": "测试项目", "client_name": "测试客户", "scenario": "speaking_note", "transform_mode": "enrich", "verification_mode": "external_verify", "target_duration": 20, "audio_enabled": False})
         self.assertEqual(project.status_code, 201)
         project_id = project.json()["id"]
 
@@ -68,6 +68,8 @@ class LawFlowApiTest(unittest.TestCase):
 
         confirmed = self.client.put(f"/api/plans/{plan_data['id']}/confirm", json={"chapters": plan_data["chapters"]})
         self.assertEqual(confirmed.status_code, 200)
+        self.assertTrue(confirmed.json()["tasks_generated"])
+        self.assertGreater(len(self.client.get(f"/api/projects/{project_id}").json()["tasks"]), 0)
         chapter = plan_data["chapters"][0]
 
         content = self.client.post(f"/api/plans/{plan_data['id']}/contents", json={"chapter_id": chapter["id"], "title": chapter["title"], "source_block_ids": chapter["source_block_ids"], "audience": "企业法务", "output_type": "client_brief", "style_name": "专业、克制"})
@@ -96,7 +98,7 @@ class LawFlowApiTest(unittest.TestCase):
         self.assertTrue(Path(export_data["output_dir"]).is_dir())
 
     def test_narrative_requires_configured_model_before_outline(self):
-        project = self.client.post("/api/projects", json={"name": "长文生成测试"}).json()
+        project = self.client.post("/api/projects", json={"name": "长文生成测试", "scenario": "legal_podcast", "transform_mode": "enrich", "verification_mode": "external_verify", "target_duration": 20, "audio_enabled": True}).json()
         project_id = project["id"]
         upload = self.client.post(f"/api/projects/{project_id}/documents", files={"file": ("测试材料.docx", self.make_docx(), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")})
         document_id = upload.json()["id"]
@@ -112,6 +114,23 @@ class LawFlowApiTest(unittest.TestCase):
         })
         self.assertEqual(response.status_code, 400)
         self.assertIn("模型服务", response.json()["detail"])
+
+    def test_daily_brief_skips_tasks_and_creates_audio_script(self):
+        project = self.client.post("/api/projects", json={"name": "晨间速听", "scenario": "daily_brief", "transform_mode": "condense", "verification_mode": "source_only", "target_duration": 5, "audio_enabled": True}).json()
+        project_id = project["id"]
+        upload = self.client.post(f"/api/projects/{project_id}/documents", files={"file": ("news.txt", b"# Legal update\nThe regulator published a new rule. Businesses should review the effective date and implementation timeline.", "text/plain")})
+        document_id = upload.json()["id"]
+        document = self.client.get(f"/api/documents/{document_id}").json()
+        source_ids = [block["id"] for block in document["blocks"] if block["kind"] == "paragraph"]
+        plan = self.client.post(f"/api/projects/{project_id}/plans", json={"source_document_id": document_id, "audience": "个人学习", "output_type": "lexcast", "style_name": "简洁"}).json()
+        confirmed = self.client.put(f"/api/plans/{plan['id']}/confirm", json={"chapters": plan["chapters"]})
+        self.assertFalse(confirmed.json()["tasks_generated"])
+        self.assertEqual(self.client.get(f"/api/projects/{project_id}").json()["tasks"], [])
+        saved = self.client.post(f"/api/projects/{project_id}/skill-host-contents", json={"document_id": document_id, "title": "Morning legal brief", "markdown": "# Morning legal brief\n\nThe regulator published a new rule. Businesses should review the implementation timeline.", "source_block_ids": source_ids, "style_profile": "law_podcast_v4"})
+        self.assertEqual(saved.status_code, 201)
+        audio = self.client.post(f"/api/projects/{project_id}/audio-scripts", json={"narrative_content_id": saved.json()["id"]})
+        self.assertEqual(audio.status_code, 201)
+        self.assertIn("法律速听", audio.json()["script"])
 
     def test_narrative_outline_content_and_docx_export_with_mocked_model(self):
         project = self.client.post("/api/projects", json={"name": "知识转译测试"}).json()

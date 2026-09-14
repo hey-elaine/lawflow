@@ -39,10 +39,77 @@ for directory in (DATA_DIR, PROJECTS_DIR, EXPORTS_DIR, DATA_DIR / "temp", DATA_D
 app = FastAPI(title="律析 LawFlow", version="0.1.0")
 
 
+CONTENT_SCENARIOS = {
+    "daily_brief": {
+        "name": "晨间 / 晚间法律速听",
+        "description": "将单篇资讯精炼为适合碎片化收听的短讲稿。",
+        "transform_mode": "condense",
+        "verification_mode": "source_only",
+        "target_duration": 5,
+        "audio_enabled": True,
+        "audience": "个人学习",
+        "output_type": "lexcast",
+    },
+    "topic_learning": {
+        "name": "多源主题学习",
+        "description": "整理同一话题的多份材料，形成分章节学习内容。",
+        "transform_mode": "adapt",
+        "verification_mode": "material_check",
+        "target_duration": 10,
+        "audio_enabled": True,
+        "audience": "法律从业者与企业法务",
+        "output_type": "lexcast",
+    },
+    "speaking_note": {
+        "name": "客户培训 / Speak Note",
+        "description": "将资料与实务积累整理为可讲、可修改的培训讲稿。",
+        "transform_mode": "enrich",
+        "verification_mode": "external_verify",
+        "target_duration": 20,
+        "audio_enabled": False,
+        "audience": "客户法务与业务团队",
+        "output_type": "client_brief",
+    },
+    "legal_podcast": {
+        "name": "法律科普播客",
+        "description": "基于实务热点和经验积累，形成对外表达的播客讲稿。",
+        "transform_mode": "enrich",
+        "verification_mode": "external_verify",
+        "target_duration": 20,
+        "audio_enabled": True,
+        "audience": "行业听众与潜在客户",
+        "output_type": "lexcast",
+    },
+}
+
+TRANSFORM_MODES = {
+    "condense": {"name": "内容精炼", "description": "压缩原始材料，保留关键事实和信息层级，不补充外部信息。"},
+    "adapt": {"name": "正常转译", "description": "重组结构、解释术语、改善可听性，但不新增材料外事实。"},
+    "enrich": {"name": "内容丰富", "description": "在来源可追溯的前提下补充背景信息，适合培训、分享和公开表达。"},
+}
+
+VERIFICATION_MODES = {
+    "source_only": {"name": "资讯转译", "description": "仅按输入材料整理，标明来源和时间，不进行外部核验。"},
+    "material_check": {"name": "材料一致性检查", "description": "检查输入材料中的重复、冲突、日期差异和缺失事实。"},
+    "external_verify": {"name": "外部事实核验", "description": "为对外交流预留权威来源核验清单；需由律师确认后发布。"},
+}
+
+
 class ProjectCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     client_name: str = Field(default="", max_length=120)
     description: str = Field(default="", max_length=1000)
+    scenario: Literal["daily_brief", "topic_learning", "speaking_note", "legal_podcast"] = "topic_learning"
+    transform_mode: Literal["condense", "adapt", "enrich"] = "adapt"
+    verification_mode: Literal["source_only", "material_check", "external_verify"] = "material_check"
+    target_duration: Literal[3, 5, 10, 20, 30] = 10
+    audio_enabled: bool = True
+
+
+class TextSourceCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=240)
+    content: str = Field(min_length=20, max_length=500000)
+    source_url: str = Field(default="", max_length=2000)
 
 
 class PlanCreate(BaseModel):
@@ -63,6 +130,10 @@ class ProviderSettings(BaseModel):
     model_name: str = ""
     api_key: str = ""
     allow_source_upload: bool = False
+    tts_base_url: str = ""
+    tts_model: str = ""
+    tts_voice: str = ""
+    tts_api_key: str = ""
 
 
 class ExportSettings(BaseModel):
@@ -86,6 +157,15 @@ class TaskUpdate(BaseModel):
     due_date: str = ""
 
 
+class AudioScriptRequest(BaseModel):
+    narrative_content_id: str
+    title: str = ""
+
+
+class AudioSynthesisRequest(BaseModel):
+    voice: str = ""
+
+
 class ContentRequest(BaseModel):
     chapter_id: str
     title: str
@@ -103,6 +183,10 @@ class NarrativeOutlineRequest(BaseModel):
     audience: str = "企业法务与法律从业者"
     style_profile: str = "law_podcast_v4"
     target_length: Literal["short", "standard", "deep"] = "standard"
+    transform_mode: Literal["condense", "adapt", "enrich"] = "adapt"
+    verification_mode: Literal["source_only", "material_check", "external_verify"] = "material_check"
+    scenario: Literal["daily_brief", "topic_learning", "speaking_note", "legal_podcast"] = "topic_learning"
+    target_duration: Literal[3, 5, 10, 20, 30] = 10
 
 
 class NarrativeOutlineConfirm(BaseModel):
@@ -183,6 +267,11 @@ def init_db() -> None:
             name TEXT NOT NULL,
             client_name TEXT NOT NULL DEFAULT '',
             description TEXT NOT NULL DEFAULT '',
+            scenario TEXT NOT NULL DEFAULT 'topic_learning',
+            transform_mode TEXT NOT NULL DEFAULT 'adapt',
+            verification_mode TEXT NOT NULL DEFAULT 'material_check',
+            target_duration INTEGER NOT NULL DEFAULT 10,
+            audio_enabled INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
@@ -197,6 +286,7 @@ def init_db() -> None:
             paragraph_count INTEGER NOT NULL DEFAULT 0,
             block_count INTEGER NOT NULL DEFAULT 0,
             structure_json TEXT NOT NULL DEFAULT '{}',
+            source_url TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS source_blocks (
@@ -266,6 +356,20 @@ def init_db() -> None:
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS audio_outputs (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            narrative_content_id TEXT REFERENCES narrative_contents(id) ON DELETE SET NULL,
+            title TEXT NOT NULL,
+            script TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            voice TEXT NOT NULL DEFAULT '',
+            audio_path TEXT NOT NULL DEFAULT '',
+            duration_seconds INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
         CREATE INDEX IF NOT EXISTS idx_narrative_outlines_project ON narrative_outlines(project_id, updated_at);
         CREATE INDEX IF NOT EXISTS idx_narrative_contents_project ON narrative_contents(project_id, updated_at);
         CREATE TABLE IF NOT EXISTS tasks (
@@ -289,6 +393,20 @@ def init_db() -> None:
         );
         """
     )
+    existing_columns = {row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()}
+    migrations = {
+        "scenario": "TEXT NOT NULL DEFAULT 'topic_learning'",
+        "transform_mode": "TEXT NOT NULL DEFAULT 'adapt'",
+        "verification_mode": "TEXT NOT NULL DEFAULT 'material_check'",
+        "target_duration": "INTEGER NOT NULL DEFAULT 10",
+        "audio_enabled": "INTEGER NOT NULL DEFAULT 1",
+    }
+    for column, definition in migrations.items():
+        if column not in existing_columns:
+            conn.execute(f"ALTER TABLE projects ADD COLUMN {column} {definition}")
+    source_columns = {row[1] for row in conn.execute("PRAGMA table_info(source_documents)").fetchall()}
+    if "source_url" not in source_columns:
+        conn.execute("ALTER TABLE source_documents ADD COLUMN source_url TEXT NOT NULL DEFAULT ''")
     conn.commit()
     conn.close()
 
@@ -735,6 +853,26 @@ def get_internal_provider_settings() -> dict:
     return parse_json(row["setting_value"], {}) if row else {}
 
 
+def project_preferences(project: dict) -> dict:
+    return {
+        "scenario": project.get("scenario", "topic_learning"),
+        "transform_mode": project.get("transform_mode", "adapt"),
+        "verification_mode": project.get("verification_mode", "material_check"),
+        "target_duration": int(project.get("target_duration", 10)),
+        "audio_enabled": bool(project.get("audio_enabled", True)),
+    }
+
+
+def scenario_requires_tasks(project: dict) -> bool:
+    # “材料一致性检查”也应产生检查清单，只是不要求分配负责人或截止时间。
+    # 只有“资讯转译”保持完全轻量，不生成任何核验项。
+    return project.get("verification_mode") != "source_only"
+
+
+def verification_label(mode: str) -> str:
+    return VERIFICATION_MODES.get(mode, VERIFICATION_MODES["material_check"])["name"]
+
+
 def model_chat(messages: list[dict], temperature: float = 0.35, max_tokens: int = 4096) -> str:
     settings = get_internal_provider_settings()
     if not all(settings.get(key, "").strip() for key in ["base_url", "model_name", "api_key"]):
@@ -754,6 +892,36 @@ def model_chat(messages: list[dict], temperature: float = 0.35, max_tokens: int 
     if not isinstance(content, str) or not content.strip():
         raise HTTPException(status_code=502, detail="模型服务未返回可用文本。")
     return content.strip()
+
+
+def synthesize_audio(script: str, title: str, settings: dict) -> tuple[Path, str, int]:
+    """调用兼容 OpenAI 的 speech 接口，返回本地 MP3 路径、服务商与估计时长。"""
+    base_url = (settings.get("tts_base_url") or settings.get("base_url") or "").rstrip("/")
+    api_key = settings.get("tts_api_key") or settings.get("api_key") or ""
+    model = settings.get("tts_model") or "tts-1"
+    voice = settings.get("tts_voice") or "alloy"
+    if not base_url or not api_key:
+        raise HTTPException(status_code=400, detail="请先在“本地设置”中填写 TTS 服务地址和 API Key；也可以只生成音频脚本并使用浏览器试听。")
+    endpoint = base_url if base_url.endswith("/audio/speech") else base_url + "/audio/speech"
+    try:
+        response = httpx.post(
+            endpoint,
+            headers={"Authorization": "Bearer " + api_key, "Content-Type": "application/json"},
+            json={"model": model, "voice": voice, "input": script, "response_format": "mp3"},
+            timeout=240.0,
+        )
+        response.raise_for_status()
+    except httpx.HTTPError as error:
+        failed = getattr(error, "response", None)
+        detail = failed.text[:500] if failed is not None else str(error)
+        raise HTTPException(status_code=502, detail="TTS 服务调用失败：" + detail) from error
+    safe_title = re.sub(r"[\\/:*?\"<>|]", "_", title).strip() or "lawflow-audio"
+    audio_dir = DATA_DIR / "audio"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    output_path = audio_dir / f"{safe_title}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.mp3"
+    output_path.write_bytes(response.content)
+    duration_seconds = max(30, int(len(script) / 3.8))
+    return output_path, model, duration_seconds
 
 
 def source_dossier(blocks: list[dict], max_chars_per_block: int = 2600, max_total_chars: int = 28000) -> str:
@@ -825,28 +993,34 @@ def create_narrative_outline(request: NarrativeOutlineRequest, blocks: list[dict
         raise HTTPException(status_code=400, detail="未知的写作风格画像。")
     length = NARRATIVE_LENGTHS[request.target_length]
     dossier = source_dossier(blocks)
-    prompt = """你是资深中国律师事务所的知识内容主笔。请基于下列唯一材料为一篇中文深度法律解读规划写作大纲。
+    transform = TRANSFORM_MODES[request.transform_mode]
+    verification = VERIFICATION_MODES[request.verification_mode]
+    scenario = CONTENT_SCENARIOS[request.scenario]
+    prompt = """你是资深法律内容主笔。请基于下列唯一材料规划一篇适合听、讲或学习的中文专业内容大纲。
 
+应用场景：{scenario}
 写作对象：{audience}
 标题：{title}
-目标篇幅：约 {words} 字
+目标时长：约 {duration} 分钟；建议篇幅：约 {words} 字
+加工方式：{transform_name}。{transform_description}
+核验策略：{verification_name}。{verification_description}
 写作画像：{style}
 
 要求：
 1. 只使用材料中可支持的事实、观点、规则和案例；不要补充材料外法规、日期、数字、机构观点或个案结论。
-2. 大纲应有 3–6 个实质章节；不要出现“核心提示”“对企业的影响”“建议动作”等通用模板标题。
+2. 如果加工方式为内容精炼，输出 1–3 段紧凑结构；其他方式输出 3–6 个实质章节。不要出现“核心提示”“对企业的影响”“建议动作”等通用模板标题。
 3. 每节给出具体写作目的和 2–5 个关键点；每节必须列出将使用的材料块 ID。
-4. 章节之间有清晰递进：问题或背景、事实或规则展开、业务或实务含义、收束。
+4. 章节之间有清晰递进：问题或背景、事实或规则展开、业务或实务含义、收束；Speak Note 需包含开场、核心观点、过渡和收束。
 5. 只输出一个 JSON 对象，不要输出 Markdown、解释或代码围栏。JSON 格式：
 {{"title":"...","opening_angle":"...","closing_angle":"...","sections":[{{"heading":"...","purpose":"...","key_points":["..."],"source_block_ids":["b-00001"],"target_words":800}}]}}
 
 唯一材料：
-{dossier}""".format(audience=request.audience, title=request.title, words=length["total_words"], style=profile["instruction"], dossier=dossier)
+{dossier}""".format(scenario=scenario["name"], audience=request.audience, title=request.title, duration=request.target_duration, words=length["total_words"], transform_name=transform["name"], transform_description=transform["description"], verification_name=verification["name"], verification_description=verification["description"], style=profile["instruction"], dossier=dossier)
     raw = model_chat([{"role": "system", "content": "你严格遵守材料边界，并只返回可解析 JSON。"}, {"role": "user", "content": prompt}], temperature=0.25, max_tokens=3600)
     return normalize_narrative_outline(parse_model_json(raw), request, blocks)
 
 
-def generate_narrative_markdown(outline: dict, blocks: list[dict], audience: str, style_profile: str) -> tuple[str, list[dict], dict]:
+def generate_narrative_markdown(outline: dict, blocks: list[dict], audience: str, style_profile: str, transform_mode: str = "adapt", scenario: str = "topic_learning", target_duration: int = 10) -> tuple[str, list[dict], dict]:
     profile = STYLE_PROFILES.get(style_profile)
     if profile is None:
         raise HTTPException(status_code=400, detail="未知的写作风格画像。")
@@ -856,13 +1030,17 @@ def generate_narrative_markdown(outline: dict, blocks: list[dict], audience: str
         selected = [block_map[block_id] for block_id in section["source_block_ids"] if block_id in block_map]
         dossier = source_dossier(selected, max_chars_per_block=2400, max_total_chars=18000)
         points = "\n".join("- " + point for point in section.get("key_points", [])) or "- 围绕本节材料展开，不添加材料外事实。"
-        prompt = """请撰写中文法律知识转译长文中的一个完整章节。
+        transform = TRANSFORM_MODES[transform_mode]
+        scenario_config = CONTENT_SCENARIOS[scenario]
+        prompt = """请撰写中文法律内容中的一个完整章节或单集讲稿。
 
+应用场景：{scenario}
 总标题：{title}
 本节标题：{heading}
 写作目的：{purpose}
 面向读者：{audience}
-目标长度：约 {words} 个汉字
+目标时长：约 {duration} 分钟；目标长度：约 {words} 个汉字
+加工方式：{transform_name}。{transform_description}
 写作画像：{style}
 
 本节关键点：
@@ -871,11 +1049,11 @@ def generate_narrative_markdown(outline: dict, blocks: list[dict], audience: str
 写作边界：
 1. 只根据下方材料写作，不得编造材料外的法规、案例、事实、数字或引述。
 2. 不要出现“作为 AI”“根据材料显示”“本节内容仅供参考”等元话语或免责声明；文章会在页面层面另行标注审阅状态。
-3. 使用自然连贯的长文段落，解释必要术语和因果关系；不要把材料简单压缩成项目符号，也不要使用僵硬的三段式总结。
+3. 使用自然连贯、适合朗读的段落，解释必要术语和因果关系；不要把材料简单压缩成项目符号，也不要使用僵硬的三段式总结。
 4. 可使用小标题，但不要重复总标题。只输出这一节的 Markdown 正文，不要输出来源列表。
 
 本节材料：
-{dossier}""".format(title=outline["title"], heading=section["heading"], purpose=section.get("purpose", ""), audience=audience, words=section["target_words"], style=profile["instruction"], points=points, dossier=dossier)
+{dossier}""".format(scenario=scenario_config["name"], title=outline["title"], heading=section["heading"], purpose=section.get("purpose", ""), audience=audience, duration=target_duration, words=section["target_words"], transform_name=transform["name"], transform_description=transform["description"], style=profile["instruction"], points=points, dossier=dossier)
         section_text = model_chat([{"role": "system", "content": "你是严谨的法律知识内容作者，忠实于材料，不编造事实。"}, {"role": "user", "content": prompt}], temperature=0.55, max_tokens=max(1200, min(5000, section["target_words"] * 2)))
         section_text = re.sub(r"^#\s+.*\n", "", section_text.strip())
         rendered_sections.append("## {}\n\n{}".format(section["heading"], section_text))
@@ -887,7 +1065,7 @@ def generate_narrative_markdown(outline: dict, blocks: list[dict], audience: str
     if outline.get("closing_angle"):
         markdown += "\n\n## 结语\n\n{}\n".format(outline["closing_angle"])
     settings = get_internal_provider_settings()
-    model_metadata = {"provider_name": settings.get("provider_name", ""), "base_url": settings.get("base_url", ""), "model_name": settings.get("model_name", ""), "generated_at": now_iso(), "style_profile": style_profile}
+    model_metadata = {"provider_name": settings.get("provider_name", ""), "base_url": settings.get("base_url", ""), "model_name": settings.get("model_name", ""), "generated_at": now_iso(), "style_profile": style_profile, "transform_mode": transform_mode, "scenario": scenario, "target_duration": target_duration}
     return markdown, section_sources, model_metadata
 
 
@@ -942,7 +1120,11 @@ def create_project(payload: ProjectCreate):
     project_id = str(uuid.uuid4())
     timestamp = now_iso()
     conn = db()
-    conn.execute("INSERT INTO projects (id, name, client_name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)", (project_id, payload.name.strip(), payload.client_name.strip(), payload.description.strip(), timestamp, timestamp))
+    conn.execute(
+        """INSERT INTO projects (id, name, client_name, description, scenario, transform_mode, verification_mode, target_duration, audio_enabled, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (project_id, payload.name.strip(), payload.client_name.strip(), payload.description.strip(), payload.scenario, payload.transform_mode, payload.verification_mode, payload.target_duration, int(payload.audio_enabled), timestamp, timestamp),
+    )
     conn.commit()
     row = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
     conn.close()
@@ -975,10 +1157,11 @@ def get_project(project_id: str):
     contents = [dict(row) for row in conn.execute("SELECT * FROM generated_contents WHERE project_id = ? ORDER BY updated_at DESC", (project_id,)).fetchall()]
     narrative_outlines = [dict(row) for row in conn.execute("SELECT * FROM narrative_outlines WHERE project_id = ? ORDER BY updated_at DESC", (project_id,)).fetchall()]
     narrative_contents = [dict(row) for row in conn.execute("SELECT * FROM narrative_contents WHERE project_id = ? ORDER BY updated_at DESC", (project_id,)).fetchall()]
+    audio_outputs = [dict(row) for row in conn.execute("SELECT * FROM audio_outputs WHERE project_id = ? ORDER BY updated_at DESC", (project_id,)).fetchall()]
     tasks = [dict(row) for row in conn.execute("SELECT * FROM tasks WHERE project_id = ? ORDER BY CASE risk_level WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, created_at DESC", (project_id,)).fetchall()]
     # 兼容改造前已确认的章节方案：旧项目可能尚未在确认时创建任务。
     # 首次打开此类项目时，按已确认的范围补建候选任务，避免用户重做章节方案。
-    if not tasks:
+    if not tasks and scenario_requires_tasks(project):
         confirmed_plan = next((plan for plan in plans if plan["status"] == "confirmed"), None)
         if confirmed_plan is not None:
             confirmed_chapters = parse_json(confirmed_plan["chapters_json"], [])
@@ -1014,9 +1197,11 @@ def get_project(project_id: str):
     for content in narrative_contents:
         content["section_sources"] = parse_json(content.pop("section_sources_json"), [])
         content["model"] = parse_json(content.pop("model_json"), {})
+    for audio in audio_outputs:
+        audio["audio_available"] = bool(audio.get("audio_path")) and Path(audio["audio_path"]).is_file()
     for task in tasks:
         task["evidence_block_ids"] = parse_json(task["evidence_block_ids"], [])
-    return {"project": project, "documents": docs, "plans": plans, "contents": contents, "narrative_outlines": narrative_outlines, "narrative_contents": narrative_contents, "tasks": tasks}
+    return {"project": project, "documents": docs, "plans": plans, "contents": contents, "narrative_outlines": narrative_outlines, "narrative_contents": narrative_contents, "audio_outputs": audio_outputs, "tasks": tasks}
 
 
 @app.post("/api/projects/{project_id}/documents", status_code=201)
@@ -1060,6 +1245,38 @@ async def upload_document(project_id: str, file: UploadFile = File(...)):
     return {"id": document_id, "original_name": original_name, "file_hash": digest, "paragraph_count": structure["paragraph_count"], "block_count": len(blocks), "structure": structure, "material_map": build_material_map(blocks)}
 
 
+@app.post("/api/projects/{project_id}/text-sources", status_code=201)
+def create_text_source(project_id: str, payload: TextSourceCreate):
+    project_or_404(project_id)
+    document_id = str(uuid.uuid4())
+    source_dir = PROJECTS_DIR / project_id / "sources"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    stored_path = source_dir / f"{document_id}.md"
+    source_text = "# " + payload.title.strip() + "\n\n" + payload.content.strip() + "\n"
+    stored_path.write_text(source_text, encoding="utf-8")
+    digest = hashlib.sha256(source_text.encode("utf-8")).hexdigest()
+    blocks, structure = parse_text(stored_path)
+    id_mapping = {block["id"]: f"{document_id}:{block['id']}" for block in blocks}
+    for block in blocks:
+        block["id"] = id_mapping[block["id"]]
+    timestamp = now_iso()
+    conn = db()
+    conn.execute(
+        """INSERT INTO source_documents (id, project_id, original_name, stored_path, file_hash, file_size, file_type, paragraph_count, block_count, structure_json, source_url, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, 'text', ?, ?, ?, ?, ?)""",
+        (document_id, project_id, payload.title.strip(), str(stored_path), digest, len(source_text.encode("utf-8")), structure["paragraph_count"], len(blocks), json.dumps(structure, ensure_ascii=False), payload.source_url.strip(), timestamp),
+    )
+    conn.executemany(
+        """INSERT INTO source_blocks (id, document_id, sequence_no, heading_path, heading_level, kind, text, source_locator, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        [(block["id"], document_id, block["sequence_no"], block["heading_path"], block["heading_level"], block["kind"], block["text"], block["source_locator"], timestamp) for block in blocks],
+    )
+    conn.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (timestamp, project_id))
+    conn.commit()
+    conn.close()
+    return {"id": document_id, "original_name": payload.title.strip(), "file_hash": digest, "paragraph_count": structure["paragraph_count"], "block_count": len(blocks), "structure": structure, "material_map": build_material_map(blocks), "source_url": payload.source_url.strip()}
+
+
 @app.get("/api/documents/{document_id}")
 def get_document(document_id: str):
     conn = db()
@@ -1077,23 +1294,24 @@ def get_document(document_id: str):
 
 @app.post("/api/projects/{project_id}/plans", status_code=201)
 def create_plan(project_id: str, payload: PlanCreate):
-    project_or_404(project_id)
+    project = project_or_404(project_id)
     conn = db()
     document = conn.execute("SELECT * FROM source_documents WHERE id = ? AND project_id = ?", (payload.source_document_id, project_id)).fetchone()
     conn.close()
     if document is None:
         raise HTTPException(status_code=404, detail="项目中未找到指定材料")
     blocks = read_blocks(payload.source_document_id)
-    chapters = create_plan_chapters(blocks, payload.output_type)
+    output_type = CONTENT_SCENARIOS.get(project.get("scenario"), CONTENT_SCENARIOS["topic_learning"])["output_type"]
+    chapters = create_plan_chapters(blocks, output_type)
     plan_id = str(uuid.uuid4())
     timestamp = now_iso()
     conn = db()
     conn.execute("""INSERT INTO content_plans (id, project_id, document_id, audience, output_type, style_name, include_audio, status, chapters_json, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)""", (plan_id, project_id, payload.source_document_id, payload.audience, payload.output_type, payload.style_name, int(payload.include_audio), json.dumps(chapters, ensure_ascii=False), timestamp, timestamp))
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)""", (plan_id, project_id, payload.source_document_id, payload.audience, output_type, payload.style_name, int(project.get("audio_enabled", payload.include_audio)), json.dumps(chapters, ensure_ascii=False), timestamp, timestamp))
     conn.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (timestamp, project_id))
     conn.commit()
     conn.close()
-    return {"id": plan_id, "project_id": project_id, "document_id": payload.source_document_id, "audience": payload.audience, "output_type": payload.output_type, "style_name": payload.style_name, "include_audio": payload.include_audio, "status": "draft", "chapters": chapters}
+    return {"id": plan_id, "project_id": project_id, "document_id": payload.source_document_id, "audience": payload.audience, "output_type": output_type, "style_name": payload.style_name, "include_audio": bool(project.get("audio_enabled", payload.include_audio)), "status": "draft", "chapters": chapters}
 
 
 @app.put("/api/plans/{plan_id}/confirm")
@@ -1109,8 +1327,9 @@ def confirm_plan(plan_id: str, payload: PlanConfirm):
     conn.execute("UPDATE content_plans SET chapters_json = ?, status = 'confirmed', updated_at = ? WHERE id = ?", (json.dumps(payload.chapters, ensure_ascii=False), timestamp, plan_id))
     # 待核验事项属于材料审阅与项目执行层，应在章节范围确认后立即生成。
     # 这使律师可以先分配/关闭事项，再决定是否将已确认事实转译为对外长文。
+    project_row = conn.execute("SELECT * FROM projects WHERE id = ?", (plan["project_id"],)).fetchone()
     existing_task_count = conn.execute("SELECT COUNT(*) FROM tasks WHERE project_id = ? AND document_id = ?", (plan["project_id"], plan["document_id"])).fetchone()[0]
-    if existing_task_count == 0:
+    if project_row is not None and scenario_requires_tasks(dict(project_row)) and existing_task_count == 0:
         selected_block_ids = []
         for chapter in payload.chapters:
             if chapter.get("enabled", True):
@@ -1126,7 +1345,7 @@ def confirm_plan(plan_id: str, payload: PlanConfirm):
     conn.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (timestamp, plan["project_id"]))
     conn.commit()
     conn.close()
-    return {"id": plan_id, "status": "confirmed", "chapters": payload.chapters}
+    return {"id": plan_id, "status": "confirmed", "chapters": payload.chapters, "tasks_generated": bool(project_row is not None and scenario_requires_tasks(dict(project_row)))}
 
 
 @app.get("/api/narrative/profiles")
@@ -1152,7 +1371,7 @@ def get_skill_status():
 @app.get("/api/skill/projects/{project_id}/context")
 def get_skill_project_context(project_id: str, document_id: str = "", limit: int = 80):
     """为宿主模型模式提供受控材料上下文；不会泄露项目外材料。"""
-    project_or_404(project_id)
+    project = project_or_404(project_id)
     conn = db()
     if document_id:
         document = conn.execute("SELECT * FROM source_documents WHERE id = ? AND project_id = ?", (document_id, project_id)).fetchone()
@@ -1164,6 +1383,7 @@ def get_skill_project_context(project_id: str, document_id: str = "", limit: int
     blocks = read_blocks(document["id"])[:max(1, min(limit, 160))]
     return {
         "project_id": project_id,
+        "preferences": project_preferences(project),
         "document": {"id": document["id"], "original_name": document["original_name"], "file_hash": document["file_hash"], "paragraph_count": document["paragraph_count"]},
         "profiles": [{"id": key, "name": value["name"], "instruction": value["instruction"]} for key, value in STYLE_PROFILES.items()],
         "blocks": [{"id": block["id"], "heading_path": block["heading_path"], "kind": block["kind"], "text": block["text"], "source_locator": block["source_locator"]} for block in blocks],
@@ -1173,7 +1393,7 @@ def get_skill_project_context(project_id: str, document_id: str = "", limit: int
 @app.post("/api/projects/{project_id}/skill-host-contents", status_code=201)
 def create_skill_host_content(project_id: str, payload: SkillHostContentRequest):
     """接收 Codex/CatPaw 宿主模型生成的成稿，并纳入 App 的审阅与导出生命周期。"""
-    project_or_404(project_id)
+    project = project_or_404(project_id)
     conn = db()
     document = conn.execute("SELECT id FROM source_documents WHERE id = ? AND project_id = ?", (payload.document_id, project_id)).fetchone()
     conn.close()
@@ -1187,7 +1407,8 @@ def create_skill_host_content(project_id: str, payload: SkillHostContentRequest)
     outline_id = str(uuid.uuid4())
     content_id = str(uuid.uuid4())
     outline = {"title": payload.title, "opening_angle": "由宿主模型按选定材料范围生成。", "closing_angle": "", "sections": [], "style_profile": payload.style_profile, "target_total_words": len(payload.markdown)}
-    model_metadata = {"provider_name": "宿主模型", "model_name": "Codex/CatPaw host model", "generated_at": timestamp, "style_profile": payload.style_profile, "mode": "host_model"}
+    preferences = project_preferences(project)
+    model_metadata = {"provider_name": "宿主模型", "model_name": "Codex/CatPaw host model", "generated_at": timestamp, "style_profile": payload.style_profile, "mode": "host_model", **preferences}
     conn = db()
     conn.execute(
         """INSERT INTO narrative_outlines (id, project_id, document_id, source_plan_id, title, audience, style_profile, target_length, source_block_ids_json, outline_json, status, created_at, updated_at)
@@ -1207,7 +1428,7 @@ def create_skill_host_content(project_id: str, payload: SkillHostContentRequest)
 
 @app.post("/api/projects/{project_id}/narrative-outlines", status_code=201)
 def create_narrative_outline_route(project_id: str, payload: NarrativeOutlineRequest):
-    project_or_404(project_id)
+    project = project_or_404(project_id)
     conn = db()
     document = conn.execute("SELECT id FROM source_documents WHERE id = ? AND project_id = ?", (payload.document_id, project_id)).fetchone()
     conn.close()
@@ -1216,6 +1437,10 @@ def create_narrative_outline_route(project_id: str, payload: NarrativeOutlineReq
     blocks = read_blocks(payload.document_id, payload.source_block_ids)
     if not blocks:
         raise HTTPException(status_code=400, detail="没有找到选定章节对应的材料块。")
+    payload.transform_mode = project.get("transform_mode", payload.transform_mode)
+    payload.verification_mode = project.get("verification_mode", payload.verification_mode)
+    payload.scenario = project.get("scenario", payload.scenario)
+    payload.target_duration = int(project.get("target_duration", payload.target_duration))
     outline = create_narrative_outline(payload, blocks)
     outline_id = str(uuid.uuid4())
     timestamp = now_iso()
@@ -1228,7 +1453,7 @@ def create_narrative_outline_route(project_id: str, payload: NarrativeOutlineReq
     conn.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (timestamp, project_id))
     conn.commit()
     conn.close()
-    return {"id": outline_id, "project_id": project_id, "document_id": payload.document_id, "title": outline["title"], "audience": payload.audience, "style_profile": payload.style_profile, "target_length": payload.target_length, "status": "draft", "outline": outline}
+    return {"id": outline_id, "project_id": project_id, "document_id": payload.document_id, "title": outline["title"], "audience": payload.audience, "style_profile": payload.style_profile, "target_length": payload.target_length, "transform_mode": payload.transform_mode, "verification_mode": payload.verification_mode, "scenario": payload.scenario, "target_duration": payload.target_duration, "status": "draft", "outline": outline}
 
 
 @app.put("/api/narrative-outlines/{outline_id}/confirm")
@@ -1262,7 +1487,9 @@ def generate_narrative_content(outline_id: str):
     outline = parse_json(row["outline_json"], {})
     source_ids = parse_json(row["source_block_ids_json"], [])
     blocks = read_blocks(row["document_id"], source_ids)
-    markdown, section_sources, model_metadata = generate_narrative_markdown(outline, blocks, row["audience"], row["style_profile"])
+    project = project_or_404(row["project_id"])
+    preferences = project_preferences(project)
+    markdown, section_sources, model_metadata = generate_narrative_markdown(outline, blocks, row["audience"], row["style_profile"], preferences["transform_mode"], preferences["scenario"], preferences["target_duration"])
     content_id = str(uuid.uuid4())
     timestamp = now_iso()
     conn = db()
@@ -1307,6 +1534,114 @@ def export_narrative_content(content_id: str):
     markdown_path.write_text(content["markdown"], encoding="utf-8")
     markdown_to_docx(content["markdown"], docx_path)
     return {"markdown_path": str(markdown_path), "docx_path": str(docx_path), "download_url": f"/api/narrative-contents/{content_id}/download"}
+
+
+def build_audio_script(markdown: str, title: str, scenario: str, target_duration: int) -> str:
+    """把确认后的文字转为适合 TTS 的口语脚本；不新增材料外事实。"""
+    clean_lines = []
+    for line in markdown.splitlines():
+        text = line.strip()
+        if not text or text.startswith("#"):
+            continue
+        text = re.sub(r"^[-*]\s+", "", text)
+        text = re.sub(r"\[(\d+)\]", "", text)
+        clean_lines.append(text)
+    intro_map = {
+        "daily_brief": f"下面是《{title}》的法律速听，预计 {target_duration} 分钟。",
+        "topic_learning": f"下面开始本期主题学习：《{title}》。",
+        "speaking_note": f"下面是一份关于《{title}》的培训讲稿口播版。",
+        "legal_podcast": f"欢迎收听本期法律科普：《{title}》。",
+    }
+    outro = "以上内容仅按已确认材料整理。涉及具体业务或规则适用时，请结合最新事实和专业判断进一步确认。"
+    return "\n\n".join([intro_map.get(scenario, intro_map["topic_learning"]), *clean_lines, outro])
+
+
+@app.post("/api/projects/{project_id}/audio-scripts", status_code=201)
+def create_audio_script(project_id: str, payload: AudioScriptRequest):
+    project = project_or_404(project_id)
+    conn = db()
+    content = conn.execute("SELECT * FROM narrative_contents WHERE id = ? AND project_id = ?", (payload.narrative_content_id, project_id)).fetchone()
+    conn.close()
+    if content is None:
+        raise HTTPException(status_code=404, detail="项目中未找到指定讲稿。")
+    preferences = project_preferences(project)
+    script = build_audio_script(content["markdown"], payload.title or content["title"], preferences["scenario"], preferences["target_duration"])
+    audio_id = str(uuid.uuid4())
+    timestamp = now_iso()
+    conn = db()
+    conn.execute(
+        """INSERT INTO audio_outputs (id, project_id, narrative_content_id, title, script, provider, voice, audio_path, duration_seconds, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, 'script_only', '', '', 0, 'script_ready', ?, ?)""",
+        (audio_id, project_id, content["id"], payload.title or content["title"], script, timestamp, timestamp),
+    )
+    conn.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (timestamp, project_id))
+    conn.commit()
+    conn.close()
+    return {"id": audio_id, "title": payload.title or content["title"], "script": script, "status": "script_ready"}
+
+
+@app.post("/api/audio-outputs/{audio_id}/export", status_code=201)
+def export_audio_script(audio_id: str):
+    conn = db()
+    output = conn.execute("SELECT * FROM audio_outputs WHERE id = ?", (audio_id,)).fetchone()
+    conn.close()
+    if output is None:
+        raise HTTPException(status_code=404, detail="音频脚本不存在。")
+    output_root = get_configured_export_directory()
+    safe_title = re.sub(r"[\\/:*?\"<>|]", "_", output["title"]).strip() or "lawflow-audio-script"
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    script_path = output_root / f"{safe_title}-音频脚本-{stamp}.md"
+    script_path.write_text(output["script"], encoding="utf-8")
+    result = {"script_path": str(script_path)}
+    if output["audio_path"] and Path(output["audio_path"]).is_file():
+        audio_target = output_root / f"{safe_title}-{stamp}.mp3"
+        shutil.copy2(output["audio_path"], audio_target)
+        result["audio_path"] = str(audio_target)
+    return result
+
+
+@app.get("/api/audio-outputs/{audio_id}")
+def get_audio_output(audio_id: str):
+    conn = db()
+    output = conn.execute("SELECT * FROM audio_outputs WHERE id = ?", (audio_id,)).fetchone()
+    conn.close()
+    if output is None:
+        raise HTTPException(status_code=404, detail="音频脚本不存在。")
+    result = dict(output)
+    result["audio_available"] = bool(result["audio_path"]) and Path(result["audio_path"]).is_file()
+    return result
+
+
+@app.post("/api/audio-outputs/{audio_id}/synthesize")
+def synthesize_audio_output(audio_id: str, payload: AudioSynthesisRequest):
+    conn = db()
+    output = conn.execute("SELECT * FROM audio_outputs WHERE id = ?", (audio_id,)).fetchone()
+    conn.close()
+    if output is None:
+        raise HTTPException(status_code=404, detail="音频脚本不存在。")
+    settings = get_internal_provider_settings()
+    if payload.voice:
+        settings["tts_voice"] = payload.voice
+    output_path, provider, duration_seconds = synthesize_audio(output["script"], output["title"], settings)
+    timestamp = now_iso()
+    conn = db()
+    conn.execute("UPDATE audio_outputs SET provider = ?, voice = ?, audio_path = ?, duration_seconds = ?, status = 'ready', updated_at = ? WHERE id = ?", (provider, settings.get("tts_voice", ""), str(output_path), duration_seconds, timestamp, audio_id))
+    conn.commit()
+    conn.close()
+    return {"id": audio_id, "audio_url": f"/api/audio-outputs/{audio_id}/stream", "duration_seconds": duration_seconds, "status": "ready"}
+
+
+@app.get("/api/audio-outputs/{audio_id}/stream")
+def stream_audio_output(audio_id: str):
+    conn = db()
+    output = conn.execute("SELECT * FROM audio_outputs WHERE id = ?", (audio_id,)).fetchone()
+    conn.close()
+    if output is None or not output["audio_path"]:
+        raise HTTPException(status_code=404, detail="尚未生成音频文件。")
+    path = Path(output["audio_path"])
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="本地音频文件不存在。")
+    return FileResponse(path, media_type="audio/mpeg", filename=path.name)
 
 
 @app.get("/api/narrative-contents/{content_id}/download")
@@ -1405,6 +1740,8 @@ def get_provider():
     value = parse_json(row["setting_value"], {}) if row else {}
     if value.get("api_key"):
         value["api_key"] = "已配置（本地不回显）"
+    if value.get("tts_api_key"):
+        value["tts_api_key"] = "已配置（本地不回显）"
     return value
 
 
@@ -1414,8 +1751,11 @@ def save_provider(payload: ProviderSettings):
     value = payload.model_dump()
     conn = db()
     prior = conn.execute("SELECT setting_value FROM settings WHERE setting_key = 'provider'").fetchone()
-    if payload.api_key == "已配置（本地不回显）" and prior:
-        value["api_key"] = parse_json(prior["setting_value"], {}).get("api_key", "")
+    if prior:
+        prior_value = parse_json(prior["setting_value"], {})
+        for key in ("api_key", "tts_api_key"):
+            if value.get(key) == "已配置（本地不回显）":
+                value[key] = prior_value.get(key, "")
     conn.execute("INSERT INTO settings (setting_key, setting_value, updated_at) VALUES ('provider', ?, ?) ON CONFLICT(setting_key) DO UPDATE SET setting_value = excluded.setting_value, updated_at = excluded.updated_at", (json.dumps(value, ensure_ascii=False), timestamp))
     conn.commit()
     conn.close()
