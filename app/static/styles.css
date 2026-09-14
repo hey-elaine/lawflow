@@ -161,3 +161,10 @@
 /* 素材输入、音频输出与场景化任务。 */
 .source-input-grid{display:grid;grid-template-columns:.85fr 1.15fr;gap:14px}.paste-source{display:grid;gap:8px;padding:15px;border:1px solid #dfd9cd;border-radius:12px;background:#fbfaf6}.paste-source>b{font-size:14px}.paste-source input,.paste-source textarea{width:100%;padding:9px 10px;border:1px solid #d8d3c7;border-radius:8px;background:#fffefa;font:inherit}.paste-source textarea{min-height:112px;resize:vertical}.paste-source button{justify-self:end}.task-preferences{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.task-preferences span{padding:3px 7px;border-radius:5px;background:var(--paper-deep);color:#5c6961;font-size:12px}.audio-intro{background:linear-gradient(110deg,#f1f8f1,#fbf5e9)}.audio-intro h3{margin-bottom:6px}.audio-intro p{margin:0;color:var(--ink-soft)}.audio-output-list,.audio-source-list{display:grid;gap:12px}.audio-output-card{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding:16px;border:1px solid #e2ddd2;border-radius:9px;background:#fdfcf9}.audio-output-card h4{margin:8px 0 5px}.audio-output-card p{max-width:660px;margin:0;color:var(--ink-soft);font-size:13px}.audio-actions{display:grid;justify-items:end;gap:8px;min-width:190px}.audio-actions audio{max-width:230px}.workflow-gate h3{margin-bottom:6px}
 @media(max-width:720px){.source-input-grid{grid-template-columns:1fr}.audio-output-card{flex-direction:column}.audio-actions{justify-items:start;min-width:0}}
+
+
+.audio-script-editor { width: 100%; min-height: 220px; margin: 12px 0; font: inherit; line-height: 1.7; }
+#profile-dialog { max-width: 720px; width: calc(100% - 32px); max-height: 90vh; overflow: auto; }
+#profile-dialog textarea { width: 100%; font: inherit; }
+#profile-dialog details { margin: 16px 0; }
+.workflow-summary { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; }
