@@ -114,6 +114,16 @@ class ImprovementsTest(unittest.TestCase):
         evidence = json.loads((output / 'evidence-map.json').read_text())
         self.assertTrue(evidence[0]['section_sources'])
 
+    def test_audio_script_falls_back_when_naturalization_model_is_unavailable(self):
+        project, _, _, content = self.make_content()
+        result = self.client.post(
+            f"/api/projects/{project['id']}/audio-scripts",
+            json={"narrative_content_id": content["id"], "naturalize": True},
+        )
+        self.assertEqual(result.status_code, 201)
+        self.assertTrue(result.json()["naturalization_skipped"])
+        self.assertFalse(result.json()["naturalized"])
+
     def test_tts_payloads_and_invalid_success_response(self):
         import httpx
         config = {'tts_provider':'minimax', 'tts_api_key':'secret', 'tts_speed':0.9}

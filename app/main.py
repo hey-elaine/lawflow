@@ -927,6 +927,14 @@ def model_chat(messages: list[dict], temperature: float = 0.35, max_tokens: int 
     return content.strip()
 
 
+def model_generation_ready(settings: dict | None = None) -> bool:
+    settings = settings or get_internal_provider_settings()
+    return bool(
+        settings.get("allow_source_upload")
+        and all(str(settings.get(key, "")).strip() for key in ("base_url", "model_name", "api_key"))
+    )
+
+
 def split_speech_text(script: str, limit: int = 1200) -> list[str]:
     """Keep sentence/paragraph boundaries where possible; never drop input text."""
     chunks, current = [], ""
@@ -1760,13 +1768,15 @@ def create_audio_script(project_id: str, payload: AudioScriptRequest):
         raise HTTPException(status_code=404, detail="项目中未找到指定讲稿。")
     preferences = project_preferences(project)
     script = build_audio_script(content["markdown"], payload.title or content["title"], preferences["scenario"], preferences["target_duration"])
-    if payload.naturalize:
+    naturalized = False
+    if payload.naturalize and model_generation_ready():
         if len(script) > 16000:
             raise HTTPException(400, "口语润色单次支持 16000 字以内，请先拆分长稿。")
         script = model_chat([
             {"role": "system", "content": "你是播客口播编辑。只改善输入稿的句长、承接、术语解释和自然节奏。保留全部事实、数字、限制条件与不确定性，不新增案例、观点、法规或结论。不插入舞台指令或声音标签。输出可直接朗读的纯文本。"},
             {"role": "user", "content": script},
         ], temperature=0.3, max_tokens=min(16000, max(2000, len(script) * 2)))
+        naturalized = True
     audio_id = str(uuid.uuid4())
     timestamp = now_iso()
     conn = db()
@@ -1778,7 +1788,14 @@ def create_audio_script(project_id: str, payload: AudioScriptRequest):
     conn.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (timestamp, project_id))
     conn.commit()
     conn.close()
-    return {"id": audio_id, "title": payload.title or content["title"], "script": script, "status": "script_ready"}
+    return {
+        "id": audio_id,
+        "title": payload.title or content["title"],
+        "script": script,
+        "status": "script_ready",
+        "naturalized": naturalized,
+        "naturalization_skipped": bool(payload.naturalize and not naturalized),
+    }
 
 
 @app.post("/api/audio-outputs/{audio_id}/export", status_code=201)
