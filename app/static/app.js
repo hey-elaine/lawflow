@@ -381,12 +381,15 @@ function renderNarrativePanel() {
   const defaultChapter = latestPlan?.chapters?.find(chapter => chapter.enabled !== false);
   const lengthOptions = project.target_duration <= 5 ? '<option value="short" selected>短篇 · 适合 ' + project.target_duration + ' 分钟收听</option><option value="standard">标准 · 适合主题学习</option>' : '<option value="short">短篇 · 约 1,800 字</option><option value="standard" selected>标准 · 约 3,800 字</option><option value="deep">深度 · 约 7,000 字</option>';
   panel.innerHTML = '<section class="panel-card narrative-intro"><div><p class="eyebrow">' + scenario.name + '</p><h3>' + scenario.narrativeLabel + '</h3><p>先为选定素材生成结构，再形成可修改的讲稿。当前将按“' + TRANSFORM_NAMES[project.transform_mode] + '”和“' + VERIFICATION_NAMES[project.verification_mode] + '”执行。</p></div><span class="tag">先结构 · 后讲稿</span></section>' +
+    '<section class="panel-card chatgpt-handoff"><div><p class="eyebrow">ChatGPT Plus 本地协作</p><h3>交给 ChatGPT 写稿，再回到这里审阅</h3><p>无需 OpenAI API Key。LawFlow 只会复制当前选择的材料块与写作要求；你在 ChatGPT App 生成 Markdown 后，粘贴回本地即可。</p></div><div class="handoff-actions"><button class="button button-outline" id="copy-chatgpt-prompt">复制给 ChatGPT</button><button class="button button-primary" id="open-chatgpt-import">粘贴 ChatGPT 成稿</button></div></section>' +
     '<section class="panel-card"><h3>新建' + scenario.narrativeLabel + '</h3><div class="narrative-form"><div class="field"><label>源素材</label><select id="narrative-document">' + docs.map(doc => '<option value="' + doc.id + '" ' + (doc.id === defaultDocId ? 'selected' : '') + '>' + escapeHtml(doc.original_name) + '</option>').join('') + '</select></div><div class="field"><label>讲稿标题</label><input id="narrative-title" value="' + escapeHtml(defaultChapter?.title?.replace(/^第\d+章\s*·\s*/, '') || docs[0].original_name.replace(/\.[^.]+$/, '')) + '" /></div><div class="field"><label>目标听众</label><input id="narrative-audience" value="' + escapeHtml(scenario.audience) + '" /></div><div class="field"><label>内容深度</label><select id="narrative-length">' + lengthOptions + '</select></div><div class="field full"><label>写作画像</label><select id="narrative-profile"><option value="">正在加载画像…</option></select><button type="button" class="button button-outline button-small" id="manage-profile">新增 / 编辑画像</button><small class="field-hint">系统只把选定素材块发送给模型；对外交流内容仍需在核验与来源页完成审阅。</small></div><div class="field full"><label>素材范围</label><div class="narrative-scope"><label class="check-label"><input type="radio" name="narrative-scope" value="chapter" checked/> 使用当前结构范围</label><label class="check-label"><input type="radio" name="narrative-scope" value="document"/> 使用整份素材（超出预算时提示拆分）</label></div></div></div><div class="plan-actions"><button class="button button-primary" id="create-narrative-outline">✨ 生成内容结构</button></div></section>' +
     '<section class="panel-card" id="narrative-outline-area"><h3>内容结构</h3><p class="form-note">尚未生成结构。请确认已在“本地设置”中配置模型服务与允许发送原始材料。</p><div style="margin-top:10px;"><button class="button button-outline button-small" id="open-settings-narrative">⚙️ 打开模型设置</button></div></section>' +
     '<section class="panel-card"><h3>已生成的' + scenario.narrativeLabel + '</h3><div class="narrative-content-list">' + (contents.length ? contents.map(renderNarrativeContentCard).join('') : '<p class="form-note">尚未生成讲稿。请先生成并确认内容结构。</p>') + '</div></section>';
 
   $('#create-narrative-outline').addEventListener('click', createNarrativeOutline);
   $('#open-settings-narrative')?.addEventListener('click', () => $('#open-settings').click());
+  $('#copy-chatgpt-prompt').addEventListener('click', copyChatGPTPrompt);
+  $('#open-chatgpt-import').addEventListener('click', openChatGPTImport);
 
   if (outlines.length) {
     renderNarrativeOutline(outlines[0]);
@@ -394,6 +397,56 @@ function renderNarrativePanel() {
   loadProfileOptions();
   $('#manage-profile').addEventListener('click', openProfileEditor);
   bindNarrativeContentEvents();
+}
+
+function selectedNarrativeSourceIds(documentId) {
+  const doc = appState.selectedDocument?.id === documentId ? appState.selectedDocument : null;
+  const scope = $('input[name="narrative-scope"]:checked')?.value || 'chapter';
+  if (scope === 'chapter' && appState.activePlan?.document_id === documentId) {
+    return [...new Set((appState.activePlan.chapters || []).filter(chapter => chapter.enabled !== false).flatMap(chapter => chapter.source_block_ids || []))];
+  }
+  return doc?.blocks?.filter(block => block.kind === 'paragraph').map(block => block.id) || [];
+}
+
+async function getChatGPTHandoff() {
+  const documentId = $('#narrative-document').value;
+  const doc = await ensureDocumentLoaded(documentId);
+  const sourceBlockIds = selectedNarrativeSourceIds(documentId).length ? selectedNarrativeSourceIds(documentId) : doc.blocks.filter(block => block.kind === 'paragraph').map(block => block.id);
+  if (!sourceBlockIds.length) throw new Error('当前范围内没有可交给 ChatGPT 的正文材料。');
+  const title = $('#narrative-title').value.trim() || doc.original_name;
+  return request('/api/projects/' + appState.selectedProject.project.id + '/chatgpt-handoff', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({document_id:documentId, title, audience:$('#narrative-audience').value.trim() || '法律从业者', style_profile:$('#narrative-profile').value || 'law_podcast_v4', source_block_ids:sourceBlockIds}),
+  });
+}
+
+async function copyChatGPTPrompt(event) {
+  const button = event.currentTarget;
+  try {
+    setBusy(button, true, '整理材料包…');
+    const handoff = await getChatGPTHandoff();
+    await navigator.clipboard.writeText(handoff.prompt);
+    showMessage('已复制材料包。切换到 ChatGPT App 粘贴并生成 Markdown，然后回到这里导入。');
+  } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); }
+}
+
+async function openChatGPTImport() {
+  try {
+    const handoff = await getChatGPTHandoff();
+    const dialog = document.createElement('dialog');
+    dialog.className = 'dialog chatgpt-import-dialog';
+    dialog.innerHTML = '<form><div class="dialog-header"><h2>导入 ChatGPT 成稿</h2><button type="button" class="icon-button" data-close>×</button></div><p class="form-note">仅粘贴基于刚才材料包生成的 Markdown。导入后仍会进入“待律师审核”。</p><label>讲稿标题<input id="chatgpt-import-title" value="' + escapeHtml(handoff.title) + '" /></label><label>Markdown 成稿<textarea id="chatgpt-import-markdown" required minlength="20" placeholder="粘贴 ChatGPT 返回的 Markdown 正文…"></textarea></label><div class="dialog-actions"><button type="button" class="button button-outline" data-close>取消</button><button type="submit" class="button button-primary">导入并审阅</button></div></form>';
+    document.body.appendChild(dialog); dialog.showModal();
+    $$('[data-close]', dialog).forEach(button => button.addEventListener('click', () => dialog.close()));
+    $('form', dialog).addEventListener('submit', async event => {
+      event.preventDefault(); const submit = $('button[type="submit"]', dialog);
+      try {
+        setBusy(submit, true, '导入中…');
+        await request('/api/projects/' + appState.selectedProject.project.id + '/skill-host-contents', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({document_id:handoff.document_id, title:$('#chatgpt-import-title', dialog).value.trim() || handoff.title, markdown:$('#chatgpt-import-markdown', dialog).value.trim(), source_block_ids:handoff.source_block_ids, style_profile:$('#narrative-profile').value || 'law_podcast_v4', review_note:'由 ChatGPT App 生成，待律师审核。'})});
+        dialog.close(); appState.selectedProject = await request('/api/projects/' + appState.selectedProject.project.id); renderProjectDetail(); showMessage('ChatGPT 成稿已导入，现可在本地审阅、生成音频脚本和导出。');
+      } catch (error) { showMessage(error.message, true); } finally { setBusy(submit, false); }
+    });
+  } catch (error) { showMessage(error.message, true); }
 }
 
 function bindNarrativeContentEvents() {

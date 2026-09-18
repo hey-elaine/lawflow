@@ -46,6 +46,17 @@ class ImprovementsTest(unittest.TestCase):
             if old is not None:
                 os.environ['LAWFLOW_MCP_TOKEN'] = old
 
+    def test_chatgpt_app_handoff_only_returns_selected_source_blocks(self):
+        project = self.client.post('/api/projects', json={'name':'Plus 协作','scenario':'daily_brief','transform_mode':'condense','verification_mode':'source_only'}).json()
+        source = self.client.post(f"/api/projects/{project['id']}/text-sources", json={'title':'素材','content':'监管部门发布了新的数据合规提示，企业需要关注适用范围和实施时间。'}).json()
+        document = self.client.get('/api/documents/' + source['id']).json()
+        source_ids = [block['id'] for block in document['blocks'] if block['kind'] == 'paragraph']
+        result = self.client.post(f"/api/projects/{project['id']}/chatgpt-handoff", json={'document_id':source['id'],'title':'五分钟速听','source_block_ids':source_ids})
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.json()['source_block_ids'], source_ids)
+        self.assertIn('唯一材料', result.json()['prompt'])
+        self.assertNotIn('API Key', result.json()['prompt'])
+
     def test_custom_profile_persistence_and_prompt(self):
         data = {'name':'自定义', 'description':'问答式', 'instruction':'先提出具体问题，再逐步解释，保持克制的表达。'}
         response = self.client.post('/api/narrative/profiles', json=data)

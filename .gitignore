@@ -7,3 +7,6 @@ data/exports/
 data/temp/
 data/logs/
 .DS_Store
+build/
+dist/
+*.spec

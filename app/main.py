@@ -31,11 +31,16 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from pydantic import BaseModel, Field
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = ROOT_DIR / "data"
+if getattr(sys, "frozen", False):
+    # 打包为 macOS App 后，程序资源位于只读 App Bundle；用户项目必须写入 Application Support。
+    DATA_DIR = Path(os.getenv("LAWFLOW_DATA_DIR", str(Path.home() / "Library/Application Support/LawFlow/data"))).expanduser()
+    STATIC_DIR = Path(getattr(sys, "_MEIPASS", ROOT_DIR)) / "app" / "static"
+else:
+    DATA_DIR = ROOT_DIR / "data"
+    STATIC_DIR = ROOT_DIR / "app" / "static"
 PROJECTS_DIR = DATA_DIR / "projects"
 EXPORTS_DIR = DATA_DIR / "exports"
 DB_PATH = DATA_DIR / "app.db"
-STATIC_DIR = ROOT_DIR / "app" / "static"
 DEFAULT_EXPORT_DIR = Path(os.getenv("LAWFLOW_EXPORT_DIR", str(Path.home() / "Desktop" / "ai_law"))).expanduser()
 
 for directory in (DATA_DIR, PROJECTS_DIR, EXPORTS_DIR, DATA_DIR / "temp", DATA_DIR / "logs"):
@@ -238,6 +243,14 @@ class NarrativeOutlineRequest(BaseModel):
 
 class NarrativeOutlineConfirm(BaseModel):
     outline: dict
+
+
+class ChatGPTAppHandoffRequest(BaseModel):
+    document_id: str
+    title: str = Field(min_length=1, max_length=200)
+    audience: str = Field(default="法律从业者", max_length=200)
+    style_profile: str = "law_podcast_v4"
+    source_block_ids: list[str] = Field(min_length=1)
 
 
 class NarrativeContentUpdate(BaseModel):
@@ -1882,6 +1895,60 @@ def create_skill_host_content(project_id: str, payload: SkillHostContentRequest)
     conn.commit()
     conn.close()
     return {"id": content_id, "outline_id": outline_id, "title": payload.title, "status": "pending_review", "mode": "host_model"}
+
+
+@app.post("/api/projects/{project_id}/chatgpt-handoff")
+def create_chatgpt_handoff(project_id: str, payload: ChatGPTAppHandoffRequest):
+    """生成给 ChatGPT App 粘贴的受控材料包，不调用外部 API。"""
+    project = project_or_404(project_id)
+    require_external_verification(project)
+    conn = db()
+    document = conn.execute("SELECT id, original_name FROM source_documents WHERE id = ? AND project_id = ?", (payload.document_id, project_id)).fetchone()
+    conn.close()
+    if document is None:
+        raise HTTPException(status_code=404, detail="项目中未找到指定材料。")
+    blocks = read_blocks(payload.document_id, payload.source_block_ids)
+    if {block["id"] for block in blocks} != set(payload.source_block_ids):
+        raise HTTPException(status_code=400, detail="所选材料范围中包含无效材料块。")
+    profile = get_style_profiles().get(payload.style_profile)
+    if profile is None:
+        raise HTTPException(status_code=400, detail="未知的写作画像。")
+    preferences = project_preferences(project)
+    dossier = source_dossier(blocks)
+    prompt = """请作为法律内容主笔，基于下列唯一材料生成一篇中文 Markdown 讲稿。
+
+任务标题：{title}
+目标听众：{audience}
+应用场景：{scenario}
+加工方式：{transform}
+写作画像：{style}
+
+要求：
+1. 只使用材料中可支持的事实、规则、日期和观点；不要补充材料外法规、案例、数字、机构观点或个案结论。
+2. 从一个具体问题、变化或业务情境切入；按背景或问题、规则或事实、为什么重要、实务含义递进。
+3. 解释术语时补足必要背景，但不要堆砌法条，也不要使用“作为 AI”“核心提示”“对企业的影响”“建议动作”等模板表达。
+4. 输出可直接审阅的 Markdown 正文，不要输出写作说明、引用清单或 JSON。
+5. 成稿将回写至本地 LawFlow；人工审阅前不得视为正式法律意见。
+
+以下是可用材料块。方括号内的 ID 仅用于追溯，不要在正文展示：
+
+{dossier}
+""".format(
+        title=payload.title,
+        audience=payload.audience,
+        scenario=CONTENT_SCENARIOS[preferences["scenario"]]["name"],
+        transform=TRANSFORM_MODES[preferences["transform_mode"]]["description"],
+        style=profile["instruction"],
+        dossier=dossier,
+    )
+    return {
+        "project_id": project_id,
+        "document_id": payload.document_id,
+        "document_name": document["original_name"],
+        "title": payload.title,
+        "source_block_ids": [block["id"] for block in blocks],
+        "prompt": prompt,
+    }
 
 
 @app.post("/api/projects/{project_id}/narrative-outlines", status_code=201)
