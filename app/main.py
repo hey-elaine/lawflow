@@ -9,6 +9,7 @@ import asyncio
 import shutil
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import uuid
 import zipfile
@@ -20,6 +21,7 @@ from typing import Literal
 from xml.etree import ElementTree as ET
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import Request
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from docx import Document
@@ -1423,6 +1425,27 @@ async def start_daily_brief_scheduler() -> None:
     asyncio.create_task(daily_brief_scheduler())
 
 
+@app.middleware("http")
+async def protect_chatgpt_mcp(request: Request, call_next):
+    """远程 MCP 不得在没有访问令牌时暴露本地法律材料。"""
+    if request.url.path.startswith("/mcp"):
+        token = os.getenv("LAWFLOW_MCP_TOKEN", "").strip()
+        authorization = request.headers.get("authorization", "")
+        if not token:
+            return Response(
+                content=json.dumps({"detail": "ChatGPT 连接尚未启用。部署时请设置 LAWFLOW_MCP_TOKEN。"}, ensure_ascii=False),
+                status_code=503,
+                media_type="application/json",
+            )
+        if authorization != "Bearer " + token:
+            return Response(
+                content=json.dumps({"detail": "MCP 访问令牌无效。"}, ensure_ascii=False),
+                status_code=401,
+                media_type="application/json",
+            )
+    return await call_next(request)
+
+
 @app.get("/api/health")
 def health():
     return {"status": "ok", "product": "LawFlow", "time": now_iso()}
@@ -2383,4 +2406,8 @@ def get_block(document_id: str, block_id: str):
     return dict(row)
 
 
+from app.chatgpt_mcp import create_lawflow_mcp
+
+chatgpt_mcp = create_lawflow_mcp(sys.modules[__name__])
+app.mount("/mcp", chatgpt_mcp.streamable_http_app(), name="chatgpt-mcp")
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")

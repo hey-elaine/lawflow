@@ -1,5 +1,6 @@
 """Regression coverage for profiles, source boundaries, audio and exports."""
 import json
+import os
 import subprocess
 import unittest
 from unittest.mock import patch
@@ -25,6 +26,25 @@ class ImprovementsTest(unittest.TestCase):
         message = self.main.provider_error_message('{"error":{"code":"credit_balance_exhausted","message":"You have no credits remaining"}}')
         self.assertIn('额度不足', message)
         self.assertNotIn('credit_balance_exhausted', message)
+
+    def test_chatgpt_mcp_exposes_core_lawflow_tools(self):
+        import asyncio
+        tools = asyncio.run(self.main.chatgpt_mcp.list_tools())
+        names = {tool.name for tool in tools}
+        self.assertTrue({
+            'list_lawflow_projects', 'add_lawflow_text_source', 'get_lawflow_source_context',
+            'confirm_lawflow_structure', 'update_lawflow_verification_task',
+            'save_lawflow_chatgpt_draft', 'create_lawflow_daily_brief', 'export_lawflow_project',
+        }.issubset(names))
+
+    def test_chatgpt_mcp_route_requires_deployment_token(self):
+        old = os.environ.pop('LAWFLOW_MCP_TOKEN', None)
+        try:
+            response = self.client.post('/mcp/', json={'jsonrpc':'2.0','id':1,'method':'initialize','params':{}})
+            self.assertEqual(response.status_code, 503)
+        finally:
+            if old is not None:
+                os.environ['LAWFLOW_MCP_TOKEN'] = old
 
     def test_custom_profile_persistence_and_prompt(self):
         data = {'name':'自定义', 'description':'问答式', 'instruction':'先提出具体问题，再逐步解释，保持克制的表达。'}

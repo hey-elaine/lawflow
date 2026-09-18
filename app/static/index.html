@@ -58,6 +58,7 @@
       <div class="skill-home-grid">
         <article><span class="skill-index">A</span><h3>复用 App 模型配置</h3><p>Skill 调用 LawFlow 本地服务，复用 DeepSeek、OpenAI 或企业网关配置，完成大纲、长文和 DOCX 导出。</p><small>适合团队统一模型与数据外发策略。</small></article>
         <article><span class="skill-index">B</span><h3>复用 Codex/CatPaw 模型</h3><p>无需额外 API Key。Skill 读取受控材料块，由当前宿主模型生成内容后回写 App，继续审阅和导出。</p><small>适合在 Agent 对话中直接处理本地项目。</small></article>
+        <article><span class="skill-index">C</span><h3>ChatGPT Plus 连接</h3><p>部署后可通过 ChatGPT 的远程 MCP 工具连接 LawFlow。ChatGPT 负责理解、结构和讲稿，不使用你的 OpenAI API Key。</p><small>部署时设置 <code>LAWFLOW_MCP_TOKEN</code>，再通过 HTTPS 地址 <code>/mcp</code> 连接。当前本机端点默认关闭。</small></article>
         <article class="skill-invoke"><p class="eyebrow">安装与调用</p><code>$lawflow</code><p>先将本仓库的独立 Skill 安装到任意支持 Codex Skill 的 Agent，再在对话中输入 <code>$lawflow</code> 加你的任务。</p><a class="button button-outline button-small" href="https://github.com/donghyq/lawflow/tree/main/skills/lawflow" target="_blank" rel="noreferrer">打开 GitHub Skill</a><button class="button button-outline button-small" id="copy-skill-invoke">复制调用示例</button></article>
       </div>
     </section>
@@ -79,6 +80,6 @@
 
   <dialog id="daily-brief-dialog" class="dialog"><form id="daily-brief-form"><div class="dialog-header"><h2>每日法律速听</h2><button type="button" aria-label="关闭" class="icon-button" data-close-dialog="daily-brief-dialog">×</button></div><p class="form-note">订阅公开 RSS 或 Atom 源。系统每天只收集新文章并建立待审速听任务；不会自动发布，也不会自动生成最终 MP3。</p><label>订阅名称<input required name="name" maxlength="120" placeholder="例如：数据合规资讯" /></label><label>RSS / Atom 地址<input required name="feed_url" type="url" placeholder="https://example.com/feed.xml" /></label><div class="plan-settings"><div class="field"><label>每日运行时间<input name="daily_time" type="time" value="08:00" /></label></div><div class="field"><label>每次最多收集<input name="max_items" type="number" min="1" max="10" value="3" /> 篇</label></div></div><label class="check-label"><input type="checkbox" name="auto_generate" /> 允许自动生成待审速听稿与音频脚本（仅在模型已配置且允许发送素材时）</label><div class="dialog-actions"><button type="button" class="button button-outline" data-close-dialog="daily-brief-dialog">取消</button><button type="submit" class="button button-primary">保存订阅</button></div></form></dialog>
 
-  <script src="/app.js?v=20260918-2"></script>
+  <script src="/app.js?v=20260918-3"></script>
 </body>
 </html>
