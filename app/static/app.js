@@ -47,9 +47,24 @@ async function deleteDailyBriefSubscription(id) {
 }
 function renderProjectList() {
   const list = $('#project-list');
-  if (!appState.projects.length) { list.innerHTML = '<div class="empty-state"><b>还没有内容任务</b><p>选择学习或表达场景，开始整理法律资讯与实务资料。</p></div>'; return; }
+  if (!appState.projects.length) {
+    list.innerHTML = '<section class="empty-state onboarding"><p class="eyebrow">首次使用</p><h3>从一篇材料到可审阅讲稿，只需三步</h3><div class="onboarding-steps"><div><b>1</b><span>导入法规、新闻或实务笔记</span></div><div><b>2</b><span>确认结构；对外内容先完成核验</span></div><div><b>3</b><span>用 ChatGPT 或 API 生成，回到本地审阅与导出</span></div></div><div class="onboarding-actions"><button class="button button-primary" id="load-demo-project">加载完整示例</button><button class="button button-outline" id="start-first-project">新建我的任务</button></div><small>示例不调用任何外部模型，也可以随时删除。</small></section>';
+    $('#load-demo-project').addEventListener('click', loadDemoProject);
+    $('#start-first-project').addEventListener('click', () => $('#new-project').click());
+    return;
+  }
   list.innerHTML = appState.projects.map(project => { const scenario = SCENARIOS[project.scenario] || SCENARIOS.topic_learning; return '<button class="project-card" data-project-id="' + project.id + '"><div class="project-card-top"><span class="tag">' + escapeHtml(scenario.name) + '</span><small>' + formatDate(project.updated_at) + '</small></div><h3>' + escapeHtml(project.name) + '</h3><p>' + escapeHtml(project.description || project.client_name || scenario.name) + '</p><div class="meta"><span>' + project.document_count + ' 份素材</span><span>' + (project.verification_mode === 'source_only' ? '无需核验' : project.task_count + ' 项核验') + '</span><span>' + project.target_duration + ' 分钟</span></div></button>'; }).join('');
   $$('.project-card', list).forEach(card => card.addEventListener('click', () => openProject(card.dataset.projectId)));
+}
+async function loadDemoProject(event) {
+  const button = event.currentTarget;
+  try {
+    setBusy(button, true, '正在准备示例…');
+    const result = await request('/api/demo-project', {method:'POST'});
+    await loadProjects();
+    await openProject(result.project_id);
+    showMessage(result.created ? '完整示例已加载。可按上方步骤依次查看素材、结构、ChatGPT 协作、音频与导出。' : '已打开现有示例项目。');
+  } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); }
 }
 
 async function openProject(projectId) {

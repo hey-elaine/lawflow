@@ -172,6 +172,34 @@ class DailyBriefSubscriptionCreate(BaseModel):
     active: bool = True
 
 
+DEMO_SOURCE_TITLE = "生成式人工智能服务合规动态"
+DEMO_PROJECT_NAME = "示例：五分钟人工智能合规速听"
+DEMO_SOURCE_TEXT = """《生成式人工智能服务管理暂行办法》自 2023 年 8 月 15 日起施行，面向境内公众提供生成式人工智能服务的活动适用相关要求。服务提供者需要采取有效措施防范歧视性内容，并尊重和保护知识产权、商业道德。
+
+用户输入信息和使用记录属于需要依法保护的业务数据。对于具有舆论属性或者社会动员能力的服务，还应按规定开展安全评估，并履行算法备案、变更或注销备案手续。
+
+企业准备将境外模型或能力提供给境内公众时，应结合服务对象、运营主体、数据流向和内容治理安排，判断是否触发备案、安全评估和相应责任。"""
+DEMO_MARKDOWN = """# 五分钟读懂生成式人工智能服务合规要点
+
+如果一家企业准备把生成式人工智能能力直接提供给境内公众，第一步不应只看模型效果，而要先确认服务对象、交付方式和运营主体是否进入了面向公众提供服务的监管范围。
+
+## 先确认业务是否进入适用范围
+
+办法已明确适用于面向境内公众提供生成式人工智能服务的活动。模型来自境内还是境外，并不是唯一判断依据；真正需要梳理的是谁在运营、谁面对用户、数据如何流动，以及产品是否具有公开传播或社会动员能力。
+
+## 内容、数据与备案要同步看
+
+内容治理不能只停留在上线前的规则说明。服务提供者需要防范歧视性内容，并兼顾知识产权和商业道德。用户输入和使用记录也需要明确收集、使用和留存边界。对于具有舆论属性或社会动员能力的服务，还要进一步判断是否需要安全评估和算法备案。
+
+## 今天可以先完成什么
+
+把产品的用户范围、模型来源、运营主体和数据流向整理成一页事实说明。它既能帮助判断备案与评估义务，也为内容治理和隐私设计提供后续依据。
+
+## 结尾
+
+生成式人工智能合规不是上线前的一次性检查，而是产品、运营和法务共同维护的日常机制。"""
+
+
 class ProfileCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     description: str = Field(default="", max_length=1000)
@@ -1524,6 +1552,49 @@ def create_project(payload: ProjectCreate):
     conn.close()
     (PROJECTS_DIR / project_id / "sources").mkdir(parents=True, exist_ok=True)
     return serialise_project(row)
+
+
+@app.post("/api/demo-project", status_code=201)
+def create_demo_project():
+    """创建本地可删除的完整示例，不调用任何外部模型服务。"""
+    existing = next((project for project in list_projects() if project["name"] == DEMO_PROJECT_NAME), None)
+    if existing is not None:
+        return {"project_id": existing["id"], "created": False}
+    project = create_project(ProjectCreate(
+        name=DEMO_PROJECT_NAME,
+        description="演示从法规资讯、结构确认、ChatGPT 协作到音频脚本与导出的完整本地流程。",
+        scenario="daily_brief",
+        transform_mode="condense",
+        verification_mode="source_only",
+        target_duration=5,
+        audio_enabled=True,
+    ))
+    source = create_text_source(project["id"], TextSourceCreate(
+        title=DEMO_SOURCE_TITLE,
+        content=DEMO_SOURCE_TEXT,
+        source_url="https://www.cac.gov.cn/2023-07/13/c_1690898327029107.htm",
+    ))
+    document = get_document(source["id"])
+    source_ids = [block["id"] for block in document["blocks"] if block["kind"] == "paragraph"]
+    plan = create_plan(project["id"], PlanCreate(
+        source_document_id=source["id"],
+        audience="法律从业者",
+        output_type="lexcast",
+        style_name="自然、专业、适合晨间速听",
+        include_audio=True,
+    ))
+    confirm_plan(plan["id"], PlanConfirm(chapters=plan["chapters"]))
+    content = create_skill_host_content(project["id"], SkillHostContentRequest(
+        document_id=source["id"],
+        title="五分钟读懂生成式人工智能服务合规要点",
+        markdown=DEMO_MARKDOWN,
+        source_block_ids=source_ids,
+        audience="法律从业者",
+        style_profile="law_podcast_v4",
+        review_note="示例成稿：已按选定材料整理，等待律师确认。",
+    ))
+    create_audio_script(project["id"], AudioScriptRequest(narrative_content_id=content["id"]))
+    return {"project_id": project["id"], "created": True}
 
 
 @app.delete("/api/projects/{project_id}", status_code=204)
