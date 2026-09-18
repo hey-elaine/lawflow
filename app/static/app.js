@@ -27,6 +27,24 @@ function showMessage(message, error = false) { const box = $('#workspace-message
 function setBusy(button, busy, label = '处理中…') { if (!button) return; if (busy) { button.dataset.label = button.textContent; button.textContent = label; button.disabled = true; } else { button.textContent = button.dataset.label || button.textContent; button.disabled = false; } }
 
 async function loadProjects() { appState.projects = await request('/api/projects'); renderProjectList(); }
+async function loadDailyBriefSubscriptions() {
+  const list = $('#daily-brief-list');
+  if (!list) return;
+  try {
+    const subscriptions = await request('/api/daily-brief-subscriptions');
+    if (!subscriptions.length) { list.innerHTML = ''; return; }
+    list.innerHTML = '<section class="daily-brief-card"><div><p class="eyebrow">每日速听</p><h3>已订阅的资讯渠道</h3></div><div class="daily-brief-rows">' + subscriptions.map(item => '<div class="daily-brief-row"><div><b>' + escapeHtml(item.name) + '</b><small>每天 ' + escapeHtml(item.daily_time) + ' · 每次最多 ' + item.max_items + ' 篇 · ' + escapeHtml(item.last_status || '尚未运行') + '</small></div><div class="daily-brief-actions"><button class="button button-outline button-small" data-run-subscription="' + item.id + '">立即收集</button><button class="button button-quiet button-small" data-delete-subscription="' + item.id + '">删除</button></div></div>').join('') + '</div></section>';
+    $$('[data-run-subscription]', list).forEach(button => button.addEventListener('click', () => runDailyBriefSubscription(button.dataset.runSubscription, button)));
+    $$('[data-delete-subscription]', list).forEach(button => button.addEventListener('click', () => deleteDailyBriefSubscription(button.dataset.deleteSubscription)));
+  } catch (error) { list.innerHTML = '<p class="form-note">无法读取每日速听订阅：' + escapeHtml(error.message) + '</p>'; }
+}
+async function runDailyBriefSubscription(id, button) {
+  try { setBusy(button, true, '收集中…'); const result = await request('/api/daily-brief-subscriptions/' + id + '/run', {method:'POST'}); await Promise.all([loadDailyBriefSubscriptions(), loadProjects()]); showMessage(result.status + (result.project_id ? '，已创建待审速听任务。' : '。')); if (result.project_id) openProject(result.project_id); } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); }
+}
+async function deleteDailyBriefSubscription(id) {
+  if (!window.confirm('删除这个每日速听订阅？已收集的项目和导出成果不会删除。')) return;
+  try { await request('/api/daily-brief-subscriptions/' + id, {method:'DELETE'}); await loadDailyBriefSubscriptions(); showMessage('每日速听订阅已删除。'); } catch (error) { showMessage(error.message, true); }
+}
 function renderProjectList() {
   const list = $('#project-list');
   if (!appState.projects.length) { list.innerHTML = '<div class="empty-state"><b>还没有内容任务</b><p>选择学习或表达场景，开始整理法律资讯与实务资料。</p></div>'; return; }
@@ -573,6 +591,7 @@ function showSourceOverlay(title, html) { const overlay = document.createElement
 
 function bindDialogs() {
   $('#new-project').addEventListener('click', () => $('#project-dialog').showModal());
+  $('#open-daily-brief').addEventListener('click', () => $('#daily-brief-dialog').showModal());
   $$('input[name="scenario"]').forEach(input => input.addEventListener('change', () => {
     const config = SCENARIOS[input.value];
     const form = $('#project-form');
@@ -607,13 +626,23 @@ function bindDialogs() {
       setBusy(submit, false);
     }
   });
+  $('#daily-brief-form').addEventListener('submit', async event => {
+    event.preventDefault(); const form = event.currentTarget; const submit = $('button[type="submit"]', form);
+    try {
+      setBusy(submit, true, '校验订阅源…');
+      const body = Object.fromEntries(new FormData(form)); body.max_items = Number(body.max_items || 3); body.auto_generate = form.elements.auto_generate.checked;
+      await request('/api/daily-brief-subscriptions', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+      $('#daily-brief-dialog').close(); form.reset(); await loadDailyBriefSubscriptions(); showMessage('每日速听订阅已保存，到点后会自动收集；也可以立即手动收集。');
+    } catch (error) { showMessage(error.message, true); } finally { setBusy(submit, false); }
+  });
   $('#open-settings').addEventListener('click', async () => {
     try {
       const [config, exportConfig] = await Promise.all([request('/api/settings/provider'), request('/api/settings/export')]);
       const form = $('#settings-form');
-      ['provider_name','base_url','model_name','api_key','tts_base_url','tts_model','tts_voice','tts_api_key','tts_provider','tts_speed','tts_instructions','asr_base_url','asr_model','asr_api_key'].forEach(key => { form.elements[key].value = config[key] ?? (key === 'tts_provider' ? 'compatible' : key === 'tts_speed' ? '1' : ''); });
+      ['provider_preset','provider_name','base_url','model_name','api_key','tts_base_url','tts_model','tts_voice','tts_api_key','tts_provider','tts_speed','tts_instructions','asr_base_url','asr_model','asr_api_key'].forEach(key => { form.elements[key].value = config[key] ?? (key === 'provider_preset' ? 'openai' : key === 'tts_provider' ? 'compatible' : key === 'tts_speed' ? '1' : ''); });
       form.elements.allow_source_upload.checked = !!config.allow_source_upload;
       form.elements.output_directory.value = exportConfig.output_directory || exportConfig.default_directory || '';
+      applyProviderPreset(form, false);
       $('#settings-dialog').showModal();
     } catch(error) {
       showMessage(error.message,true);
@@ -642,6 +671,23 @@ function bindDialogs() {
       setBusy(submit, false);
     }
   });
+  $('#provider-preset').addEventListener('change', event => applyProviderPreset($('#settings-form'), event.target.value !== 'custom'));
+  $('#test-provider').addEventListener('click', async event => {
+    const button = event.currentTarget; const result = $('#provider-test-result');
+    try {
+      setBusy(button, true, '保存并测试…');
+      const form = $('#settings-form'); const body = Object.fromEntries(new FormData(form)); body.allow_source_upload = form.elements.allow_source_upload.checked;
+      const exportBody = {output_directory: body.output_directory || ''}; delete body.output_directory;
+      await Promise.all([request('/api/settings/provider', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)}), request('/api/settings/export', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(exportBody)})]);
+      const test = await request('/api/settings/provider/test', {method:'POST'}); result.textContent = '连接成功：' + test.provider_name + ' / ' + test.model_name; result.className = 'field-hint success-hint';
+    } catch (error) { result.textContent = error.message; result.className = 'field-hint error-hint'; } finally { setBusy(button, false); }
+  });
+}
+function applyProviderPreset(form, overwrite = false) {
+  const preset = form.elements.provider_preset.value; const mapping = {openai:{name:'OpenAI',url:'https://api.openai.com/v1',model:'gpt-4.1-mini'},deepseek:{name:'DeepSeek',url:'https://api.deepseek.com/v1',model:'deepseek-chat'}};
+  const item = mapping[preset]; const custom = preset === 'custom';
+  ['provider_name','base_url','model_name'].forEach(key => { form.elements[key].closest('label').style.display = custom ? '' : 'none'; });
+  if (item && (overwrite || !form.elements.base_url.value)) { form.elements.provider_name.value = item.name; form.elements.base_url.value = item.url; form.elements.model_name.value = item.model; }
 }
 async function initHomeSkillSection() {
   const tag = $('#home-skill-status');
@@ -654,9 +700,9 @@ async function initHomeSkillSection() {
     tag.textContent = '本地服务未连接';
   }
   const copy = $('#copy-skill-invoke');
-  if (copy) copy.addEventListener('click', async () => { try { await navigator.clipboard.writeText('$lawflow'); showMessage('已复制 $lawflow。'); } catch (_) { showMessage('浏览器未授权剪贴板，请手动复制。', true); } });
+  if (copy) copy.addEventListener('click', async () => { const example = '请读取并按此 Skill 执行：https://github.com/donghyq/lawflow/tree/main/skills/lawflow\n\n$lawflow 使用 LawFlow 处理本地项目中的材料：先读取受控上下文，给出可确认的大纲，再将成稿回写并导出 DOCX。'; try { await navigator.clipboard.writeText(example); showMessage('已复制 GitHub Skill 链接与调用示例。'); } catch (_) { showMessage('浏览器未授权剪贴板，请手动复制。', true); } });
 }
-async function boot() { bindDialogs(); initHomeSkillSection(); try { await loadProjects(); } catch (error) { showMessage('无法连接本地服务：' + error.message, true); } }
+async function boot() { bindDialogs(); initHomeSkillSection(); try { await Promise.all([loadProjects(), loadDailyBriefSubscriptions()]); } catch (error) { showMessage('无法连接本地服务：' + error.message, true); } }
 document.addEventListener('DOMContentLoaded', boot);
 
 

@@ -5,6 +5,7 @@ import httpx
 import json
 import os
 import re
+import asyncio
 import shutil
 import sqlite3
 import subprocess
@@ -39,6 +40,12 @@ for directory in (DATA_DIR, PROJECTS_DIR, EXPORTS_DIR, DATA_DIR / "temp", DATA_D
     directory.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="律析 LawFlow", version="0.1.0")
+
+MODEL_PRESETS = {
+    "openai": {"provider_name": "OpenAI", "base_url": "https://api.openai.com/v1", "model_name": "gpt-4.1-mini", "tts_model": "gpt-4o-mini-tts"},
+    "deepseek": {"provider_name": "DeepSeek", "base_url": "https://api.deepseek.com/v1", "model_name": "deepseek-chat", "tts_model": ""},
+    "custom": {"provider_name": "", "base_url": "", "model_name": "", "tts_model": ""},
+}
 
 
 CONTENT_SCENARIOS = {
@@ -127,6 +134,7 @@ class PlanConfirm(BaseModel):
 
 
 class ProviderSettings(BaseModel):
+    provider_preset: Literal["openai", "deepseek", "custom"] = "openai"
     provider_name: str = ""
     base_url: str = ""
     model_name: str = ""
@@ -142,6 +150,19 @@ class ProviderSettings(BaseModel):
     asr_base_url: str = ""
     asr_model: str = ""
     asr_api_key: str = ""
+
+
+class ProviderConnectionTest(BaseModel):
+    pass
+
+
+class DailyBriefSubscriptionCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    feed_url: str = Field(min_length=8, max_length=2000)
+    daily_time: str = Field(default="08:00", pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    max_items: int = Field(default=3, ge=1, le=10)
+    auto_generate: bool = False
+    active: bool = True
 
 
 class ProfileCreate(BaseModel):
@@ -422,6 +443,32 @@ def init_db() -> None:
             instruction TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS daily_brief_subscriptions (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            feed_url TEXT NOT NULL,
+            daily_time TEXT NOT NULL,
+            max_items INTEGER NOT NULL DEFAULT 3,
+            auto_generate INTEGER NOT NULL DEFAULT 0,
+            active INTEGER NOT NULL DEFAULT 1,
+            last_run_date TEXT NOT NULL DEFAULT '',
+            last_status TEXT NOT NULL DEFAULT '尚未运行',
+            last_error TEXT NOT NULL DEFAULT '',
+            last_project_id TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS daily_brief_items (
+            id TEXT PRIMARY KEY,
+            subscription_id TEXT NOT NULL REFERENCES daily_brief_subscriptions(id) ON DELETE CASCADE,
+            item_key TEXT NOT NULL,
+            title TEXT NOT NULL,
+            url TEXT NOT NULL DEFAULT '',
+            published_at TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            UNIQUE(subscription_id, item_key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_daily_brief_subscriptions_active ON daily_brief_subscriptions(active, daily_time);
         """
     )
     existing_columns = {row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()}
@@ -1226,6 +1273,140 @@ def project_or_404(project_id: str) -> dict:
     return dict(row)
 
 
+def parse_rss_items(feed_url: str) -> list[dict]:
+    if not re.match(r"^https?://", feed_url, re.IGNORECASE):
+        raise HTTPException(status_code=400, detail="订阅地址必须以 http:// 或 https:// 开头。")
+    try:
+        response = httpx.get(feed_url, timeout=20, follow_redirects=True, headers={"User-Agent": "LawFlow/0.1 daily-brief"})
+        response.raise_for_status()
+        root = ET.fromstring(response.content)
+    except (httpx.HTTPError, ET.ParseError) as error:
+        raise HTTPException(status_code=502, detail="无法读取 RSS 订阅源，请检查地址或稍后重试。") from error
+    items = []
+    for node in root.findall(".//item") + root.findall(".//{*}entry"):
+        title = clean_text("".join(node.findtext(tag, default="") for tag in ("title", "{*}title")))
+        link_node = node.find("link")
+        if link_node is None:
+            link_node = node.find("{*}link")
+        url = ""
+        if link_node is not None:
+            url = link_node.get("href", "") or clean_text(link_node.text or "")
+        content = ""
+        for tag in ("description", "content", "summary", "{*}summary", "{*}content"):
+            found = node.find(tag)
+            if found is not None and clean_text(found.text or ""):
+                content = clean_text(found.text or "")
+                break
+        published = clean_text(node.findtext("pubDate", default="") or node.findtext("updated", default="") or node.findtext("{*}updated", default=""))
+        key = clean_text(node.findtext("guid", default="") or node.findtext("id", default="") or node.findtext("{*}id", default="") or url or title)
+        if title and key:
+            items.append({"key": key[:2000], "title": title[:240], "url": url[:2000], "published_at": published[:240], "content": content[:12000]})
+    if not items:
+        raise HTTPException(status_code=422, detail="订阅源未返回可用文章。请使用标准 RSS 或 Atom 地址。")
+    return items
+
+
+def create_daily_brief_project(subscription: dict, items: list[dict]) -> str:
+    date_label = datetime.now().strftime("%Y-%m-%d")
+    title = f"{subscription['name']} · {date_label} 法律速听"
+    project_id = str(uuid.uuid4())
+    timestamp = now_iso()
+    conn = db()
+    conn.execute(
+        """INSERT INTO projects (id, name, client_name, description, scenario, transform_mode, verification_mode, target_duration, audio_enabled, created_at, updated_at)
+        VALUES (?, ?, '', ?, 'daily_brief', 'condense', 'source_only', 5, 1, ?, ?)""",
+        (project_id, title, f"由订阅源“{subscription['name']}”自动收集，等待内容审阅。", timestamp, timestamp),
+    )
+    conn.commit()
+    conn.close()
+    for item in items:
+        create_text_source(project_id, TextSourceCreate(title=item['title'], content=item['content'] or item['title'], source_url=item['url']))
+    digest = "\n\n".join(
+        "## {title}\n来源：{url}\n发布时间：{published}\n{content}".format(
+            title=item['title'], url=item['url'] or '未提供', published=item['published_at'] or '未提供', content=item['content'] or item['title'],
+        )
+        for item in items
+    )
+    digest_document = create_text_source(
+        project_id,
+        TextSourceCreate(title=f"{subscription['name']} · 当日资讯汇总", content=digest, source_url=subscription['feed_url']),
+    )
+    if subscription.get('auto_generate') and model_generation_ready():
+        document = get_document(digest_document['id'])
+        source_ids = [block['id'] for block in document['blocks'] if block['kind'] == 'paragraph']
+        request = NarrativeOutlineRequest(
+            document_id=digest_document['id'],
+            title=title,
+            source_block_ids=source_ids,
+            audience='法律从业者',
+            style_profile='law_podcast_v4',
+            target_length='short',
+            transform_mode='condense',
+            verification_mode='source_only',
+            scenario='daily_brief',
+            target_duration=5,
+        )
+        outline_record = create_narrative_outline_route(project_id, request)
+        confirm_narrative_outline(outline_record['id'], NarrativeOutlineConfirm(outline=outline_record['outline']))
+        narrative = generate_narrative_content(outline_record['id'])
+        create_audio_script(project_id, AudioScriptRequest(narrative_content_id=narrative['id'], naturalize=True))
+    return project_id
+
+
+def run_daily_brief_subscription(subscription_id: str) -> dict:
+    conn = db()
+    row = conn.execute("SELECT * FROM daily_brief_subscriptions WHERE id = ?", (subscription_id,)).fetchone()
+    conn.close()
+    if row is None:
+        raise HTTPException(status_code=404, detail="定时速听任务不存在。")
+    subscription = dict(row)
+    items = parse_rss_items(subscription['feed_url'])[:subscription['max_items']]
+    conn = db()
+    unseen = []
+    for item in items:
+        exists = conn.execute("SELECT 1 FROM daily_brief_items WHERE subscription_id = ? AND item_key = ?", (subscription_id, item['key'])).fetchone()
+        if exists is None:
+            unseen.append(item)
+            conn.execute("INSERT INTO daily_brief_items (id, subscription_id, item_key, title, url, published_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", (str(uuid.uuid4()), subscription_id, item['key'], item['title'], item['url'], item['published_at'], now_iso()))
+    conn.commit()
+    conn.close()
+    project_id = ""
+    if unseen:
+        project_id = create_daily_brief_project(subscription, unseen)
+    timestamp = now_iso()
+    generated = bool(unseen and subscription.get('auto_generate') and model_generation_ready())
+    status = (f"已收集 {len(unseen)} 篇新资讯，并生成待审速听稿" if generated else f"已收集 {len(unseen)} 篇新资讯") if unseen else "本次没有新资讯"
+    conn = db()
+    conn.execute("UPDATE daily_brief_subscriptions SET last_run_date = ?, last_status = ?, last_error = '', last_project_id = ?, updated_at = ? WHERE id = ?", (datetime.now().date().isoformat(), status, project_id, timestamp, subscription_id))
+    conn.commit()
+    conn.close()
+    return {"subscription_id": subscription_id, "new_item_count": len(unseen), "project_id": project_id, "status": status}
+
+
+async def daily_brief_scheduler() -> None:
+    while True:
+        try:
+            now = datetime.now()
+            current_time = now.strftime("%H:%M")
+            today = now.date().isoformat()
+            with db() as conn:
+                rows = conn.execute("SELECT id FROM daily_brief_subscriptions WHERE active = 1 AND daily_time = ? AND last_run_date != ?", (current_time, today)).fetchall()
+            for row in rows:
+                try:
+                    run_daily_brief_subscription(row['id'])
+                except HTTPException as error:
+                    with db() as conn:
+                        conn.execute("UPDATE daily_brief_subscriptions SET last_run_date = ?, last_status = '运行失败', last_error = ?, updated_at = ? WHERE id = ?", (today, error.detail[:500], now_iso(), row['id']))
+        except Exception:
+            pass
+        await asyncio.sleep(30)
+
+
+@app.on_event("startup")
+async def start_daily_brief_scheduler() -> None:
+    asyncio.create_task(daily_brief_scheduler())
+
+
 @app.get("/api/health")
 def health():
     return {"status": "ok", "product": "LawFlow", "time": now_iso()}
@@ -1237,6 +1418,43 @@ def list_projects():
     rows = conn.execute("SELECT * FROM projects ORDER BY updated_at DESC").fetchall()
     conn.close()
     return [serialise_project(row) for row in rows]
+
+
+@app.get("/api/daily-brief-subscriptions")
+def list_daily_brief_subscriptions():
+    with db() as conn:
+        rows = conn.execute("SELECT * FROM daily_brief_subscriptions ORDER BY updated_at DESC").fetchall()
+    return [dict(row) for row in rows]
+
+
+@app.post("/api/daily-brief-subscriptions", status_code=201)
+def create_daily_brief_subscription(payload: DailyBriefSubscriptionCreate):
+    subscription_id = str(uuid.uuid4())
+    timestamp = now_iso()
+    # 创建时先读取一次，尽早暴露无效地址；不写入任何抓取内容。
+    parse_rss_items(payload.feed_url)
+    with db() as conn:
+        conn.execute(
+            """INSERT INTO daily_brief_subscriptions (id, name, feed_url, daily_time, max_items, auto_generate, active, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (subscription_id, payload.name.strip(), payload.feed_url.strip(), payload.daily_time, payload.max_items, int(payload.auto_generate), int(payload.active), timestamp, timestamp),
+        )
+    return {"id": subscription_id, **payload.model_dump(), "last_status": "尚未运行"}
+
+
+@app.post("/api/daily-brief-subscriptions/{subscription_id}/run")
+def run_daily_brief_subscription_route(subscription_id: str):
+    return run_daily_brief_subscription(subscription_id)
+
+
+@app.delete("/api/daily-brief-subscriptions/{subscription_id}", status_code=204)
+def delete_daily_brief_subscription(subscription_id: str):
+    with db() as conn:
+        row = conn.execute("SELECT id FROM daily_brief_subscriptions WHERE id = ?", (subscription_id,)).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="定时速听任务不存在。")
+        conn.execute("DELETE FROM daily_brief_subscriptions WHERE id = ?", (subscription_id,))
+    return Response(status_code=204)
 
 
 @app.post("/api/projects", status_code=201)
@@ -2010,6 +2228,8 @@ def get_provider():
         value["tts_api_key"] = "已配置（本地不回显）"
     if value.get("asr_api_key"):
         value["asr_api_key"] = "已配置（本地不回显）"
+    if not value.get("provider_preset"):
+        value["provider_preset"] = next((name for name, preset in MODEL_PRESETS.items() if name != "custom" and value.get("base_url") == preset["base_url"]), "openai")
     return value
 
 
@@ -2017,6 +2237,13 @@ def get_provider():
 def save_provider(payload: ProviderSettings):
     timestamp = now_iso()
     value = payload.model_dump()
+    preset = MODEL_PRESETS[value["provider_preset"]]
+    if value["provider_preset"] != "custom":
+        value["provider_name"] = preset["provider_name"]
+        value["base_url"] = preset["base_url"]
+        value["model_name"] = preset["model_name"]
+        if not value.get("tts_model"):
+            value["tts_model"] = preset["tts_model"]
     conn = db()
     prior = conn.execute("SELECT setting_value FROM settings WHERE setting_key = 'provider'").fetchone()
     if prior:
@@ -2028,6 +2255,21 @@ def save_provider(payload: ProviderSettings):
     conn.commit()
     conn.close()
     return {"saved": True, "provider_name": value["provider_name"], "model_name": value["model_name"], "api_key_configured": bool(value["api_key"])}
+
+
+@app.post("/api/settings/provider/test")
+def test_provider_connection(_: ProviderConnectionTest):
+    settings = get_internal_provider_settings()
+    if not model_generation_ready(settings):
+        raise HTTPException(status_code=400, detail="请先选择服务商、填写 API Key，并确认允许发送选定材料。")
+    try:
+        response = model_chat([
+            {"role": "system", "content": "只回复 OK。"},
+            {"role": "user", "content": "连接测试"},
+        ], temperature=0, max_tokens=8)
+    except HTTPException as error:
+        raise HTTPException(status_code=502, detail="模型连接测试失败：" + error.detail) from error
+    return {"ready": True, "provider_name": settings.get("provider_name"), "model_name": settings.get("model_name"), "response": response[:80]}
 
 
 @app.get("/api/settings/export")

@@ -1,0 +1,4 @@
+interface:
+  display_name: "LawFlow 法律内容工作流"
+  short_description: "将 LawFlow 项目材料转为可审阅讲稿、口播脚本与导出成果。"
+  default_prompt: "使用 LawFlow 处理现有项目：先检查材料和核验状态，再生成可确认的大纲与讲稿。"

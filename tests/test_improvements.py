@@ -4,6 +4,7 @@ import subprocess
 import unittest
 from unittest.mock import patch
 from pathlib import Path
+from xml.etree import ElementTree as ET
 
 from tests import test_api as fixtures
 
@@ -141,6 +142,20 @@ class ImprovementsTest(unittest.TestCase):
         self.assertEqual(self.client.post('/api/audio-outputs/' + audio['id'] + '/synthesize', json={}).status_code, 409)
         with patch.object(self.main, 'speech_chunk', return_value=(b'preview', 'test')):
             self.assertEqual(self.client.post('/api/audio-outputs/' + audio['id'] + '/synthesize', json={'preview':True}).status_code, 200)
+
+    def test_daily_brief_subscription_collects_new_rss_items_once(self):
+        xml = ET.fromstring('''<rss><channel><item><guid>one</guid><title>监管动态一</title><link>https://example.com/one</link><description>第一篇资讯正文，包含必要的法律规则说明。</description></item><item><guid>two</guid><title>监管动态二</title><link>https://example.com/two</link><description>第二篇资讯正文，包含必要的合规事项说明。</description></item></channel></rss>''')
+        with patch.object(self.main.httpx, 'get') as get:
+            response = type('Response', (), {'content': ET.tostring(xml), 'raise_for_status': lambda self: None})()
+            get.return_value = response
+            subscription = self.client.post('/api/daily-brief-subscriptions', json={'name':'监管资讯','feed_url':'https://example.com/feed.xml','daily_time':'08:00','max_items':2})
+            self.assertEqual(subscription.status_code, 201)
+            first = self.client.post('/api/daily-brief-subscriptions/' + subscription.json()['id'] + '/run')
+            self.assertEqual(first.status_code, 200)
+            self.assertEqual(first.json()['new_item_count'], 2)
+            self.assertTrue(first.json()['project_id'])
+            second = self.client.post('/api/daily-brief-subscriptions/' + subscription.json()['id'] + '/run')
+            self.assertEqual(second.json()['new_item_count'], 0)
 
     def test_tts_payloads_and_invalid_success_response(self):
         import httpx
