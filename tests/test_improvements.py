@@ -57,6 +57,23 @@ class ImprovementsTest(unittest.TestCase):
         self.assertIn('唯一材料', result.json()['prompt'])
         self.assertNotIn('API Key', result.json()['prompt'])
 
+    def test_desktop_launcher_uses_an_available_port(self):
+        from scripts import lawflow_desktop
+        import socket
+        original = lawflow_desktop.os.environ.get('LAWFLOW_PORT')
+        lawflow_desktop.os.environ['LAWFLOW_PORT'] = '18081'
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+                listener.bind(('127.0.0.1', 18081))
+                listener.listen(1)
+                with self.assertRaises(RuntimeError):
+                    lawflow_desktop.choose_port()
+        finally:
+            if original is None:
+                lawflow_desktop.os.environ.pop('LAWFLOW_PORT', None)
+            else:
+                lawflow_desktop.os.environ['LAWFLOW_PORT'] = original
+
     def test_custom_profile_persistence_and_prompt(self):
         data = {'name':'自定义', 'description':'问答式', 'instruction':'先提出具体问题，再逐步解释，保持克制的表达。'}
         response = self.client.post('/api/narrative/profiles', json=data)
