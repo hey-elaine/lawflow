@@ -124,6 +124,24 @@ class ImprovementsTest(unittest.TestCase):
         self.assertTrue(result.json()["naturalization_skipped"])
         self.assertFalse(result.json()["naturalized"])
 
+    def test_external_verification_blocks_narrative_and_unconfirmed_audio_blocks_full_mp3(self):
+        project = self.client.post('/api/projects', json={'name':'对外内容','scenario':'legal_podcast','transform_mode':'enrich','verification_mode':'external_verify'}).json()
+        source = self.client.post(f"/api/projects/{project['id']}/text-sources", json={'title':'素材','content':'企业应当核验跨境数据传输、责任主体和备案要求。'}).json()
+        document = self.client.get('/api/documents/' + source['id']).json()
+        ids = [block['id'] for block in document['blocks'] if block['kind'] == 'paragraph']
+        blocked = self.client.post(f"/api/projects/{project['id']}/skill-host-contents", json={'document_id':source['id'],'title':'播客稿','markdown':'# 播客稿\n\n正文。','source_block_ids':ids})
+        self.assertEqual(blocked.status_code, 409)
+        plan = self.client.post(f"/api/projects/{project['id']}/plans", json={'source_document_id':source['id']}).json()
+        self.client.put(f"/api/plans/{plan['id']}/confirm", json={'chapters':plan['chapters']})
+        state = self.client.get('/api/projects/' + project['id']).json()
+        for task in state['tasks']:
+            self.client.put('/api/tasks/' + task['id'], json={'status':'done'})
+        content = self.client.post(f"/api/projects/{project['id']}/skill-host-contents", json={'document_id':source['id'],'title':'播客稿','markdown':'# 播客稿\n\n正文。','source_block_ids':ids}).json()
+        audio = self.client.post(f"/api/projects/{project['id']}/audio-scripts", json={'narrative_content_id':content['id']}).json()
+        self.assertEqual(self.client.post('/api/audio-outputs/' + audio['id'] + '/synthesize', json={}).status_code, 409)
+        with patch.object(self.main, 'speech_chunk', return_value=(b'preview', 'test')):
+            self.assertEqual(self.client.post('/api/audio-outputs/' + audio['id'] + '/synthesize', json={'preview':True}).status_code, 200)
+
     def test_tts_payloads_and_invalid_success_response(self):
         import httpx
         config = {'tts_provider':'minimax', 'tts_api_key':'secret', 'tts_speed':0.9}

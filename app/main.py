@@ -902,6 +902,21 @@ def scenario_requires_tasks(project: dict) -> bool:
     return project.get("verification_mode") != "source_only"
 
 
+def external_verification_is_complete(project_id: str) -> bool:
+    """对外表达只在全部核验项已处理后进入正式讲稿阶段。"""
+    with db() as conn:
+        rows = conn.execute("SELECT status FROM tasks WHERE project_id = ?", (project_id,)).fetchall()
+    return bool(rows) and all(row["status"] in {"done", "dismissed"} for row in rows)
+
+
+def require_external_verification(project: dict) -> None:
+    if project.get("verification_mode") == "external_verify" and not external_verification_is_complete(project["id"]):
+        raise HTTPException(
+            status_code=409,
+            detail="请先在“核验与来源”中完成或关闭全部核验事项，再生成对外讲稿。",
+        )
+
+
 def verification_label(mode: str) -> str:
     return VERIFICATION_MODES.get(mode, VERIFICATION_MODES["material_check"])["name"]
 
@@ -1579,6 +1594,7 @@ def get_skill_project_context(project_id: str, document_id: str = "", limit: int
 def create_skill_host_content(project_id: str, payload: SkillHostContentRequest):
     """接收 Codex/CatPaw 宿主模型生成的成稿，并纳入 App 的审阅与导出生命周期。"""
     project = project_or_404(project_id)
+    require_external_verification(project)
     conn = db()
     document = conn.execute("SELECT id FROM source_documents WHERE id = ? AND project_id = ?", (payload.document_id, project_id)).fetchone()
     conn.close()
@@ -1614,6 +1630,7 @@ def create_skill_host_content(project_id: str, payload: SkillHostContentRequest)
 @app.post("/api/projects/{project_id}/narrative-outlines", status_code=201)
 def create_narrative_outline_route(project_id: str, payload: NarrativeOutlineRequest):
     project = project_or_404(project_id)
+    require_external_verification(project)
     conn = db()
     document = conn.execute("SELECT id FROM source_documents WHERE id = ? AND project_id = ?", (payload.document_id, project_id)).fetchone()
     conn.close()
@@ -1849,9 +1866,15 @@ def update_audio_script(audio_id: str, payload: AudioScriptUpdate):
 def synthesize_audio_output(audio_id: str, payload: AudioSynthesisRequest):
     conn = db()
     output = conn.execute("SELECT * FROM audio_outputs WHERE id = ?", (audio_id,)).fetchone()
-    conn.close()
     if output is None:
+        conn.close()
         raise HTTPException(status_code=404, detail="音频脚本不存在。")
+    if not payload.preview:
+        content = conn.execute("SELECT status FROM narrative_contents WHERE id = ?", (output["narrative_content_id"],)).fetchone()
+        if content is None or content["status"] != "confirmed":
+            conn.close()
+            raise HTTPException(status_code=409, detail="请先确认讲稿审阅，再生成完整 MP3；短片试听不受此限制。")
+    conn.close()
     settings = get_internal_provider_settings()
     if payload.voice:
         settings["tts_voice"] = payload.voice

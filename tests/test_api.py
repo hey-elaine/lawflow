@@ -112,8 +112,8 @@ class LawFlowApiTest(unittest.TestCase):
             "style_profile": "law_podcast_v4",
             "target_length": "short",
         })
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("模型服务", response.json()["detail"])
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("核验与来源", response.json()["detail"])
 
     def test_daily_brief_skips_tasks_and_creates_audio_script(self):
         project = self.client.post("/api/projects", json={"name": "晨间速听", "scenario": "daily_brief", "transform_mode": "condense", "verification_mode": "source_only", "target_duration": 5, "audio_enabled": True}).json()

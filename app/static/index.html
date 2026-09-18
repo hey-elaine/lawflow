@@ -18,13 +18,13 @@
       <div class="hero-copy">
         <p class="eyebrow">面向律师、法务与专业内容创作者</p>
         <h1>把法律资讯和实务资料，<br/><em>变成适合听、讲、分享的内容。</em></h1>
-        <p class="hero-description">将冗长资讯、多源材料和个人经验整理为晨晚速听、主题学习、客户培训讲稿与法律科普播客；按用途选择精炼、转译、内容丰富与核验策略。</p>
+        <p class="hero-description">将冗长资讯、实务资料和个人经验整理为晨晚速听、专题学习、客户培训讲稿与法律科普播客；按用途选择精炼、转译、内容丰富与核验策略。</p>
         <div class="hero-actions"><a href="#workspace" class="button button-primary">新建内容任务</a><a href="#workflow" class="button button-outline">了解工作流</a></div>
-        <div class="hero-facts"><span>单篇速听</span><span>多源主题学习</span><span>Speak Note</span><span>播客讲稿</span></div>
+        <div class="hero-facts"><span>单篇速听</span><span>专题学习</span><span>Speak Note</span><span>播客讲稿</span></div>
       </div>
       <div class="hero-visual" aria-label="律析工作成果示意">
         <div class="visual-layout">
-          <div class="visual-card visual-source"><span class="mini-label">素材输入</span><b>资讯、判决、实务笔记与多源资料</b><small>DOCX · PDF · TXT · Markdown</small></div>
+          <div class="visual-card visual-source"><span class="mini-label">素材输入</span><b>资讯、判决与实务笔记</b><small>DOCX · TXT · Markdown</small></div>
           <svg class="workflow-arrows" viewBox="0 0 72 312" aria-hidden="true" preserveAspectRatio="none">
             <defs>
               <marker id="workflow-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
@@ -45,7 +45,7 @@
       <div class="section-heading"><p class="eyebrow">处理流程</p><h2>先选择使用场景，<br/>再生成适合收听或表达的内容。</h2></div>
       <div class="workflow-grid">
         <article><span>01</span><h3>选择内容场景</h3><p>从晨晚速听、主题学习、客户培训和法律播客中选择目标，系统自动带出推荐设置。</p></article>
-        <article><span>02</span><h3>整理单篇或多源素材</h3><p>导入长文章、判决、实务笔记和资料包，建立主题结构与内容主线。</p></article>
+        <article><span>02</span><h3>整理素材与内容结构</h3><p>导入长文章、判决或实务笔记，选择一份素材建立主题结构与内容主线。</p></article>
         <article><span>03</span><h3>选择加工与核验策略</h3><p>按需选择内容精炼、正常转译或内容丰富；个人学习无需外部核验，对外内容则保留核验清单。</p></article>
         <article><span>04</span><h3>输出讲稿与音频脚本</h3><p>确认结构后生成可编辑讲稿、Speak Note 或播客稿，并导出 DOCX 与可朗读音频脚本。</p></article>
       </div>
@@ -63,7 +63,7 @@
     </section>
 
     <section id="workspace" class="workspace shell">
-      <div class="workspace-top"><div><p class="eyebrow">内容工作台</p><h2>新建一个内容任务</h2><p>先选择学习或表达场景，再输入单篇或多源素材。支持 DOCX、TXT 和 Markdown。</p></div><button class="button button-primary" id="new-project">新建内容任务</button></div>
+      <div class="workspace-top"><div><p class="eyebrow">内容工作台</p><h2>新建一个内容任务</h2><p>先选择学习或表达场景，再输入素材。支持 DOCX、TXT 和 Markdown。</p></div><button class="button button-primary" id="new-project">新建内容任务</button></div>
       <div id="workspace-message" class="message hidden"></div>
       <div id="project-list" class="project-grid"><div class="empty-state"><b>还没有项目</b><p>创建一个项目，开始处理法律材料。</p></div></div>
       <div id="project-detail" class="project-detail hidden"></div>
@@ -72,11 +72,10 @@
 
   <footer class="footer shell"><span>律声 LawFlow · 法律内容学习与表达工作台</span><span>素材转译 · 讲稿编辑 · 按需核验</span></footer>
 
-  <dialog id="project-dialog" class="dialog"><form id="project-form"><div class="dialog-header"><h2>新建内容任务</h2><button type="button" aria-label="关闭" class="icon-button" data-close-dialog="project-dialog">×</button></div><label>任务名称<input required name="name" maxlength="120" placeholder="例如：本周数据合规晨间速听" /></label><label>客户 / 主题（可选）<input name="client_name" maxlength="120" placeholder="例如：跨境数据合规" /></label><fieldset><legend>选择应用场景</legend><div class="scenario-options"><label><input type="radio" name="scenario" value="daily_brief" />晨间 / 晚间法律速听<small>单篇资讯，短时精炼收听</small></label><label><input type="radio" name="scenario" value="topic_learning" checked />多源主题学习<small>多篇材料，形成分章节学习内容</small></label><label><input type="radio" name="scenario" value="speaking_note" />客户培训 / Speak Note<small>准备培训、发言和对外交流讲稿</small></label><label><input type="radio" name="scenario" value="legal_podcast" />法律科普播客<small>实务热点与经验积累的对外表达</small></label></div></fieldset><label>项目说明（可选）<textarea name="description" maxlength="1000" placeholder="记录学习主题、培训对象或表达目的"></textarea></label><input type="hidden" name="transform_mode" value="adapt" /><input type="hidden" name="verification_mode" value="material_check" /><input type="hidden" name="target_duration" value="10" /><input type="hidden" name="audio_enabled" value="true" /><div class="dialog-actions"><button type="button" class="button button-outline" data-close-dialog="project-dialog">取消</button><button type="submit" class="button button-primary">创建内容任务</button></div></form></dialog>
+  <dialog id="project-dialog" class="dialog"><form id="project-form"><div class="dialog-header"><h2>新建内容任务</h2><button type="button" aria-label="关闭" class="icon-button" data-close-dialog="project-dialog">×</button></div><label>任务名称<input required name="name" maxlength="120" placeholder="例如：本周数据合规晨间速听" /></label><label>客户 / 主题（可选）<input name="client_name" maxlength="120" placeholder="例如：跨境数据合规" /></label><fieldset><legend>选择应用场景</legend><div class="scenario-options"><label><input type="radio" name="scenario" value="daily_brief" />晨间 / 晚间法律速听<small>单篇资讯，短时精炼收听</small></label><label><input type="radio" name="scenario" value="topic_learning" checked />专题学习与表达<small>围绕一份素材形成分章节学习内容</small></label><label><input type="radio" name="scenario" value="speaking_note" />客户培训 / Speak Note<small>准备培训、发言和对外交流讲稿</small></label><label><input type="radio" name="scenario" value="legal_podcast" />法律科普播客<small>实务热点与经验积累的对外表达</small></label></div></fieldset><label>项目说明（可选）<textarea name="description" maxlength="1000" placeholder="记录学习主题、培训对象或表达目的"></textarea></label><input type="hidden" name="transform_mode" value="adapt" /><input type="hidden" name="verification_mode" value="material_check" /><input type="hidden" name="target_duration" value="10" /><input type="hidden" name="audio_enabled" value="true" /><div class="dialog-actions"><button type="button" class="button button-outline" data-close-dialog="project-dialog">取消</button><button type="submit" class="button button-primary">创建内容任务</button></div></form></dialog>
 
   <dialog id="settings-dialog" class="dialog"><form id="settings-form"><div class="dialog-header"><h2>本地设置</h2><button type="button" aria-label="关闭" class="icon-button" data-close-dialog="settings-dialog">×</button></div><p class="form-note">模型密钥、TTS 配置和导出路径均只保存在本机。对外内容的事实核验仍应由律师确认。</p><fieldset><legend>文本生成模型</legend><label>服务商名称<input name="provider_name" placeholder="例如：DeepSeek / OpenAI / 企业网关" /></label><label>Base URL<input name="base_url" placeholder="https://api.example.com/v1" /></label><label>模型名称<input name="model_name" placeholder="例如：deepseek-chat" /></label><label>API Key<input type="password" name="api_key" placeholder="仅保存在本机，不会回显" /></label><label class="check-label"><input type="checkbox" name="allow_source_upload" /> 允许将选定素材发送至外部模型服务</label></fieldset><fieldset><legend>语音合成 TTS</legend><label>接口类型<select name="tts_provider"><option value="compatible">兼容 /audio/speech</option><option value="minimax">MiniMax 原生（中文播客候选）</option></select></label><label>TTS Base URL<input name="tts_base_url" placeholder="默认复用文本模型 Base URL；兼容 /audio/speech" /></label><label>TTS 模型<input name="tts_model" placeholder="兼容模型名；MiniMax 留空默认 speech-2.8-hd" /></label><label>默认音色<input name="tts_voice" placeholder="兼容接口如 alloy；MiniMax 填 voice_id" /></label><label>TTS API Key<input type="password" name="tts_api_key" placeholder="留空时复用文本模型 API Key" /></label><label>语速<input name="tts_speed" type="number" min="0.5" max="2" step="0.05" value="1"/></label><label>语气指令（仅发送给支持 instructions 的兼容模型）<textarea name="tts_instructions" maxlength="1000" placeholder="例如：自然讲解、温和克制，句间适当停顿；不支持此参数的模型请留空"></textarea></label><p class="field-hint">MiniMax 使用独立 TTS 密钥，地址留空使用 https://api.minimax.cn/v1。切换服务时请同步清空或修改模型、音色和地址。先生成短片试听，再生成全文。</p></fieldset><fieldset><legend>播客语音转写（可选）</legend><label>转写 Base URL<input name="asr_base_url" placeholder="兼容 /audio/transcriptions 的服务地址"/></label><label>转写模型<input name="asr_model" placeholder="填写服务支持的转写模型"/></label><label>转写 API Key<input type="password" name="asr_api_key"/></label><p class="field-hint">用于从播客音频提取写作画像；没有转写服务时可直接粘贴文本。</p></fieldset><fieldset><legend>成果导出</legend><label>导出目录<input name="output_directory" placeholder="~/Desktop/ai_law" /></label><p class="field-hint">默认：<code>~/Desktop/ai_law</code>。首次导出时会自动创建该目录。</p></fieldset><div class="dialog-actions"><button type="button" class="button button-outline" data-close-dialog="settings-dialog">取消</button><button type="submit" class="button button-primary">保存设置</button></div></form></dialog>
 
-  <script src="/app.js?v=20260914-1200"></script>
+  <script src="/app.js?v=20260918-1"></script>
 </body>
 </html>
-

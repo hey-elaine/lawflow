@@ -1,7 +1,7 @@
 const appState = { projects: [], selectedProjectId: null, selectedProject: null, selectedDocument: null, activeTab: 'materials', activePlan: null, editingContentId: null };
 const SCENARIOS = {
   daily_brief: { name: '晨间 / 晚间法律速听', transform: 'condense', verification: 'source_only', duration: 5, audio: true, audience: '个人学习', narrativeLabel: '速听讲稿' },
-  topic_learning: { name: '多源主题学习', transform: 'adapt', verification: 'material_check', duration: 10, audio: true, audience: '法律从业者与企业法务', narrativeLabel: '主题讲稿' },
+  topic_learning: { name: '专题学习与表达', transform: 'adapt', verification: 'material_check', duration: 10, audio: true, audience: '法律从业者与企业法务', narrativeLabel: '主题讲稿' },
   speaking_note: { name: '客户培训 / Speak Note', transform: 'enrich', verification: 'external_verify', duration: 20, audio: false, audience: '客户法务与业务团队', narrativeLabel: 'Speak Note' },
   legal_podcast: { name: '法律科普播客', transform: 'enrich', verification: 'external_verify', duration: 20, audio: true, audience: '行业听众与潜在客户', narrativeLabel: '播客讲稿' },
 };
@@ -49,15 +49,18 @@ async function openProject(projectId) {
 function renderProjectDetail() {
   const detail = $('#project-detail'); const data = appState.selectedProject; if (!data) return;
   const scenario = SCENARIOS[data.project.scenario] || SCENARIOS.topic_learning;
-  const tabs = [['materials','素材库'],['plan','主题与结构']];
-  if (data.project.verification_mode !== 'source_only') tabs.push(['tasks', data.project.verification_mode === 'external_verify' ? '核验与来源' : '材料核对']);
-  if (data.project.verification_mode !== 'source_only') tabs.push(['review','审阅底稿']);
-  tabs.push(['narrative', scenario.narrativeLabel]);
-  if (data.project.audio_enabled) tabs.push(['audio','音频与导出']);
+  const verificationStep = data.project.verification_mode === 'source_only' ? 0 : 3;
+  const narrativeStep = verificationStep ? 4 : 3;
+  const audioStep = narrativeStep + 1;
+  const tabs = [['materials','1 素材'],['plan','2 结构']];
+  if (verificationStep) tabs.push(['tasks', verificationStep + ' ' + (data.project.verification_mode === 'external_verify' ? '核验与来源' : '材料核对')]);
+  tabs.push(['narrative', narrativeStep + ' ' + scenario.narrativeLabel]);
+  if (data.project.audio_enabled) tabs.push(['audio', audioStep + ' 音频与导出']);
   if (!tabs.some(item => item[0] === appState.activeTab)) appState.activeTab = 'materials';
   detail.innerHTML = '<div class="detail-header"><div><p class="eyebrow">' + escapeHtml(scenario.name) + '</p><h2>' + escapeHtml(data.project.name) + '</h2><p>' + escapeHtml(data.project.client_name || data.project.description || scenario.description) + '</p><div class="task-preferences"><span>' + TRANSFORM_NAMES[data.project.transform_mode] + '</span><span>' + VERIFICATION_NAMES[data.project.verification_mode] + '</span><span>' + data.project.target_duration + ' 分钟目标时长</span></div></div><div class="detail-actions"><button class="button button-outline button-small" id="export-project">导出至本机目录</button><button class="button button-outline button-small" id="reload-project">刷新任务</button><button class="button button-danger button-small" id="delete-project">删除任务</button></div></div><div class="tabbar">' + tabs.map(([key,label]) => '<button data-tab="' + key + '" class="' + (appState.activeTab === key ? 'active' : '') + '">' + label + '</button>').join('') + '</div><div id="detail-panel" class="detail-panel"></div>';
   $('.tabbar', detail).insertAdjacentHTML('beforebegin', renderWorkflowSummary(data));
   $$('.tabbar button', detail).forEach(button => button.addEventListener('click', () => { appState.activeTab = button.dataset.tab; renderProjectDetail(); }));
+  $$('[data-workflow-next]', detail).forEach(button => button.addEventListener('click', () => { appState.activeTab = button.dataset.workflowNext; renderProjectDetail(); $('#detail-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }));
   $('#reload-project').addEventListener('click', () => openProject(data.project.id)); $('#export-project').addEventListener('click', exportProject); $('#delete-project').addEventListener('click', deleteProject); renderActivePanel();
 }
 function renderActivePanel() { if (appState.activeTab === 'materials') return renderMaterialsPanel(); if (appState.activeTab === 'plan') return renderPlanPanel(); if (appState.activeTab === 'review') return renderReviewPanel(); if (appState.activeTab === 'narrative') return renderNarrativePanel(); if (appState.activeTab === 'audio') return renderAudioPanel(); return renderTasksPanel(); }
@@ -67,7 +70,7 @@ async function ensureDocumentLoaded(documentId) { if (appState.selectedDocument?
 function renderMaterialsPanel() {
   const panel = $('#detail-panel'); const docs = appState.selectedProject.documents;
   const scenario = SCENARIOS[appState.selectedProject.project.scenario] || SCENARIOS.topic_learning;
-  panel.innerHTML = '<section class="panel-card"><h3>输入素材</h3><p>' + (appState.selectedProject.project.scenario === 'daily_brief' ? '导入一篇行业资讯、报道或公开材料，系统会将其精炼为适合碎片化收听的短讲稿。' : '导入单篇或多篇文章、判决、法规和实务笔记，系统会识别主题与结构，整理为可学习或可表达的内容。') + '</p><div class="source-input-grid"><label class="upload-zone"><input type="file" id="document-upload" accept=".docx,.txt,.md"/><div><b>上传文件</b><span>DOCX、TXT、Markdown</span></div></label><div class="paste-source"><b>粘贴文章或公开材料</b><input id="text-source-title" placeholder="素材标题，例如：某监管动态解读"/><input id="text-source-url" placeholder="来源链接（可选）"/><textarea id="text-source-content" placeholder="粘贴公众号正文、新闻报道、公开判决摘要或你的实务笔记…"></textarea><button class="button button-outline button-small" id="create-text-source">保存为素材</button></div></div><div class="doc-list">' + (docs.length ? docs.map(doc => '<div class="doc-row"><div><b>' + escapeHtml(doc.original_name) + '</b><small>' + doc.paragraph_count + ' 个段落 · ' + doc.block_count + ' 个素材块' + (doc.source_url ? ' · 已记录来源' : '') + '</small></div><button class="button button-outline button-small" data-view-document="' + doc.id + '">查看主题地图</button></div>').join('') : '<p class="form-note">尚未导入素材。你可以先导入一篇资讯，或多篇围绕同一主题的资料。</p>') + '</div></section><section class="panel-card" id="material-map-panel"><h3>主题地图</h3><p>选择一份已导入素材后，查看结构、主题信号、规范名称和可展开的内容方向。</p></section>';
+  panel.innerHTML = '<section class="panel-card"><h3>输入素材</h3><p>' + (appState.selectedProject.project.scenario === 'daily_brief' ? '导入一篇行业资讯、报道或公开材料，系统会将其精炼为适合碎片化收听的短讲稿。' : '先导入素材，再选择其中一份形成结构与讲稿。多份资料可留在同一任务内分别整理；跨材料合并成一份主题稿属于下一阶段能力。') + '</p><div class="source-input-grid"><label class="upload-zone"><input type="file" id="document-upload" accept=".docx,.txt,.md"/><div><b>上传文件</b><span>DOCX、TXT、Markdown</span></div></label><div class="paste-source"><b>粘贴文章或公开材料</b><input id="text-source-title" placeholder="素材标题，例如：某监管动态解读"/><input id="text-source-url" placeholder="来源链接（可选）"/><textarea id="text-source-content" placeholder="粘贴公众号正文、新闻报道、公开判决摘要或你的实务笔记…"></textarea><button class="button button-outline button-small" id="create-text-source">保存为素材</button></div></div><div class="doc-list">' + (docs.length ? docs.map(doc => '<div class="doc-row"><div><b>' + escapeHtml(doc.original_name) + '</b><small>' + doc.paragraph_count + ' 个段落 · ' + doc.block_count + ' 个素材块' + (doc.source_url ? ' · 已记录来源' : '') + '</small></div><button class="button button-outline button-small" data-view-document="' + doc.id + '">查看主题地图</button></div>').join('') : '<p class="form-note">尚未导入素材。你可以先导入一篇资讯或一份实务笔记开始。</p>') + '</div></section><section class="panel-card" id="material-map-panel"><h3>主题地图</h3><p>选择一份已导入素材后，查看结构、主题信号、规范名称和可展开的内容方向。</p></section>';
   $('#document-upload').addEventListener('change', event => uploadDocument(event.target.files[0]));
   $('#create-text-source').addEventListener('click', createTextSource);
   $$('[data-view-document]', panel).forEach(button => button.addEventListener('click', () => viewDocumentMap(button.dataset.viewDocument)));
@@ -344,8 +347,15 @@ function renderNarrativePanel() {
   const contents = appState.selectedProject.narrative_contents || [];
   const project = appState.selectedProject.project;
   const scenario = SCENARIOS[project.scenario] || SCENARIOS.topic_learning;
+  const tasks = appState.selectedProject.tasks || [];
+  const externalVerificationBlocked = project.verification_mode === 'external_verify' && (!tasks.length || tasks.some(task => !['done', 'dismissed'].includes(task.status)));
   if (!docs.length) {
     panel.innerHTML = '<section class="panel-card"><h3>' + scenario.narrativeLabel + '</h3><p>请先导入素材，并在“主题与结构”中确认需要展开的内容范围。</p></section>';
+    return;
+  }
+  if (externalVerificationBlocked) {
+    panel.innerHTML = '<section class="panel-card workflow-gate"><p class="eyebrow">发布前闸门</p><h3>先完成核验，再生成对外讲稿</h3><p>当前仍有 ' + tasks.filter(task => !['done', 'dismissed'].includes(task.status)).length + ' 项核验事项待处理。完成或关闭全部事项后，才能生成 ' + escapeHtml(scenario.narrativeLabel) + '，避免未确认内容进入对外表达。</p><div class="plan-actions"><button class="button button-primary" data-open-tab="tasks">进入核验与来源</button></div></section>';
+    $('[data-open-tab="tasks"]', panel).addEventListener('click', () => { appState.activeTab = 'tasks'; renderProjectDetail(); });
     return;
   }
   const latestPlan = appState.activePlan || appState.selectedProject.plans.find(plan => plan.status === 'confirmed');
@@ -492,7 +502,7 @@ function renderAudioPanel() {
   const panel = $('#detail-panel');
   const contents = appState.selectedProject.narrative_contents || [];
   const outputs = appState.selectedProject.audio_outputs || [];
-  panel.innerHTML = '<section class="panel-card audio-intro"><p class="eyebrow">音频输出</p><h3>音频脚本与收听</h3><p>先整理并编辑口播脚本，再用 TTS 短片试听比较音色，最后生成完整 MP3。浏览器朗读仅用于校对，音质取决于系统语音。草稿试听不代表审阅完成。</p></section><section class="panel-card"><h3>从讲稿生成音频脚本</h3><label class="check-label"><input type="checkbox" id="naturalize-audio"/> 使用文本模型改善口语节奏（额外调用；生成后请核对事实）</label>' + (contents.length ? '<div class="audio-source-list">' + contents.map(content => '<div class="doc-row"><div><b>' + escapeHtml(content.title) + '</b><small>' + escapeHtml(content.model?.scenario || '') + ' · ' + escapeHtml(content.model?.target_duration || '') + ' 分钟目标时长</small></div><button class="button button-primary button-small" data-create-audio-script="' + content.id + '">生成音频脚本</button></div>').join('') + '</div>' : '<p class="form-note">请先在“' + (SCENARIOS[appState.selectedProject.project.scenario] || SCENARIOS.topic_learning).narrativeLabel + '”中生成讲稿。</p>') + '</section><section class="panel-card"><h3>音频脚本与文件</h3><div class="audio-output-list">' + (outputs.length ? outputs.map(renderAudioOutput).join('') : '<p class="form-note">尚未生成音频脚本。</p>') + '</div></section>';
+  panel.innerHTML = '<section class="panel-card audio-intro"><p class="eyebrow">音频输出</p><h3>先校对脚本，再生成最终音频</h3><p>讲稿草稿可以整理为口播脚本并试听；只有“已确认”的讲稿才能生成完整 MP3。浏览器朗读只用于校对，正式音质由所选 TTS 服务与音色决定。</p></section><section class="panel-card"><h3>从讲稿生成音频脚本</h3><label class="check-label"><input type="checkbox" id="naturalize-audio"/> 使用文本模型改善口语节奏（额外调用；生成后请核对事实）</label>' + (contents.length ? '<div class="audio-source-list">' + contents.map(content => '<div class="doc-row"><div><b>' + escapeHtml(content.title) + '</b><small>' + (content.status === 'confirmed' ? '讲稿已确认，可生成正式 MP3' : '讲稿待确认，可先整理并试听脚本') + '</small></div><button class="button button-primary button-small" data-create-audio-script="' + content.id + '">生成音频脚本</button></div>').join('') + '</div>' : '<p class="form-note">请先在“' + (SCENARIOS[appState.selectedProject.project.scenario] || SCENARIOS.topic_learning).narrativeLabel + '”中生成讲稿。</p>') + '</section><section class="panel-card"><h3>音频脚本与文件</h3><div class="audio-output-list">' + (outputs.length ? outputs.map(renderAudioOutput).join('') : '<p class="form-note">尚未生成音频脚本。</p>') + '</div></section>';
   $$('[data-save-audio]').forEach(button => button.addEventListener('click', () => saveAudioScript(button.dataset.saveAudio, button)));
   $$('[data-preview-audio]').forEach(button => button.addEventListener('click', () => previewAudio(button.dataset.previewAudio, button)));
   $$('[data-create-audio-script]').forEach(button => button.addEventListener('click', () => createAudioScript(button.dataset.createAudioScript, button)));
@@ -503,7 +513,10 @@ function renderAudioPanel() {
 
 function renderAudioOutput(output) {
   const player = output.audio_available ? '<audio controls src="/api/audio-outputs/' + output.id + '/stream?v=' + encodeURIComponent(output.updated_at) + '"></audio>' : '';
-  return '<article class="audio-output-card"><div><span class="tag">' + (output.status === 'source_changed' ? '源讲稿已更新，请重新整理脚本' : output.status === 'ready' ? 'MP3 已生成 · ' + output.duration_seconds + ' 秒' : '脚本待校对') + '</span><h4>' + escapeHtml(output.title) + '</h4><details><summary>查看 / 编辑完整脚本</summary><textarea class="audio-script-editor" data-audio-editor="' + output.id + '">' + escapeHtml(output.script) + '</textarea><button class="button button-outline button-small" data-save-audio="' + output.id + '">保存脚本（使旧音频失效）</button></details></div><div class="audio-actions">' + player + '<button class="button button-outline button-small" data-speak-script="' + output.id + '">浏览器校对朗读</button><button class="button button-outline button-small" data-preview-audio="' + output.id + '">TTS 短片试听</button><button class="button button-primary button-small" data-synthesize-audio="' + output.id + '">' + (output.audio_available ? '重新生成 MP3' : '生成 MP3') + '</button><button class="button button-outline button-small" data-export-audio="' + output.id + '">导出脚本与音频</button><audio controls hidden data-preview-player="' + output.id + '"></audio></div></article>';
+  const source = (appState.selectedProject.narrative_contents || []).find(content => content.id === output.narrative_content_id);
+  const readyForMp3 = source?.status === 'confirmed';
+  const mp3Hint = readyForMp3 ? '' : '<small class="audio-gate-hint">确认对应讲稿后可生成完整 MP3</small>';
+  return '<article class="audio-output-card"><div><span class="tag">' + (output.status === 'source_changed' ? '源讲稿已更新，请重新整理脚本' : output.status === 'ready' ? 'MP3 已生成 · ' + output.duration_seconds + ' 秒' : '脚本待校对') + '</span><h4>' + escapeHtml(output.title) + '</h4><details><summary>查看 / 编辑完整脚本</summary><textarea class="audio-script-editor" data-audio-editor="' + output.id + '">' + escapeHtml(output.script) + '</textarea><button class="button button-outline button-small" data-save-audio="' + output.id + '">保存脚本（使旧音频失效）</button></details></div><div class="audio-actions">' + player + '<button class="button button-outline button-small" data-speak-script="' + output.id + '">浏览器校对朗读</button><button class="button button-outline button-small" data-preview-audio="' + output.id + '">TTS 短片试听</button><button class="button button-primary button-small" data-synthesize-audio="' + output.id + '" ' + (readyForMp3 ? '' : 'disabled') + '>' + (output.audio_available ? '重新生成 MP3' : '生成 MP3') + '</button>' + mp3Hint + '<button class="button button-outline button-small" data-export-audio="' + output.id + '">导出脚本与音频</button><audio controls hidden data-preview-player="' + output.id + '"></audio></div></article>';
 }
 
 async function saveAudioScript(id, button) {
@@ -709,7 +722,11 @@ function renderWorkflowSummary(data) {
   const narratives = data.narrative_contents || [];
   const confirmed = narratives.filter(item => item.status === 'confirmed').length;
   const openTasks = data.tasks.filter(item => !['done', 'dismissed'].includes(item.status)).length;
-  return '<div class="workflow-summary"><span class="tag">素材 ' + data.documents.length + ' 份</span><span class="tag">结构已确认 ' + data.plans.filter(item => item.status === 'confirmed').length + ' 份</span><span class="tag">讲稿审阅 ' + confirmed + '/' + narratives.length + '</span><span class="tag">待处理核对项 ' + openTasks + '</span><span class="tag">MP3 ' + (data.audio_outputs || []).filter(item => item.audio_available).length + ' 份</span></div><p class="form-note">当前按单份素材生成；审阅底稿使用本地模板，讲稿使用配置的文本模型。核对项为候选清单，尚未自动检索外部权威来源。</p>';
+  const hasPlan = data.plans.some(item => item.status === 'confirmed');
+  const needsExternalVerification = data.project.verification_mode === 'external_verify';
+  const verificationReady = !needsExternalVerification || (data.tasks.length > 0 && openTasks === 0);
+  let next = !data.documents.length ? ['materials', '导入第一份素材'] : !hasPlan ? ['plan', '确认内容结构'] : !verificationReady ? ['tasks', '完成发布前核验'] : !narratives.length ? ['narrative', '生成讲稿'] : !confirmed ? ['narrative', '确认讲稿审阅'] : data.project.audio_enabled && !(data.audio_outputs || []).length ? ['audio', '整理音频脚本'] : ['narrative', '查看已完成成果'];
+  return '<div class="workflow-progress"><span class="workflow-step ' + (data.documents.length ? 'done' : 'active') + '">1 素材</span><span class="workflow-step ' + (hasPlan ? 'done' : data.documents.length ? 'active' : '') + '">2 结构</span>' + (data.project.verification_mode !== 'source_only' ? '<span class="workflow-step ' + (verificationReady ? 'done' : hasPlan ? 'active' : '') + '">3 核验</span>' : '') + '<span class="workflow-step ' + (confirmed ? 'done' : verificationReady && hasPlan ? 'active' : '') + '">' + (data.project.verification_mode === 'source_only' ? '3' : '4') + ' 讲稿</span>' + (data.project.audio_enabled ? '<span class="workflow-step ' + ((data.audio_outputs || []).length ? 'done' : confirmed ? 'active' : '') + '">' + (data.project.verification_mode === 'source_only' ? '4' : '5') + ' 音频</span>' : '') + '</div><div class="workflow-next"><div><b>下一步：' + next[1] + '</b><small>' + (needsExternalVerification && !verificationReady ? '对外讲稿会在全部核验项完成或关闭后解锁。' : '可随时回到已完成步骤查看或修改。') + '</small></div><button class="button button-primary button-small" data-workflow-next="' + next[0] + '">继续</button></div><p class="form-note">当前首版按单份素材形成结构；“外部事实核验”是律师推进的工作流，并不表示系统已经自动联网核验。</p>';
 }
 
 async function confirmNarrativeContent(id, button) {
