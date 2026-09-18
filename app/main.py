@@ -983,10 +983,26 @@ def model_chat(messages: list[dict], temperature: float = 0.35, max_tokens: int 
     except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as error:
         failed = getattr(error, "response", None)
         detail = failed.text[:500] if failed is not None else str(error)
-        raise HTTPException(status_code=502, detail="模型服务调用失败：" + detail) from error
+        raise HTTPException(status_code=502, detail=provider_error_message(detail)) from error
     if not isinstance(content, str) or not content.strip():
         raise HTTPException(status_code=502, detail="模型服务未返回可用文本。")
     return content.strip()
+
+
+def provider_error_message(detail: str) -> str:
+    """将常见服务商错误转换为本地设置页可直接理解的提示。"""
+    normalized = detail.lower()
+    if "credit_balance_exhausted" in normalized or "insufficient_quota" in normalized or "no credits remaining" in normalized:
+        return "OpenAI API 额度不足。该 API Key 已被服务端识别，但所属组织没有可用 API 额度。请在 OpenAI Platform 的 Billing 页面充值或切换到有额度的 API 项目后重试。"
+    if "invalid_api_key" in normalized or "incorrect api key" in normalized or "invalid authentication" in normalized:
+        return "API Key 无效或已失效。请在所选服务商控制台重新创建 Key，并确认没有复制到多余空格。"
+    if "model_not_found" in normalized or "does not exist" in normalized or "not have access to model" in normalized:
+        return "当前 API Key 无权使用所选模型。请更换为该账号可用的模型，或在服务商控制台确认模型权限。"
+    if "rate_limit" in normalized or "rate limit" in normalized:
+        return "模型服务暂时限流。请稍后重试，或降低调用频率。"
+    if "account_deactivated" in normalized:
+        return "模型服务账号当前不可用。请在服务商控制台检查账号状态和账单状态。"
+    return "模型服务调用失败：" + detail
 
 
 def model_generation_ready(settings: dict | None = None) -> bool:

@@ -21,6 +21,11 @@ class ImprovementsTest(unittest.TestCase):
         content = self.client.post(f"/api/projects/{project['id']}/skill-host-contents", json={'document_id':source['id'], 'title':'测试讲稿', 'markdown':'# 讲稿\n\n这是**材料**正文。请参考[说明](https://example.com)。', 'source_block_ids':ids}).json()
         return project, source, ids, content
 
+    def test_provider_error_message_explains_openai_quota(self):
+        message = self.main.provider_error_message('{"error":{"code":"credit_balance_exhausted","message":"You have no credits remaining"}}')
+        self.assertIn('额度不足', message)
+        self.assertNotIn('credit_balance_exhausted', message)
+
     def test_custom_profile_persistence_and_prompt(self):
         data = {'name':'自定义', 'description':'问答式', 'instruction':'先提出具体问题，再逐步解释，保持克制的表达。'}
         response = self.client.post('/api/narrative/profiles', json=data)
