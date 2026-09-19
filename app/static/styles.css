@@ -130,6 +130,7 @@
 }
 
 .dialog fieldset { display: grid; gap: 12px; margin: 0; padding: 14px; border: 1px solid #e1dbcf; border-radius: 9px; }
+.dialog #settings-form > fieldset:first-of-type > label:first-of-type{display:flex;align-items:center;gap:13px;padding:10px 12px;border:1px solid #ded8cb;border-radius:10px;background:linear-gradient(110deg,#fbfaf6,#f4f8f4)!important;color:#506159;font-size:13px;font-weight:700}.dialog #settings-form > fieldset:first-of-type > label:first-of-type select{appearance:none!important;flex:1;min-height:42px;padding:9px 42px 9px 13px!important;border:1px solid #c9d4cc!important;border-radius:8px!important;background:linear-gradient(45deg,transparent 50%,#527062 50%) calc(100% - 18px) 18px/7px 7px no-repeat,linear-gradient(135deg,#527062 50%,transparent 50%) calc(100% - 12px) 18px/7px 7px no-repeat,#fffefa!important;color:#1e352c!important;font-weight:650;box-shadow:0 1px 0 rgba(20,37,31,.03)}.dialog #settings-form > fieldset:first-of-type > label:first-of-type select:hover{border-color:#92ad9d!important;background-color:#fff!important}.dialog #settings-form > fieldset:first-of-type > label:first-of-type select:focus{border-color:var(--accent)!important;box-shadow:0 0 0 3px rgba(29,91,73,.12)!important}
 .dialog legend { padding: 0 5px; color: #607068; font-size: 12px; font-weight: 700; }
 .field-hint { margin: -4px 0 0; color: #6f7973; font-size: 12px; }.field-hint code { padding: 1px 4px; border-radius: 3px; background: #f1eee6; }
 
