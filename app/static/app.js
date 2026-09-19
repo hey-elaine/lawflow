@@ -14,10 +14,30 @@ async function request(url, options = {}) {
   const response = await fetch(url, options);
   if (!response.ok) {
     let detail = '请求失败，请稍后重试。';
-    try { detail = (await response.json()).detail || detail; } catch (_) {}
+    try { detail = formatErrorDetail((await response.json()).detail) || detail; } catch (_) {}
     throw new Error(detail);
   }
   return (response.headers.get('content-type') || '').includes('application/json') ? response.json() : response;
+}
+
+function formatErrorDetail(detail) {
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    const messages = detail.map(item => {
+      if (!item || typeof item !== 'object') return String(item || '');
+      const field = Array.isArray(item.loc) ? item.loc.filter(part => part !== 'body').join(' / ') : '';
+      return (field ? '“' + field + '”' : '设置') + (item.msg ? '：' + item.msg : '格式不正确');
+    }).filter(Boolean);
+    return messages.join('；');
+  }
+  if (detail && typeof detail === 'object') return detail.message || detail.error || '请求参数不正确，请检查后重试。';
+  return '';
+}
+
+function readableError(error) {
+  if (typeof error === 'string') return error;
+  if (error && typeof error === 'object') return formatErrorDetail(error.message ?? error) || '请求失败，请稍后重试。';
+  return '请求失败，请稍后重试。';
 }
 
 function escapeHtml(value = '') { return String(value).replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]); }
@@ -747,8 +767,11 @@ function bindDialogs() {
       const form = $('#settings-form'); const body = Object.fromEntries(new FormData(form)); body.allow_source_upload = form.elements.allow_source_upload.checked;
       const exportBody = {output_directory: body.output_directory || ''}; delete body.output_directory;
       await Promise.all([request('/api/settings/provider', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)}), request('/api/settings/export', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(exportBody)})]);
-      const test = await request('/api/settings/provider/test', {method:'POST'}); result.textContent = '连接成功：' + test.provider_name + ' / ' + test.model_name; result.className = 'field-hint success-hint';
-    } catch (error) { result.textContent = error.message; result.className = 'field-hint error-hint'; } finally { setBusy(button, false); }
+      const test = await request('/api/settings/provider/test', {method:'POST'});
+      const provider = typeof test.provider_name === 'string' ? test.provider_name : '已选服务商';
+      const model = typeof test.model_name === 'string' ? test.model_name : '已配置模型';
+      result.textContent = '连接成功：' + provider + ' / ' + model; result.className = 'field-hint success-hint';
+    } catch (error) { result.textContent = readableError(error); result.className = 'field-hint error-hint'; } finally { setBusy(button, false); }
   });
 }
 function applyProviderPreset(form, overwrite = false) {
