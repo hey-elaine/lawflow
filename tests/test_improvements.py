@@ -93,6 +93,16 @@ class ImprovementsTest(unittest.TestCase):
         self.assertEqual(len(outline['sections']), 1)
         self.assertLessEqual(outline['target_total_words'], 720)
 
+    def test_outline_prompt_uses_actual_source_ids_not_legacy_placeholder(self):
+        request = self.main.NarrativeOutlineRequest(document_id='d', title='测试', source_block_ids=['actual:paragraph'], transform_mode='condense', target_duration=3)
+        blocks = [{'id':'actual:paragraph', 'kind':'paragraph', 'text':'材料正文', 'source_locator':'段落 1'}]
+        raw = {'sections':[{'heading':'问题','source_block_ids':['actual:paragraph']}]}
+        with patch.object(self.main, 'model_chat', return_value=json.dumps(raw)) as model:
+            self.main.create_narrative_outline(request, blocks)
+        prompt = model.call_args.args[0][-1]['content']
+        self.assertIn('actual:paragraph', prompt)
+        self.assertNotIn('b-00001', prompt)
+
     def test_profile_extraction_is_draft_and_validates_response(self):
         before = len(self.client.get('/api/narrative/profiles').json())
         draft = {'name':'叙事', 'description':'自然', 'instruction':'用具体问题切入，解释术语并用自然的承接句组织段落。'}
