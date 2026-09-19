@@ -11,6 +11,9 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
 async function request(url, options = {}) {
+  if (window.location.protocol === 'file:') {
+    throw new Error('当前打开的是静态源文件，无法连接本地服务。请通过 LawFlow.app 打开，或访问 http://127.0.0.1:8080。');
+  }
   const response = await fetch(url, options);
   if (!response.ok) {
     let detail = '请求失败，请稍后重试。';
@@ -22,6 +25,7 @@ async function request(url, options = {}) {
 
 function formatErrorDetail(detail) {
   if (typeof detail === 'string') return detail;
+  if (detail instanceof Error) return typeof detail.message === 'string' ? detail.message : '请求失败，请稍后重试。';
   if (Array.isArray(detail)) {
     const messages = detail.map(item => {
       if (!item || typeof item !== 'object') return String(item || '');
@@ -30,14 +34,23 @@ function formatErrorDetail(detail) {
     }).filter(Boolean);
     return messages.join('；');
   }
-  if (detail && typeof detail === 'object') return detail.message || detail.error || '请求参数不正确，请检查后重试。';
+  if (detail && typeof detail === 'object') {
+    for (const key of ['message', 'detail', 'error', 'msg']) {
+      const value = formatErrorDetail(detail[key]);
+      if (value) return value;
+    }
+    try {
+      const text = JSON.stringify(detail);
+      return text && text !== '{}' ? text : '请求参数不正确，请检查后重试。';
+    } catch (_) {
+      return '请求参数不正确，请检查后重试。';
+    }
+  }
   return '';
 }
 
 function readableError(error) {
-  if (typeof error === 'string') return error;
-  if (error && typeof error === 'object') return formatErrorDetail(error.message ?? error) || '请求失败，请稍后重试。';
-  return '请求失败，请稍后重试。';
+  return formatErrorDetail(error) || '请求失败，请稍后重试。';
 }
 
 function escapeHtml(value = '') { return String(value).replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]); }
@@ -793,7 +806,15 @@ async function initHomeSkillSection() {
   const copy = $('#copy-skill-invoke');
   if (copy) copy.addEventListener('click', async () => { const example = '请读取并按此 Skill 执行：https://github.com/donghyq/lawflow/tree/main/skills/lawflow\n\n$lawflow 使用 LawFlow 处理本地项目中的材料：先读取受控上下文，给出可确认的大纲，再将成稿回写并导出 DOCX。'; try { await navigator.clipboard.writeText(example); showMessage('已复制 GitHub Skill 链接与调用示例。'); } catch (_) { showMessage('浏览器未授权剪贴板，请手动复制。', true); } });
 }
-async function boot() { bindDialogs(); initHomeSkillSection(); try { await Promise.all([loadProjects(), loadDailyBriefSubscriptions()]); } catch (error) { showMessage('无法连接本地服务：' + error.message, true); } }
+async function boot() {
+  bindDialogs();
+  if (window.location.protocol === 'file:') {
+    showMessage('你正在打开静态源文件。请通过 LawFlow.app 打开，或访问 http://127.0.0.1:8080；模型测试、项目和导出功能仅在本地服务中可用。', true);
+    return;
+  }
+  initHomeSkillSection();
+  try { await Promise.all([loadProjects(), loadDailyBriefSubscriptions()]); } catch (error) { showMessage('无法连接本地服务：' + readableError(error), true); }
+}
 document.addEventListener('DOMContentLoaded', boot);
 
 
