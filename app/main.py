@@ -151,7 +151,7 @@ class ProviderSettings(BaseModel):
     tts_model: str = ""
     tts_voice: str = ""
     tts_api_key: str = ""
-    tts_provider: Literal["compatible", "minimax"] = "compatible"
+    tts_provider: Literal["compatible", "minimax", "macos_say"] = "compatible"
     tts_speed: float = Field(default=1.0, ge=0.5, le=2.0)
     tts_instructions: str = Field(default="", max_length=1000)
     asr_base_url: str = ""
@@ -1081,6 +1081,23 @@ def speech_chunk(text: str, settings: dict) -> tuple[bytes, str]:
     base = (settings.get("tts_base_url") or "").rstrip("/")
     key = settings.get("tts_api_key") or ""
     speed = float(settings.get("tts_speed", 1))
+    if provider == "macos_say":
+        if sys.platform != "darwin" or not shutil.which("say"):
+            raise HTTPException(400, "macOS 免费语音仅能在安装了 say 命令的 Mac 上使用。")
+        voice = settings.get("tts_voice") or "Tingting"
+        speech_rate = max(90, min(360, round(175 * speed)))
+        try:
+            with tempfile.TemporaryDirectory(prefix="lawflow-macos-say-") as temp:
+                aiff_path = Path(temp) / "speech.aiff"
+                mp3_path = Path(temp) / "speech.mp3"
+                subprocess.run(["say", "-v", voice, "-r", str(speech_rate), "-o", str(aiff_path), text], check=True, capture_output=True, timeout=120)
+                subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(aiff_path), "-codec:a", "libmp3lame", "-b:a", "128k", str(mp3_path)], check=True, capture_output=True, timeout=120)
+                audio = mp3_path.read_bytes()
+        except (subprocess.SubprocessError, OSError) as error:
+            raise HTTPException(502, "macOS 本地语音合成失败。请确认系统已安装“婷婷”音色和 FFmpeg。") from error
+        if not audio:
+            raise HTTPException(502, "macOS 本地语音未生成可用音频。")
+        return audio, "macos-say:" + voice
     if provider == "minimax":
         base = base or "https://api.minimax.cn/v1"
         model = settings.get("tts_model") or "speech-2.8-hd"

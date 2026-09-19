@@ -234,6 +234,17 @@ class ImprovementsTest(unittest.TestCase):
             with self.assertRaises(self.main.HTTPException):
                 self.main.speech_chunk('test', {'tts_base_url':'https://example.com','tts_api_key':'secret'})
 
+    def test_macos_say_tts_uses_local_voice_without_api_key(self):
+        with patch.object(self.main.sys, 'platform', 'darwin'), patch.object(self.main.shutil, 'which', return_value='/usr/bin/say'), patch.object(self.main.subprocess, 'run') as run:
+            def make_output(args, **_kwargs):
+                target = Path(args[-1])
+                target.write_bytes(b'mp3')
+                return subprocess.CompletedProcess(args, 0)
+            run.side_effect = make_output
+            audio, provider = self.main.speech_chunk('本地语音测试。', {'tts_provider':'macos_say','tts_voice':'Tingting','tts_speed':1})
+        self.assertEqual(audio, b'mp3')
+        self.assertEqual(provider, 'macos-say:Tingting')
+
     def test_real_ffmpeg_merge_and_measured_duration(self):
         path = self.main.DATA_DIR / 'fixture.mp3'
         subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','sine=frequency=440:duration=1','-y',str(path)], check=True)
