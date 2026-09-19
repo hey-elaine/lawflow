@@ -18,7 +18,7 @@ async function request(url, options = {}) {
   if (!response.ok) {
     let detail = '请求失败，请稍后重试。';
     try { detail = formatErrorDetail((await response.json()).detail) || detail; } catch (_) {}
-    throw new Error(detail);
+    throw new Error(typeof detail === 'string' ? detail : '请求失败，请检查设置后重试。');
   }
   return (response.headers.get('content-type') || '').includes('application/json') ? response.json() : response;
 }
@@ -50,7 +50,8 @@ function formatErrorDetail(detail) {
 }
 
 function readableError(error) {
-  return formatErrorDetail(error) || '请求失败，请稍后重试。';
+  const message = formatErrorDetail(error);
+  return typeof message === 'string' && message ? message : '请求失败，请稍后重试。';
 }
 
 function escapeHtml(value = '') { return String(value).replace(/[&<>'"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' })[char]); }
@@ -784,7 +785,11 @@ function bindDialogs() {
       const provider = typeof test.provider_name === 'string' ? test.provider_name : '已选服务商';
       const model = typeof test.model_name === 'string' ? test.model_name : '已配置模型';
       result.textContent = '连接成功：' + provider + ' / ' + model; result.className = 'field-hint success-hint';
-    } catch (error) { result.textContent = readableError(error); result.className = 'field-hint error-hint'; } finally { setBusy(button, false); }
+    } catch (error) {
+      const message = readableError(error);
+      result.textContent = typeof message === 'string' ? message : '模型设置校验失败，请检查必填项。';
+      result.className = 'field-hint error-hint';
+    } finally { setBusy(button, false); }
   });
 }
 function applyProviderPreset(form, overwrite = false) {
