@@ -3,6 +3,8 @@ __pycache__/
 .venv/
 data/app.db
 data/projects/
+data/audio/
+data/backups/
 data/exports/
 data/temp/
 data/logs/

@@ -27,6 +27,48 @@ class ImprovementsTest(unittest.TestCase):
         self.assertIn('额度不足', message)
         self.assertNotIn('credit_balance_exhausted', message)
 
+    def test_version_endpoint_reports_public_release_update(self):
+        import httpx
+        response = httpx.Response(
+            200,
+            json={
+                'tag_name': 'v0.2.0',
+                'html_url': 'https://github.com/donghyq/lawflow-releases/releases/tag/v0.2.0',
+            },
+            request=httpx.Request('GET', 'https://api.github.com/repos/donghyq/lawflow-releases/releases/latest'),
+        )
+        with patch.object(self.main.httpx, 'get', return_value=response):
+            result = self.client.get('/api/app/version')
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.json()['current_version'], '0.1.0')
+        self.assertEqual(result.json()['latest_version'], '0.2.0')
+        self.assertTrue(result.json()['update_available'])
+        self.assertTrue(result.json()['check_succeeded'])
+        self.assertEqual(self.client.get('/api/health').json()['version'], '0.1.0')
+
+    def test_version_check_failure_never_blocks_local_app(self):
+        import httpx
+        with patch.object(self.main.httpx, 'get', side_effect=httpx.ConnectError('offline')):
+            result = self.client.get('/api/app/version')
+        self.assertEqual(result.status_code, 200)
+        self.assertFalse(result.json()['update_available'])
+        self.assertFalse(result.json()['check_succeeded'])
+
+    def test_existing_database_is_backed_up_before_first_schema_migration(self):
+        import sqlite3
+        legacy_dir = self.temp_dir / 'legacy-upgrade'
+        legacy_dir.mkdir()
+        legacy_db = legacy_dir / 'app.db'
+        with sqlite3.connect(legacy_db) as conn:
+            conn.execute("CREATE TABLE legacy_marker (value TEXT)")
+            conn.execute("INSERT INTO legacy_marker VALUES ('keep-me')")
+        with patch.object(self.main, 'DATA_DIR', legacy_dir), patch.object(self.main, 'DB_PATH', legacy_db):
+            self.main.init_db()
+            backups = list((legacy_dir / 'backups').glob('app-before-schema-*.db'))
+        self.assertEqual(len(backups), 1)
+        with sqlite3.connect(backups[0]) as conn:
+            self.assertEqual(conn.execute('SELECT value FROM legacy_marker').fetchone()[0], 'keep-me')
+
     def test_chatgpt_mcp_exposes_core_lawflow_tools(self):
         import asyncio
         tools = asyncio.run(self.main.chatgpt_mcp.list_tools())
@@ -187,6 +229,25 @@ class ImprovementsTest(unittest.TestCase):
         self.assertEqual(result.status_code, 201)
         self.assertTrue(result.json()["naturalization_skipped"])
         self.assertFalse(result.json()["naturalized"])
+
+    def test_project_deletion_removes_managed_audio_file(self):
+        project, _, _, content = self.make_content()
+        audio = self.client.post(
+            f"/api/projects/{project['id']}/audio-scripts",
+            json={'narrative_content_id': content['id']},
+        ).json()
+        audio_dir = self.main.DATA_DIR / 'audio'
+        audio_dir.mkdir(parents=True, exist_ok=True)
+        audio_path = audio_dir / 'managed-output.mp3'
+        audio_path.write_bytes(b'audio')
+        with self.main.db() as conn:
+            conn.execute(
+                "UPDATE audio_outputs SET audio_path=?, status='ready' WHERE id=?",
+                (str(audio_path), audio['id']),
+            )
+        self.assertTrue(audio_path.exists())
+        self.assertEqual(self.client.delete('/api/projects/' + project['id']).status_code, 204)
+        self.assertFalse(audio_path.exists())
 
     def test_external_verification_blocks_narrative_and_unconfirmed_audio_blocks_full_mp3(self):
         project = self.client.post('/api/projects', json={'name':'对外内容','scenario':'legal_podcast','transform_mode':'enrich','verification_mode':'external_verify'}).json()

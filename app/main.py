@@ -30,6 +30,8 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from pydantic import BaseModel, Field
 
+from app.version import __version__
+
 ROOT_DIR = Path(__file__).resolve().parent.parent
 if getattr(sys, "frozen", False):
     # 打包为 macOS App 后，程序资源位于只读 App Bundle；用户项目必须写入 Application Support。
@@ -46,7 +48,10 @@ DEFAULT_EXPORT_DIR = Path(os.getenv("LAWFLOW_EXPORT_DIR", str(Path.home() / "Des
 for directory in (DATA_DIR, PROJECTS_DIR, EXPORTS_DIR, DATA_DIR / "temp", DATA_DIR / "logs"):
     directory.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="律析 LawFlow", version="0.1.0")
+app = FastAPI(title="律析 LawFlow", version=__version__)
+
+RELEASE_REPOSITORY = os.getenv("LAWFLOW_RELEASE_REPOSITORY", "donghyq/lawflow-releases").strip()
+SCHEMA_VERSION = 1
 
 MODEL_PRESETS = {
     "openai": {"provider_name": "OpenAI", "base_url": "https://api.openai.com/v1", "model_name": "gpt-4.1-mini", "tts_model": "gpt-4o-mini-tts"},
@@ -314,6 +319,51 @@ def parse_json(value: str | None, default):
         return default
 
 
+def version_tuple(value: str) -> tuple[int, int, int]:
+    """Parse the numeric part of a semantic version for update comparisons."""
+    match = re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?", value.strip())
+    if not match:
+        raise ValueError("invalid semantic version")
+    return tuple(int(part) for part in match.groups())
+
+
+def latest_release_status() -> dict:
+    """Check the public release repository without blocking app use on failure."""
+    result = {
+        "current_version": __version__,
+        "latest_version": __version__,
+        "update_available": False,
+        "release_url": "",
+        "release_repository": RELEASE_REPOSITORY,
+        "check_succeeded": False,
+    }
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", RELEASE_REPOSITORY):
+        return result
+    try:
+        response = httpx.get(
+            f"https://api.github.com/repos/{RELEASE_REPOSITORY}/releases/latest",
+            headers={"Accept": "application/vnd.github+json", "User-Agent": f"LawFlow/{__version__}"},
+            timeout=5,
+            follow_redirects=False,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        tag = str(payload.get("tag_name", "")).strip()
+        url = str(payload.get("html_url", "")).strip()
+        if not url.startswith(f"https://github.com/{RELEASE_REPOSITORY}/releases/"):
+            return result
+        latest = version_tuple(tag)
+        result.update(
+            latest_version=".".join(str(part) for part in latest),
+            update_available=latest > version_tuple(__version__),
+            release_url=url,
+            check_succeeded=True,
+        )
+    except (httpx.HTTPError, TypeError, ValueError, json.JSONDecodeError):
+        pass
+    return result
+
+
 def resolve_export_directory(value: str | None = None) -> Path:
     """返回用户明确配置的本地导出根目录，并在首次导出时创建它。"""
     raw_path = (value or str(DEFAULT_EXPORT_DIR)).strip()
@@ -346,7 +396,38 @@ def db() -> sqlite3.Connection:
     return conn
 
 
+def backup_database_before_migration() -> Path | None:
+    """Create a bounded SQLite backup before applying a newer schema."""
+    if not DB_PATH.is_file() or DB_PATH.stat().st_size == 0:
+        return None
+    with sqlite3.connect(DB_PATH) as source:
+        metadata_exists = source.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='app_metadata'"
+        ).fetchone()
+        current_version = 0
+        if metadata_exists:
+            row = source.execute("SELECT value FROM app_metadata WHERE key='schema_version'").fetchone()
+            if row:
+                try:
+                    current_version = int(row[0])
+                except (TypeError, ValueError):
+                    current_version = 0
+        if current_version >= SCHEMA_VERSION:
+            return None
+        backup_dir = DATA_DIR / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        backup_path = backup_dir / f"app-before-schema-{SCHEMA_VERSION}-{stamp}.db"
+        with sqlite3.connect(backup_path) as target:
+            source.backup(target)
+    backups = sorted(backup_dir.glob("app-before-schema-*.db"), key=lambda item: item.stat().st_mtime, reverse=True)
+    for stale in backups[3:]:
+        stale.unlink(missing_ok=True)
+    return backup_path
+
+
 def init_db() -> None:
+    backup_database_before_migration()
     conn = db()
     conn.executescript(
         """
@@ -512,6 +593,11 @@ def init_db() -> None:
             UNIQUE(subscription_id, item_key)
         );
         CREATE INDEX IF NOT EXISTS idx_daily_brief_subscriptions_active ON daily_brief_subscriptions(active, daily_time);
+        CREATE TABLE IF NOT EXISTS app_metadata (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
         """
     )
     existing_columns = {row[1] for row in conn.execute("PRAGMA table_info(projects)").fetchall()}
@@ -528,6 +614,11 @@ def init_db() -> None:
     source_columns = {row[1] for row in conn.execute("PRAGMA table_info(source_documents)").fetchall()}
     if "source_url" not in source_columns:
         conn.execute("ALTER TABLE source_documents ADD COLUMN source_url TEXT NOT NULL DEFAULT ''")
+    conn.execute(
+        "INSERT INTO app_metadata (key, value, updated_at) VALUES ('schema_version', ?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+        (str(SCHEMA_VERSION), now_iso()),
+    )
     conn.commit()
     conn.close()
 
@@ -1509,7 +1600,12 @@ async def protect_chatgpt_mcp(request: Request, call_next):
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "product": "LawFlow", "time": now_iso()}
+    return {"status": "ok", "product": "LawFlow", "version": __version__, "time": now_iso()}
+
+
+@app.get("/api/app/version")
+def app_version():
+    return latest_release_status()
 
 
 @app.get("/api/projects")
@@ -1619,12 +1715,24 @@ def create_demo_project():
 
 @app.delete("/api/projects/{project_id}", status_code=204)
 def delete_project(project_id: str):
-    """删除项目数据库记录及项目工作目录；已经导出的成果包不会被误删。"""
+    """删除项目记录、材料和应用管理的派生音频；已导出的成果包保留。"""
     project_or_404(project_id)
     conn = db()
+    audio_paths = [row["audio_path"] for row in conn.execute(
+        "SELECT audio_path FROM audio_outputs WHERE project_id = ? AND audio_path != ''",
+        (project_id,),
+    ).fetchall()]
     conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
     conn.commit()
     conn.close()
+    audio_root = (DATA_DIR / "audio").resolve()
+    for value in audio_paths:
+        try:
+            path = Path(value).resolve()
+            if path.is_relative_to(audio_root):
+                path.unlink(missing_ok=True)
+        except OSError as error:
+            raise HTTPException(status_code=500, detail=f"项目已删除，但清理本地音频失败：{error}") from error
     project_directory = PROJECTS_DIR / project_id
     try:
         shutil.rmtree(project_directory, ignore_errors=True)

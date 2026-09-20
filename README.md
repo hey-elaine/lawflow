@@ -4,6 +4,12 @@
 
 首版不替代律师作出法律意见。所有生成内容均应经过律师审核后使用。
 
+## 客户端下载与更新
+
+LawFlow 的客户版采用本地桌面 App，不依赖公共业务后端。正式版本通过独立的公共 GitHub Releases 仓库提供签名、公证后的 macOS 安装包；应用启动时只检查该仓库的最新版本，检查失败不会影响本地使用。
+
+源码仓库当前为私有仓库，不能作为普通客户的直接下载页。首次发布前需创建公共二进制仓库并配置签名、公证和 Release Token。完整流程见 [`docs/desktop-release.md`](docs/desktop-release.md)。
+
 ## 已实现能力
 
 - 本地项目空间：按专题、客户或案件归档材料和输出物；
@@ -21,7 +27,7 @@
 使用当前 Python 环境：
 
 ```bash
-cd /Users/hanyudong/Projects/lawflow
+cd /path/to/lawflow
 python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8080
 ```
 
@@ -40,7 +46,7 @@ docker compose up --build
 ## 测试
 
 ```bash
-cd /Users/hanyudong/Projects/lawflow
+cd /path/to/lawflow
 python3 -m unittest discover -s tests -v
 ```
 
@@ -52,6 +58,8 @@ python3 -m unittest discover -s tests -v
 data/
 ├── app.db
 ├── projects/
+├── audio/
+├── backups/
 ├── exports/
 ├── temp/
 └── logs/

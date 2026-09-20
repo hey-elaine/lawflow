@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>律声 LawFlow｜法律内容学习与表达工作台</title>
+  <title>律析 LawFlow｜法律内容学习与表达工作台</title>
   <link rel="stylesheet" href="/styles.css?v=20260919-2" />
 </head>
 <body>
@@ -14,6 +14,7 @@
   </header>
 
   <main id="top">
+    <div id="update-notice" class="update-notice hidden" role="status"></div>
     <section class="hero shell">
       <div class="hero-copy">
         <p class="eyebrow">面向律师、法务与专业内容创作者</p>
@@ -72,7 +73,7 @@
     </section>
   </main>
 
-  <footer class="footer shell"><span>律声 LawFlow · 法律材料转译与专业表达工作台</span><span>材料整理 · 讲稿审阅 · 按需核验</span></footer>
+  <footer class="footer shell"><span>律析 LawFlow · 法律材料转译与专业表达工作台</span><span id="app-version">材料整理 · 讲稿审阅 · 按需核验</span></footer>
 
   <dialog id="project-dialog" class="dialog"><form id="project-form"><div class="dialog-header"><h2>新建内容任务</h2><button type="button" aria-label="关闭" class="icon-button" data-close-dialog="project-dialog">×</button></div><label>任务名称<input required name="name" maxlength="120" placeholder="例如：本周数据合规晨间速听" /></label><label>客户 / 主题（可选）<input name="client_name" maxlength="120" placeholder="例如：跨境数据合规" /></label><fieldset><legend>选择应用场景</legend><div class="scenario-options"><label><input type="radio" name="scenario" value="daily_brief" />晨间 / 晚间法律速听<small>单篇资讯，短时精炼收听</small></label><label><input type="radio" name="scenario" value="topic_learning" checked />专题学习与表达<small>围绕一份素材形成分章节学习内容</small></label><label><input type="radio" name="scenario" value="speaking_note" />客户培训 / Speak Note<small>准备培训、发言和对外交流讲稿</small></label><label><input type="radio" name="scenario" value="legal_podcast" />法律科普播客<small>实务热点与经验积累的对外表达</small></label></div></fieldset><label>项目说明（可选）<textarea name="description" maxlength="1000" placeholder="记录学习主题、培训对象或表达目的"></textarea></label><input type="hidden" name="transform_mode" value="adapt" /><input type="hidden" name="verification_mode" value="material_check" /><input type="hidden" name="target_duration" value="10" /><input type="hidden" name="audio_enabled" value="true" /><div class="dialog-actions"><button type="button" class="button button-outline" data-close-dialog="project-dialog">取消</button><button type="submit" class="button button-primary">创建内容任务</button></div></form></dialog>
 

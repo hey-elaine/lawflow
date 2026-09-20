@@ -174,3 +174,6 @@
 #profile-dialog textarea { width: 100%; font: inherit; }
 #profile-dialog details { margin: 16px 0; }
 .workflow-summary { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; }
+.update-notice { border-bottom: 1px solid #d7dfd8; background: #edf6ef; color: #244d3b; }
+.update-notice > div { position: relative; display: flex; align-items: center; justify-content: center; gap: 14px; min-height: 52px; }
+.update-notice .icon-button { position: absolute; right: 0; }

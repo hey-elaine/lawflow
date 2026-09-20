@@ -688,7 +688,7 @@ function renderTasksPanel() {
 }
 async function saveTask(row) { const button = $('.save-task', row); try { setBusy(button, true, '保存…'); await request('/api/tasks/' + row.dataset.taskId, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: $('.task-status', row).value, owner: $('.task-owner', row).value.trim(), due_date: $('.task-due', row).value }) }); appState.selectedProject = await request('/api/projects/' + appState.selectedProject.project.id); renderProjectDetail(); showMessage('任务已保存。'); } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); } }
 async function exportProject() { const button = $('#export-project'); try { setBusy(button, true, '正在导出…'); const output = await request('/api/projects/' + appState.selectedProject.project.id + '/exports', { method: 'POST' }); showMessage('成果包已写入：' + output.output_dir); } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); } }
-async function deleteProject() { const project = appState.selectedProject?.project; if (!project) return; const confirmed = window.confirm('删除项目“' + project.name + '”？\n\n项目中的原始材料、章节方案、工作备忘录和任务记录将从本机工作目录删除。已经导出的成果包不会删除。'); if (!confirmed) return; const button = $('#delete-project'); try { setBusy(button, true, '删除中…'); await request('/api/projects/' + project.id, { method: 'DELETE' }); appState.selectedProjectId = null; appState.selectedProject = null; appState.selectedDocument = null; appState.activePlan = null; $('#project-detail').classList.add('hidden'); $('#project-detail').innerHTML = ''; await loadProjects(); showMessage('项目已删除。'); } catch (error) { showMessage(error.message, true); } finally { if (button?.isConnected) setBusy(button, false); } }
+async function deleteProject() { const project = appState.selectedProject?.project; if (!project) return; const confirmed = window.confirm('删除项目“' + project.name + '”？\n\n项目中的原始材料、章节方案、讲稿、音频和任务记录将从本机工作目录删除。已经导出的成果包不会删除。'); if (!confirmed) return; const button = $('#delete-project'); try { setBusy(button, true, '删除中…'); await request('/api/projects/' + project.id, { method: 'DELETE' }); appState.selectedProjectId = null; appState.selectedProject = null; appState.selectedDocument = null; appState.activePlan = null; $('#project-detail').classList.add('hidden'); $('#project-detail').innerHTML = ''; await loadProjects(); showMessage('项目及本地派生音频已删除。'); } catch (error) { showMessage(error.message, true); } finally { if (button?.isConnected) setBusy(button, false); } }
 function showSourceOverlay(title, html) { const overlay = document.createElement('div'); overlay.className = 'source-modal'; overlay.innerHTML = '<div class="source-modal-card"><div class="source-modal-top"><div><p class="eyebrow">原始材料依据</p><h3>' + escapeHtml(title) + '</h3></div><button class="icon-button" aria-label="关闭">×</button></div><div>' + html + '</div></div>'; $('.icon-button', overlay).addEventListener('click', () => overlay.remove()); overlay.addEventListener('click', event => { if (event.target === overlay) overlay.remove(); }); document.body.appendChild(overlay); }
 
 function bindDialogs() {
@@ -811,6 +811,20 @@ async function initHomeSkillSection() {
   const copy = $('#copy-skill-invoke');
   if (copy) copy.addEventListener('click', async () => { const example = '请读取并按此 Skill 执行：https://github.com/donghyq/lawflow/tree/main/skills/lawflow\n\n$lawflow 使用 LawFlow 处理本地项目中的材料：先读取受控上下文，给出可确认的大纲，再将成稿回写并导出 DOCX。'; try { await navigator.clipboard.writeText(example); showMessage('已复制 GitHub Skill 链接与调用示例。'); } catch (_) { showMessage('浏览器未授权剪贴板，请手动复制。', true); } });
 }
+async function checkForUpdates() {
+  const notice = $('#update-notice');
+  try {
+    const status = await request('/api/app/version');
+    const version = $('#app-version');
+    if (version) version.textContent = '版本 ' + status.current_version + ' · 材料整理 · 讲稿审阅 · 按需核验';
+    if (!notice || !status.update_available || !status.release_url) return;
+    notice.innerHTML = '<div class="shell"><span>LawFlow ' + escapeHtml(status.latest_version) + ' 已发布。</span><a class="button button-outline button-small" target="_blank" rel="noreferrer" href="' + escapeHtml(status.release_url) + '">前往 GitHub 下载</a><button class="icon-button" aria-label="关闭更新提示">×</button></div>';
+    notice.classList.remove('hidden');
+    $('.icon-button', notice)?.addEventListener('click', () => notice.classList.add('hidden'));
+  } catch (_) {
+    // Update checks are best-effort and must never block the local application.
+  }
+}
 async function boot() {
   bindDialogs();
   if (window.location.protocol === 'file:') {
@@ -818,6 +832,7 @@ async function boot() {
     return;
   }
   initHomeSkillSection();
+  checkForUpdates();
   try { await Promise.all([loadProjects(), loadDailyBriefSubscriptions()]); } catch (error) { showMessage('无法连接本地服务：' + readableError(error), true); }
 }
 document.addEventListener('DOMContentLoaded', boot);
