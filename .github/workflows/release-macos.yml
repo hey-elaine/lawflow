@@ -1,0 +1,125 @@
+name: Release macOS desktop app
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m unittest discover -s tests -v
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            architecture: arm64
+          - runner: macos-15-intel
+            architecture: x86_64
+    runs-on: ${{ matrix.runner }}
+    env:
+      APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt pyinstaller
+      - name: Verify release version
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          APP_VERSION=$(python -c 'from app.version import __version__; print(__version__)')
+          test "$VERSION" = "$APP_VERSION" || { echo "标签 $VERSION 与应用版本 $APP_VERSION 不一致"; exit 1; }
+      - name: Import Developer ID certificate
+        run: |
+          test -n "$APPLE_CERTIFICATE_P12_BASE64"
+          test -n "$APPLE_CERTIFICATE_PASSWORD"
+          test -n "$APPLE_SIGNING_IDENTITY"
+          test -n "$KEYCHAIN_PASSWORD"
+          python - <<'PY'
+          import base64, os
+          from pathlib import Path
+          Path(os.environ['RUNNER_TEMP'], 'lawflow-certificate.p12').write_bytes(
+              base64.b64decode(os.environ['APPLE_CERTIFICATE_P12_BASE64'])
+          )
+          PY
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/lawflow.keychain-db"
+          security set-keychain-settings -lut 21600 "$RUNNER_TEMP/lawflow.keychain-db"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/lawflow.keychain-db"
+          security import "$RUNNER_TEMP/lawflow-certificate.p12" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$RUNNER_TEMP/lawflow.keychain-db"
+          security list-keychain -d user -s "$RUNNER_TEMP/lawflow.keychain-db"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$RUNNER_TEMP/lawflow.keychain-db"
+      - name: Build signed DMG
+        env:
+          LAWFLOW_VERSION: ${{ github.ref_name }}
+          LAWFLOW_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          LAWFLOW_REQUIRE_SIGNING: "1"
+        run: |
+          export LAWFLOW_VERSION=${LAWFLOW_VERSION#v}
+          bash scripts/build_macos_app.sh
+      - name: Notarize DMG
+        run: |
+          test -n "$APPLE_API_KEY_P8_BASE64"
+          test -n "$APPLE_API_KEY_ID"
+          test -n "$APPLE_API_ISSUER_ID"
+          python - <<'PY'
+          import base64, os
+          from pathlib import Path
+          Path(os.environ['RUNNER_TEMP'], 'AuthKey.p8').write_bytes(
+              base64.b64decode(os.environ['APPLE_API_KEY_P8_BASE64'])
+          )
+          PY
+          DMG_PATH=$(find dist -maxdepth 1 -name 'LawFlow-*.dmg' -print -quit)
+          APPLE_API_KEY_PATH="$RUNNER_TEMP/AuthKey.p8" bash scripts/notarize_macos_app.sh "$DMG_PATH"
+      - name: Verify architecture
+        run: |
+          test "$(uname -m)" = "${{ matrix.architecture }}"
+          file dist/LawFlow.app/Contents/MacOS/LawFlow
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lawflow-macos-${{ matrix.architecture }}
+          path: |
+            dist/LawFlow-*.dmg
+            dist/LawFlow-*.dmg.sha256
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ secrets.LAWFLOW_RELEASE_TOKEN }}
+      RELEASE_REPOSITORY: ${{ vars.LAWFLOW_RELEASE_REPOSITORY }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish customer download release
+        run: |
+          test -n "$GH_TOKEN" || { echo "缺少 LAWFLOW_RELEASE_TOKEN"; exit 1; }
+          test -n "$RELEASE_REPOSITORY" || { echo "缺少 LAWFLOW_RELEASE_REPOSITORY"; exit 1; }
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$RELEASE_REPOSITORY" \
+            --title "LawFlow $GITHUB_REF_NAME" \
+            --notes "LawFlow 本地桌面客户端。请按 Mac 芯片下载对应 DMG；安装包已经 Developer ID 签名并通过 Apple 公证。"
