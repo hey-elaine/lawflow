@@ -238,6 +238,33 @@ class ImprovementsTest(unittest.TestCase):
         evidence = json.loads((output / 'evidence-map.json').read_text())
         self.assertTrue(evidence[0]['section_sources'])
 
+    def test_generation_drops_model_supplied_section_heading(self):
+        outline = {'title': '测试讲稿', 'opening_angle': '', 'closing_angle': '', 'sections': [
+            {'id': 's1', 'heading': '第一节 适用范围', 'purpose': '', 'key_points': [], 'source_block_ids': ['b'], 'target_words': 100},
+        ]}
+        blocks = [{'id': 'b', 'kind': 'paragraph', 'text': '材料正文', 'source_locator': '段落 1'}]
+        with patch.object(self.main, 'model_chat', return_value='## 第一节 适用范围\n\n正文内容。'):
+            markdown, _, _ = self.main.generate_narrative_markdown(outline, blocks, '读者', 'law_podcast_v4')
+        self.assertEqual(markdown.count('第一节 适用范围'), 1)
+        self.assertIn('正文内容', markdown)
+
+    def test_duplicate_section_headings_are_collapsed_for_display_and_export(self):
+        project, source, ids, content = self.make_content()
+        with self.main.db() as conn:
+            conn.execute(
+                'UPDATE narrative_contents SET markdown=? WHERE id=?',
+                ('# 测试讲稿\n\n## 第一节\n\n## 第一节\n\n第一节正文。\n\n## 第二节\n\n第二节正文。', content['id']),
+            )
+        conn.close()
+        state = self.client.get('/api/projects/' + project['id']).json()
+        markdown = state['narrative_contents'][0]['markdown']
+        self.assertEqual(markdown.count('## 第一节'), 1)
+        self.assertEqual(markdown.count('## 第二节'), 1)
+
+        exported = self.client.post('/api/narrative-contents/' + content['id'] + '/export')
+        exported_markdown = Path(exported.json()['markdown_path']).read_text(encoding='utf-8')
+        self.assertEqual(exported_markdown.count('## 第一节'), 1)
+
     def test_audio_script_can_target_a_single_section(self):
         project, source, ids, content = self.make_content()
         with self.main.db() as conn:

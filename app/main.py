@@ -1390,6 +1390,28 @@ def create_narrative_outline(request: NarrativeOutlineRequest, blocks: list[dict
     return normalize_narrative_outline(parse_model_json(raw), request, blocks)
 
 
+def collapse_duplicate_headings(markdown: str) -> str:
+    """去掉相邻重复的 Markdown 标题行。
+
+    模型有时会自带一节标题，拼接后与生成的小标题重复；这里做一次幂等清理，
+    既用于展示，也用于 Markdown 与 DOCX 导出。
+    """
+    output: list[str] = []
+    last_heading: str | None = None
+    for line in markdown.splitlines():
+        stripped = line.strip()
+        heading = re.match(r"^(#{1,6})[ \t]+(.+)$", stripped)
+        if heading:
+            title = clean_text(heading.group(2))
+            if title == last_heading:
+                continue
+            last_heading = title
+        elif stripped:
+            last_heading = None
+        output.append(line)
+    return "\n".join(output)
+
+
 def generate_narrative_markdown(outline: dict, blocks: list[dict], audience: str, style_profile: str, transform_mode: str = "adapt", scenario: str = "topic_learning", target_duration: int = 10) -> tuple[str, list[dict], dict]:
     profile = get_style_profiles().get(style_profile)
     if profile is None:
@@ -1430,7 +1452,8 @@ def generate_narrative_markdown(outline: dict, blocks: list[dict], audience: str
         if section_index == len(outline["sections"]) - 1:
             prompt += "\n请将以下收束思路写成实际结尾，不照抄写作指令：" + outline.get("closing_angle", "")
         section_text = model_chat([{"role": "system", "content": "你是严谨的法律知识内容作者，忠实于材料，不编造事实。"}, {"role": "user", "content": prompt}], temperature=0.55, max_tokens=max(1200, min(5000, section["target_words"] * 2)))
-        section_text = re.sub(r"^#\s+.*\n", "", section_text.strip())
+        # 模型经常自己重复本节标题；统一去掉正文开头的一至多行标题，避免与下方拼接的小标题重复。
+        section_text = re.sub(r"^(?:#{1,6}[ \t]+[^\n]*\r?\n+)+", "", section_text.strip()).strip()
         rendered_sections.append("## {}\n\n{}".format(section["heading"], section_text))
         section_sources.append({"section_id": section["id"], "heading": section["heading"], "source_block_ids": section["source_block_ids"]})
     markdown = "# {}\n".format(outline["title"])
@@ -1818,6 +1841,7 @@ def get_project(project_id: str):
         outline["source_block_ids"] = parse_json(outline.pop("source_block_ids_json"), [])
         outline["outline"] = parse_json(outline.pop("outline_json"), {})
     for content in narrative_contents:
+        content["markdown"] = collapse_duplicate_headings(content["markdown"])
         content["section_sources"] = parse_json(content.pop("section_sources_json"), [])
         content["model"] = parse_json(content.pop("model_json"), {})
     for audio in audio_outputs:
@@ -2383,8 +2407,9 @@ def export_narrative_content(content_id: str):
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     markdown_path = output_root / f"{safe_title}-{stamp}.md"
     docx_path = output_root / f"{safe_title}-{stamp}.docx"
-    markdown_path.write_text(content["markdown"], encoding="utf-8")
-    markdown_to_docx(content["markdown"], docx_path)
+    markdown = collapse_duplicate_headings(content["markdown"])
+    markdown_path.write_text(markdown, encoding="utf-8")
+    markdown_to_docx(markdown, docx_path)
     return {"markdown_path": str(markdown_path), "docx_path": str(docx_path), "download_url": f"/api/narrative-contents/{content_id}/download"}
 
 
@@ -2591,7 +2616,7 @@ def download_narrative_docx(content_id: str):
     temp_dir.mkdir(parents=True, exist_ok=True)
     safe_title = re.sub(r"[\\/:*?\"<>|]", "_", content["title"]).strip() or "lawflow-narrative"
     docx_path = temp_dir / f"{safe_title}.docx"
-    markdown_to_docx(content["markdown"], docx_path)
+    markdown_to_docx(collapse_duplicate_headings(content["markdown"]), docx_path)
     return FileResponse(docx_path, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", filename=f"{safe_title}.docx")
 
 
