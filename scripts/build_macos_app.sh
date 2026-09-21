@@ -26,8 +26,19 @@ pyinstaller \
   --collect-all edge_tts \
   scripts/lawflow_desktop.py
 
-/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" "$APP_PATH/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $APP_VERSION" "$APP_PATH/Contents/Info.plist"
+set_plist_string() {
+  local key=$1
+  local value=$2
+  local plist="$APP_PATH/Contents/Info.plist"
+  if /usr/libexec/PlistBuddy -c "Print :$key" "$plist" >/dev/null 2>&1; then
+    /usr/libexec/PlistBuddy -c "Set :$key $value" "$plist"
+  else
+    /usr/libexec/PlistBuddy -c "Add :$key string $value" "$plist"
+  fi
+}
+
+set_plist_string CFBundleShortVersionString "$APP_VERSION"
+set_plist_string CFBundleVersion "$APP_VERSION"
 
 if [[ -n "$SIGNING_IDENTITY" ]]; then
   codesign --force --deep --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$APP_PATH"
