@@ -169,8 +169,6 @@
 .web-search-panel{display:grid;gap:15px;background:linear-gradient(110deg,#f4f8f4,#fbf8f0)}.web-search-form{display:flex;gap:8px}.web-search-form input{min-width:0;flex:1;padding:9px 10px;border:1px solid #d8d3c7;border-radius:8px;background:#fffefa;font:inherit}.web-search-results{display:grid;gap:9px}.web-result{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;padding:13px;border:1px solid #e1ddd3;border-radius:10px;background:#fffefa}.web-result b,.web-result a{display:block}.web-result a{margin-top:5px;color:var(--accent);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:520px}.web-result p{margin:8px 0 0;font-size:13px}.web-result button{flex:none}
 @media(max-width:720px){.source-input-grid{grid-template-columns:1fr}.audio-output-card,.web-result{flex-direction:column}.audio-actions{justify-items:start;min-width:0}.web-search-form{flex-direction:column}}
 
-
-.audio-script-editor { width: 100%; min-height: 220px; margin: 12px 0; font: inherit; line-height: 1.7; }
 #profile-dialog { max-width: 720px; width: calc(100% - 32px); max-height: 90vh; overflow: auto; }
 #profile-dialog textarea { width: 100%; font: inherit; }
 #profile-dialog details { margin: 16px 0; }
@@ -178,3 +176,35 @@
 .update-notice { border-bottom: 1px solid #d7dfd8; background: #edf6ef; color: #244d3b; }
 .update-notice > div { position: relative; display: flex; align-items: center; justify-content: center; gap: 14px; min-height: 52px; }
 .update-notice .icon-button { position: absolute; right: 0; }
+
+/* 音频脚本审阅：改为与讲稿编辑器一致的输入外观，替换浏览器默认边框。 */
+.audio-output-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 20px; padding: 18px 20px; border: 1px solid #e2ddd2; border-radius: 12px; background: #fdfcf9; }
+.audio-output-main { min-width: 0; }
+.audio-output-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.audio-output-card h4 { width: 100%; margin: 2px 0 0; font-size: 17px; line-height: 1.5; }
+.audio-script-details { margin-top: 13px; border: 1px solid #e6e1d6; border-radius: 11px; background: #fbfaf6; }
+.audio-script-details summary { display: flex; align-items: center; gap: 9px; padding: 12px 15px; color: var(--accent-dark); cursor: pointer; font-size: 13px; font-weight: 600; list-style: none; }
+.audio-script-details summary::-webkit-details-marker { display: none; }
+.audio-script-details summary::before { content: ""; width: 6px; height: 6px; border-right: 1.7px solid currentColor; border-bottom: 1.7px solid currentColor; transform: translateY(-1px) rotate(-45deg); transition: transform .18s ease; }
+.audio-script-details[open] summary::before { transform: translateY(-1px) rotate(45deg); }
+.audio-script-details[open] summary { border-bottom: 1px solid #e6e1d6; }
+.audio-script-body { display: grid; gap: 11px; padding: 15px; }
+.audio-script-editor { display: block; width: 100%; min-height: 300px; margin: 0; padding: 15px 17px; border: 1px solid #ddd7cb; border-radius: 9px; outline: none; resize: vertical; background: #fffefa; color: var(--ink); font: 14px/1.9 "Noto Sans SC", -apple-system, BlinkMacSystemFont, sans-serif; }
+.audio-script-editor:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(29,91,73,.1); }
+.audio-script-meta { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.audio-script-stats { color: #6b766f; font: 12px/1.5 "DM Mono", monospace; }
+.audio-script-hint { margin: 0; color: #7b847d; font-size: 12px; }
+.audio-output-card .audio-actions { min-width: 200px; }
+@media(max-width:720px) { .audio-output-card { grid-template-columns: 1fr; }.audio-script-editor { min-height: 240px; }.audio-output-card .audio-actions { min-width: 0; } }
+
+/* 音频脚本生成区：口语润色选项与按章节生成速听。 */
+.audio-naturalize { display: flex; align-items: flex-start; gap: 10px; margin: 12px 0 16px; padding: 12px 14px; border: 1px solid #e2ddd2; border-radius: 10px; background: #fbfaf5; color: var(--ink); cursor: pointer; font-size: 13px; line-height: 1.55; }
+.audio-naturalize input { flex: none; width: 16px; height: 16px; margin: 2px 0 0; accent-color: var(--accent); }
+.audio-naturalize-note { display: block; margin-top: 2px; color: #75817a; font-size: 12px; }
+.audio-source-row { align-items: flex-start; }
+.audio-source-row > div { min-width: 0; }
+.chapter-audio { margin-top: 11px; padding-top: 11px; border-top: 1px dashed #e2ddd2; }
+.chapter-audio-title { margin: 0 0 8px; color: #6b766f; font-size: 12px; }
+.chapter-audio-list { display: flex; flex-wrap: wrap; gap: 7px; }
+.chapter-audio-list .button { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media(max-width:720px) { .audio-source-row { flex-direction: column; align-items: stretch; }.audio-source-row > button { align-self: flex-end; }.chapter-audio-list .button { white-space: normal; text-align: left; } }

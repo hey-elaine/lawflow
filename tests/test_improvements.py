@@ -238,6 +238,37 @@ class ImprovementsTest(unittest.TestCase):
         evidence = json.loads((output / 'evidence-map.json').read_text())
         self.assertTrue(evidence[0]['section_sources'])
 
+    def test_audio_script_can_target_a_single_section(self):
+        project, source, ids, content = self.make_content()
+        with self.main.db() as conn:
+            conn.execute(
+                'UPDATE narrative_contents SET markdown=? WHERE id=?',
+                ('# 测试讲稿\n\n## 第一节 适用范围\n\n第一节正文，说明规则的适用对象。\n\n## 第二节 备案要求\n\n第二节正文，说明备案与评估手续。', content['id']),
+            )
+        conn.close()
+
+        whole = self.client.post(f"/api/projects/{project['id']}/audio-scripts", json={'narrative_content_id': content['id']})
+        self.assertEqual(whole.status_code, 201)
+        self.assertIn('第一节正文', whole.json()['script'])
+        self.assertIn('第二节正文', whole.json()['script'])
+        self.assertEqual(whole.json()['section_heading'], '')
+
+        section = self.client.post(
+            f"/api/projects/{project['id']}/audio-scripts",
+            json={'narrative_content_id': content['id'], 'section_heading': '第二节 备案要求'},
+        )
+        self.assertEqual(section.status_code, 201)
+        self.assertIn('第二节正文', section.json()['script'])
+        self.assertNotIn('第一节正文', section.json()['script'])
+        self.assertIn('第二节 备案要求', section.json()['title'])
+        self.assertIn('第二节 备案要求', section.json()['script'])
+
+        missing = self.client.post(
+            f"/api/projects/{project['id']}/audio-scripts",
+            json={'narrative_content_id': content['id'], 'section_heading': '不存在的章节'},
+        )
+        self.assertEqual(missing.status_code, 404)
+
     def test_audio_script_falls_back_when_naturalization_model_is_unavailable(self):
         project, _, _, content = self.make_content()
         result = self.client.post(

@@ -20,7 +20,7 @@ description: Use a local LawFlow app to turn legal materials and selected public
 2. 对外培训、播客和 Speak Note 项目：先检查核验任务。未完成或未关闭的任务不能绕过。
 3. 调用 `POST /api/projects/{project_id}/narrative-outlines` 生成大纲。除非用户明确要求跳过，否则先展示大纲并等待确认。
 4. 调用 `PUT /api/narrative-outlines/{outline_id}/confirm`，再调用 `POST /api/narrative-outlines/{outline_id}/contents` 生成讲稿。
-5. 成稿由用户确认后，调用 `POST /api/projects/{project_id}/audio-scripts` 生成口播脚本；最终 MP3 只能基于已确认讲稿生成。
+5. 成稿由用户确认后，调用 `POST /api/projects/{project_id}/audio-scripts` 生成口播脚本；最终 MP3 只能基于已确认讲稿生成。若用户希望按章节碎片时间收听，在同一接口传入 `section_heading`（讲稿中的二级标题），只整理该章节。
 6. 通过 `POST /api/narrative-contents/{content_id}/export` 导出 Markdown 与 DOCX。
 
 ## 宿主模型模式

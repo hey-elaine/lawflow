@@ -257,6 +257,8 @@ class AudioScriptRequest(BaseModel):
     narrative_content_id: str
     title: str = ""
     naturalize: bool = False
+    # 留空表示整篇讲稿；填写章节标题时只整理该章节，便于按节收听。
+    section_heading: str = Field(default="", max_length=200)
 
 
 class AudioSynthesisRequest(BaseModel):
@@ -2386,7 +2388,25 @@ def export_narrative_content(content_id: str):
     return {"markdown_path": str(markdown_path), "docx_path": str(docx_path), "download_url": f"/api/narrative-contents/{content_id}/download"}
 
 
-def build_audio_script(markdown: str, title: str, scenario: str, target_duration: int) -> str:
+def slice_markdown_section(markdown: str, heading: str) -> str:
+    """取出讲稿中指定二级标题下的正文，用于按章节生成速听脚本。"""
+    target = clean_text(heading or "")
+    if not target:
+        return ""
+    collected, capturing = [], False
+    for line in markdown.splitlines():
+        if line.startswith("## "):
+            capturing = clean_text(line[3:]) == target
+            continue
+        if line.startswith("# "):
+            capturing = False
+            continue
+        if capturing:
+            collected.append(line)
+    return "\n".join(collected).strip()
+
+
+def build_audio_script(markdown: str, title: str, scenario: str, target_duration: int, section_heading: str = "") -> str:
     """把确认后的文字转为适合 TTS 的口语脚本；不新增材料外事实。"""
     clean_lines = []
     for line in markdown.splitlines():
@@ -2405,8 +2425,12 @@ def build_audio_script(markdown: str, title: str, scenario: str, target_duration
         "speaking_note": f"下面是一份关于《{title}》的培训讲稿口播版。",
         "legal_podcast": f"欢迎收听本期法律科普：《{title}》。",
     }
+    if section_heading:
+        intro = f"接下来是《{title}》中的一节：{section_heading}。"
+    else:
+        intro = intro_map.get(scenario, intro_map["topic_learning"])
     outro = "以上内容仅按已确认材料整理。涉及具体业务或规则适用时，请结合最新事实和专业判断进一步确认。"
-    return "\n\n".join([intro_map.get(scenario, intro_map["topic_learning"]), *clean_lines, outro])
+    return "\n\n".join([intro, *clean_lines, outro])
 
 
 @app.post("/api/projects/{project_id}/audio-scripts", status_code=201)
@@ -2418,7 +2442,18 @@ def create_audio_script(project_id: str, payload: AudioScriptRequest):
     if content is None:
         raise HTTPException(status_code=404, detail="项目中未找到指定讲稿。")
     preferences = project_preferences(project)
-    script = build_audio_script(content["markdown"], payload.title or content["title"], preferences["scenario"], preferences["target_duration"])
+    section_heading = clean_text(payload.section_heading or "")
+    base_title = payload.title or content["title"]
+    if section_heading:
+        section_markdown = slice_markdown_section(content["markdown"], section_heading)
+        if not section_markdown:
+            raise HTTPException(status_code=404, detail="讲稿中未找到该章节，可能已被修改；请刷新后重试。")
+        script_source = "## {}\n\n{}".format(section_heading, section_markdown)
+        audio_title = "{} · {}".format(base_title, section_heading)
+    else:
+        script_source = content["markdown"]
+        audio_title = base_title
+    script = build_audio_script(script_source, base_title, preferences["scenario"], preferences["target_duration"], section_heading)
     naturalized = False
     if payload.naturalize and model_generation_ready():
         if len(script) > 16000:
@@ -2434,14 +2469,15 @@ def create_audio_script(project_id: str, payload: AudioScriptRequest):
     conn.execute(
         """INSERT INTO audio_outputs (id, project_id, narrative_content_id, title, script, provider, voice, audio_path, duration_seconds, status, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, 'script_only', '', '', 0, 'script_ready', ?, ?)""",
-        (audio_id, project_id, content["id"], payload.title or content["title"], script, timestamp, timestamp),
+        (audio_id, project_id, content["id"], audio_title, script, timestamp, timestamp),
     )
     conn.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (timestamp, project_id))
     conn.commit()
     conn.close()
     return {
         "id": audio_id,
-        "title": payload.title or content["title"],
+        "title": audio_title,
+        "section_heading": section_heading,
         "script": script,
         "status": "script_ready",
         "naturalized": naturalized,

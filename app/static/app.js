@@ -649,13 +649,29 @@ function renderAudioPanel() {
   const panel = $('#detail-panel');
   const contents = appState.selectedProject.narrative_contents || [];
   const outputs = appState.selectedProject.audio_outputs || [];
-  panel.innerHTML = '<section class="panel-card audio-intro"><p class="eyebrow">音频输出</p><h3>先校对脚本，再生成最终音频</h3><p>讲稿草稿可以整理为口播脚本并试听；只有“已确认”的讲稿才能生成完整 MP3。浏览器朗读只用于校对，正式音质由所选 TTS 服务与音色决定。</p></section><section class="panel-card"><h3>从讲稿生成音频脚本</h3><label class="check-label"><input type="checkbox" id="naturalize-audio"/> 使用文本模型改善口语节奏（额外调用；生成后请核对事实）</label>' + (contents.length ? '<div class="audio-source-list">' + contents.map(content => '<div class="doc-row"><div><b>' + escapeHtml(content.title) + '</b><small>' + (content.status === 'confirmed' ? '讲稿已确认，可生成正式 MP3' : '讲稿待确认，可先整理并试听脚本') + '</small></div><button class="button button-primary button-small" data-create-audio-script="' + content.id + '">生成音频脚本</button></div>').join('') + '</div>' : '<p class="form-note">请先在“' + (SCENARIOS[appState.selectedProject.project.scenario] || SCENARIOS.topic_learning).narrativeLabel + '”中生成讲稿。</p>') + '</section><section class="panel-card"><h3>音频脚本与文件</h3><div class="audio-output-list">' + (outputs.length ? outputs.map(renderAudioOutput).join('') : '<p class="form-note">尚未生成音频脚本。</p>') + '</div></section>';
+  panel.innerHTML = '<section class="panel-card audio-intro"><p class="eyebrow">音频输出</p><h3>先校对脚本，再生成最终音频</h3><p>讲稿草稿可以整理为口播脚本并试听；只有“已确认”的讲稿才能生成完整 MP3。浏览器朗读只用于校对，正式音质由所选 TTS 服务与音色决定。</p></section><section class="panel-card"><h3>从讲稿生成音频脚本</h3><p>可以整理整篇讲稿，也可以只整理其中一章。章节速听更适合通勤、运动等碎片时间逐节收听。</p><label class="audio-naturalize"><input type="checkbox" id="naturalize-audio"/><span>使用文本模型改善口语节奏<span class="audio-naturalize-note">额外调用一次模型；生成后仍需核对事实</span></span></label>' + (contents.length ? '<div class="audio-source-list">' + contents.map(renderAudioSourceRow).join('') + '</div>' : '<p class="form-note">请先在“' + (SCENARIOS[appState.selectedProject.project.scenario] || SCENARIOS.topic_learning).narrativeLabel + '”中生成讲稿。</p>') + '</section><section class="panel-card"><h3>音频脚本与文件</h3><div class="audio-output-list">' + (outputs.length ? outputs.map(renderAudioOutput).join('') : '<p class="form-note">尚未生成音频脚本。</p>') + '</div></section>';
   $$('[data-save-audio]').forEach(button => button.addEventListener('click', () => saveAudioScript(button.dataset.saveAudio, button)));
   $$('[data-preview-audio]').forEach(button => button.addEventListener('click', () => previewAudio(button.dataset.previewAudio, button)));
   $$('[data-create-audio-script]').forEach(button => button.addEventListener('click', () => createAudioScript(button.dataset.createAudioScript, button)));
   $$('[data-speak-script]').forEach(button => button.addEventListener('click', () => speakAudioScript(button.dataset.speakScript, button)));
   $$('[data-synthesize-audio]').forEach(button => button.addEventListener('click', () => synthesizeAudio(button.dataset.synthesizeAudio, button)));
   $$('[data-export-audio]').forEach(button => button.addEventListener('click', () => exportAudioOutput(button.dataset.exportAudio, button)));
+  $$('.audio-script-details').forEach(details => details.addEventListener('toggle', () => {
+    if (!details.dataset.audioId) return;
+    if (details.open) appState.openAudioScript = details.dataset.audioId;
+    else if (appState.openAudioScript === details.dataset.audioId) appState.openAudioScript = null;
+  }));
+}
+
+function renderAudioSourceRow(content) {
+  const sections = content.section_sources || [];
+  const chapterList = sections.length > 1
+    ? '<div class="chapter-audio"><p class="chapter-audio-title">按章节生成速听</p><div class="chapter-audio-list">' + sections.map((section, index) =>
+        '<button class="button button-outline button-small" data-create-audio-script="' + content.id + '" data-section-heading="' + escapeHtml(section.heading) + '">' + (index + 1) + '. ' + escapeHtml(section.heading) + '</button>'
+      ).join('') + '</div></div>'
+    : '';
+  const status = content.status === 'confirmed' ? '讲稿已确认，可生成正式 MP3' : '讲稿待确认，可先整理并试听脚本';
+  return '<div class="doc-row audio-source-row"><div><b>' + escapeHtml(content.title) + '</b><small>' + status + '</small>' + chapterList + '</div><button class="button button-primary button-small" data-create-audio-script="' + content.id + '">生成整篇脚本</button></div>';
 }
 
 function renderAudioOutput(output) {
@@ -663,13 +679,19 @@ function renderAudioOutput(output) {
   const source = (appState.selectedProject.narrative_contents || []).find(content => content.id === output.narrative_content_id);
   const readyForMp3 = source?.status === 'confirmed';
   const mp3Hint = readyForMp3 ? '' : '<small class="audio-gate-hint">确认对应讲稿后可生成完整 MP3</small>';
-  return '<article class="audio-output-card"><div><span class="tag">' + (output.status === 'source_changed' ? '源讲稿已更新，请重新整理脚本' : output.status === 'ready' ? 'MP3 已生成 · ' + output.duration_seconds + ' 秒' : '脚本待校对') + '</span><h4>' + escapeHtml(output.title) + '</h4><details><summary>查看 / 编辑完整脚本</summary><textarea class="audio-script-editor" data-audio-editor="' + output.id + '">' + escapeHtml(output.script) + '</textarea><button class="button button-outline button-small" data-save-audio="' + output.id + '">保存脚本（使旧音频失效）</button></details></div><div class="audio-actions">' + player + '<button class="button button-outline button-small" data-speak-script="' + output.id + '">浏览器校对朗读</button><button class="button button-outline button-small" data-preview-audio="' + output.id + '">TTS 短片试听</button><button class="button button-primary button-small" data-synthesize-audio="' + output.id + '" ' + (readyForMp3 ? '' : 'disabled') + '>' + (output.audio_available ? '重新生成 MP3' : '生成 MP3') + '</button>' + mp3Hint + '<button class="button button-outline button-small" data-export-audio="' + output.id + '">导出脚本与音频</button><audio controls hidden data-preview-player="' + output.id + '"></audio></div></article>';
+  const statusLabel = output.status === 'source_changed' ? '源讲稿已更新，请重新整理脚本' : output.status === 'ready' ? 'MP3 已生成 · ' + output.duration_seconds + ' 秒' : '脚本待校对';
+  const script = output.script || '';
+  const mediaMinutes = script.length ? Math.max(1, Math.round(script.length / 240)) : 0;
+  const stats = script.length ? '共 ' + script.length + ' 字 · 预计朗读约 ' + mediaMinutes + ' 分钟' : '脚本为空';
+  const opened = appState.openAudioScript === output.id ? ' open' : '';
+  return '<article class="audio-output-card"><div class="audio-output-main"><div class="audio-output-head"><span class="tag">' + statusLabel + '</span><h4>' + escapeHtml(output.title) + '</h4></div><details class="audio-script-details" data-audio-id="' + output.id + '"' + opened + '><summary>查看 / 编辑完整口播脚本</summary><div class="audio-script-body"><textarea class="audio-script-editor" data-audio-editor="' + output.id + '">' + escapeHtml(script) + '</textarea><div class="audio-script-meta"><span class="audio-script-stats">' + stats + '</span><button class="button button-outline button-small" data-save-audio="' + output.id + '">保存脚本</button></div><p class="audio-script-hint">修改脚本后，原有 MP3 会失效，需要重新生成。</p></div></details></div><div class="audio-actions">' + player + '<button class="button button-outline button-small" data-speak-script="' + output.id + '">浏览器校对朗读</button><button class="button button-outline button-small" data-preview-audio="' + output.id + '">TTS 短片试听</button><button class="button button-primary button-small" data-synthesize-audio="' + output.id + '" ' + (readyForMp3 ? '' : 'disabled') + '>' + (output.audio_available ? '重新生成 MP3' : '生成 MP3') + '</button>' + mp3Hint + '<button class="button button-outline button-small" data-export-audio="' + output.id + '">导出脚本与音频</button><audio controls hidden data-preview-player="' + output.id + '"></audio></div></article>';
 }
 
 async function saveAudioScript(id, button) {
   try {
     setBusy(button, true);
     await request('/api/audio-outputs/' + id, { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify({script: $('[data-audio-editor="' + id + '"]').value}) });
+    appState.openAudioScript = id;
     appState.selectedProject = await request('/api/projects/' + appState.selectedProject.project.id);
     renderAudioPanel(); showMessage('脚本已保存，请重新试听。');
   } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); }
@@ -688,11 +710,19 @@ async function previewAudio(id, button) {
 }
 
 async function createAudioScript(contentId, button) {
-  try { setBusy(button, true, '整理脚本…'); const result = await request('/api/projects/' + appState.selectedProject.project.id + '/audio-scripts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ narrative_content_id: contentId, naturalize: !!$('#naturalize-audio')?.checked }) }); appState.selectedProject = await request('/api/projects/' + appState.selectedProject.project.id); renderAudioPanel(); showMessage(result.naturalization_skipped ? '音频脚本已生成；未配置文本模型，本次保留基础口播版。' : '音频脚本已生成，可浏览器试听或调用 TTS。'); } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); }
+  const sectionHeading = button?.dataset?.sectionHeading || '';
+  const done = sectionHeading ? '章节速听脚本已生成：' + sectionHeading : '音频脚本已生成';
+  try {
+    setBusy(button, true, sectionHeading ? '整理该章脚本…' : '整理脚本…');
+    const result = await request('/api/projects/' + appState.selectedProject.project.id + '/audio-scripts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ narrative_content_id: contentId, naturalize: !!$('#naturalize-audio')?.checked, section_heading: sectionHeading }) });
+    appState.selectedProject = await request('/api/projects/' + appState.selectedProject.project.id);
+    renderAudioPanel();
+    showMessage(result.naturalization_skipped ? done + '；未配置文本模型，本次保留基础口播版。' : done + '，可浏览器试听或调用 TTS。');
+  } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); }
 }
 
 async function speakAudioScript(audioId, button) {
-  try { const output = await request('/api/audio-outputs/' + audioId); if (!('speechSynthesis' in window)) throw new Error('当前浏览器不支持语音试听。'); window.speechSynthesis.cancel(); const utterance = new SpeechSynthesisUtterance(output.script); utterance.lang = 'zh-CN'; utterance.rate = 1; window.speechSynthesis.speak(utterance); button.textContent = '正在试听…'; utterance.onend = () => { button.textContent = '浏览器试听'; }; } catch (error) { showMessage(error.message, true); }
+  try { const output = await request('/api/audio-outputs/' + audioId); if (!('speechSynthesis' in window)) throw new Error('当前浏览器不支持语音试听。'); window.speechSynthesis.cancel(); const utterance = new SpeechSynthesisUtterance(output.script); utterance.lang = 'zh-CN'; utterance.rate = 1; window.speechSynthesis.speak(utterance); button.textContent = '正在试听…'; utterance.onend = () => { button.textContent = '浏览器校对朗读'; }; } catch (error) { showMessage(error.message, true); }
 }
 
 async function synthesizeAudio(audioId, button) {
