@@ -23,6 +23,7 @@ pyinstaller \
   --add-data "app/static:app/static" \
   --collect-data setuptools \
   --collect-all mcp \
+  --collect-all edge_tts \
   scripts/lawflow_desktop.py
 
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" "$APP_PATH/Contents/Info.plist"

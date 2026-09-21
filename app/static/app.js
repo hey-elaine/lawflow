@@ -136,10 +136,15 @@ async function ensureDocumentLoaded(documentId) { if (appState.selectedDocument?
 
 function renderMaterialsPanel() {
   const panel = $('#detail-panel'); const docs = appState.selectedProject.documents;
-  const scenario = SCENARIOS[appState.selectedProject.project.scenario] || SCENARIOS.topic_learning;
-  panel.innerHTML = '<section class="panel-card"><h3>输入素材</h3><p>' + (appState.selectedProject.project.scenario === 'daily_brief' ? '导入一篇行业资讯、报道或公开材料，系统会将其精炼为适合碎片化收听的短讲稿。' : '先导入素材，再选择其中一份形成结构与讲稿。多份资料可留在同一任务内分别整理；跨材料合并成一份主题稿属于下一阶段能力。') + '</p><div class="source-input-grid"><label class="upload-zone"><input type="file" id="document-upload" accept=".docx,.txt,.md"/><div><b>上传文件</b><span>DOCX、TXT、Markdown</span></div></label><div class="paste-source"><b>粘贴文章或公开材料</b><input id="text-source-title" placeholder="素材标题，例如：某监管动态解读"/><input id="text-source-url" placeholder="来源链接（可选）"/><textarea id="text-source-content" placeholder="粘贴公众号正文、新闻报道、公开判决摘要或你的实务笔记…"></textarea><button class="button button-outline button-small" id="create-text-source">保存为素材</button></div></div><div class="doc-list">' + (docs.length ? docs.map(doc => '<div class="doc-row"><div><b>' + escapeHtml(doc.original_name) + '</b><small>' + doc.paragraph_count + ' 个段落 · ' + doc.block_count + ' 个素材块' + (doc.source_url ? ' · 已记录来源' : '') + '</small></div><button class="button button-outline button-small" data-view-document="' + doc.id + '">查看主题地图</button></div>').join('') : '<p class="form-note">尚未导入素材。你可以先导入一篇资讯或一份实务笔记开始。</p>') + '</div></section><section class="panel-card" id="material-map-panel"><h3>主题地图</h3><p>选择一份已导入素材后，查看结构、主题信号、规范名称和可展开的内容方向。</p></section>';
+  const learning = appState.selectedProject.project.scenario === 'topic_learning';
+  const intro = appState.selectedProject.project.scenario === 'daily_brief'
+    ? '导入一篇行业资讯、报道或公开材料，系统会将其精炼为适合碎片化收听的短讲稿。'
+    : '导入已有材料，或按主题检索公开网页后逐条确认导入。检索结果不会自动写入材料或讲稿。';
+  const searchPanel = learning ? '<section class="panel-card web-search-panel"><div><p class="eyebrow">可选步骤</p><h3>按主题检索公开材料</h3><p>仅用于发现公开网页。先查看标题、摘要和链接，再选择要导入的来源；它不等同于外部事实核验。</p></div><div class="web-search-form"><input id="web-search-query" value="' + escapeHtml(appState.selectedProject.project.client_name || appState.selectedProject.project.name) + '" placeholder="例如：生成式人工智能 数据合规 监管动态"/><button class="button button-outline button-small" id="search-web-sources">检索公开材料</button></div><div id="web-search-results" class="web-search-results"></div></section>' : '';
+  panel.innerHTML = '<section class="panel-card"><h3>输入素材</h3><p>' + intro + '</p><div class="source-input-grid"><label class="upload-zone"><input type="file" id="document-upload" accept=".docx,.txt,.md"/><div><b>上传文件</b><span>DOCX、TXT、Markdown</span></div></label><div class="paste-source"><b>粘贴文章或公开材料</b><input id="text-source-title" placeholder="素材标题，例如：某监管动态解读"/><input id="text-source-url" placeholder="来源链接（可选）"/><textarea id="text-source-content" placeholder="粘贴公众号正文、新闻报道、公开判决摘要或你的实务笔记…"></textarea><button class="button button-outline button-small" id="create-text-source">保存为素材</button></div></div><div class="doc-list">' + (docs.length ? docs.map(doc => '<div class="doc-row"><div><b>' + escapeHtml(doc.original_name) + '</b><small>' + doc.paragraph_count + ' 个段落 · ' + doc.block_count + ' 个素材块' + (doc.source_url ? ' · 已记录来源' : '') + '</small></div><button class="button button-outline button-small" data-view-document="' + doc.id + '">查看主题地图</button></div>').join('') : '<p class="form-note">尚未导入素材。你可以先导入一篇资讯或一份实务笔记开始。</p>') + '</div></section>' + searchPanel + '<section class="panel-card" id="material-map-panel"><h3>主题地图</h3><p>选择一份已导入素材后，查看结构、主题信号、规范名称和可展开的内容方向。</p></section>';
   $('#document-upload').addEventListener('change', event => uploadDocument(event.target.files[0]));
   $('#create-text-source').addEventListener('click', createTextSource);
+  $('#search-web-sources')?.addEventListener('click', searchWebSources);
   $$('[data-view-document]', panel).forEach(button => button.addEventListener('click', () => viewDocumentMap(button.dataset.viewDocument)));
   const doc = currentDocument(); if (doc) viewDocumentMap(doc.id);
 }
@@ -155,6 +160,28 @@ async function createTextSource() {
   const content = $('#text-source-content').value.trim();
   if (!title || content.length < 20) { showMessage('请填写素材标题，并粘贴至少 20 个字符的正文。', true); return; }
   try { setBusy(button, true, '保存中…'); const result = await request('/api/projects/' + appState.selectedProject.project.id + '/text-sources', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, content, source_url: $('#text-source-url').value.trim() }) }); appState.selectedProject = await request('/api/projects/' + appState.selectedProject.project.id); appState.selectedDocument = { ...result, blocks: null }; await loadProjects(); renderProjectDetail(); await viewDocumentMap(result.id); showMessage('文字素材已保存并完成结构解析。'); } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); }
+}
+
+async function searchWebSources() {
+  const button = $('#search-web-sources'); const query = $('#web-search-query').value.trim(); const box = $('#web-search-results');
+  if (query.length < 2) { showMessage('请输入至少两个字符的学习主题。', true); return; }
+  try {
+    setBusy(button, true, '检索中…'); box.innerHTML = '<p class="form-note">正在检索公开网页…</p>';
+    const data = await request('/api/web-search', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({query, max_results:6})});
+    if (!data.results.length) { box.innerHTML = '<p class="form-note">没有找到可导入的公开结果。请更换关键词或手动粘贴材料。</p>'; return; }
+    box.innerHTML = '<p class="field-hint">' + escapeHtml(data.notice) + '</p>' + data.results.map((item, index) => '<article class="web-result"><div><b>' + escapeHtml(item.title) + '</b><a href="' + escapeHtml(item.url) + '" target="_blank" rel="noreferrer">查看原文</a><p>' + escapeHtml(item.summary || '未提供摘要。') + '</p></div><button class="button button-outline button-small" data-import-web-result="' + index + '">导入为素材</button></article>').join('');
+    $$('[data-import-web-result]', box).forEach(button => button.addEventListener('click', () => importWebSource(data.results[Number(button.dataset.importWebResult)], button)));
+  } catch (error) { box.innerHTML = ''; showMessage(readableError(error), true); } finally { setBusy(button, false); }
+}
+
+async function importWebSource(item, button) {
+  try {
+    setBusy(button, true, '读取网页…');
+    const result = await request('/api/projects/' + appState.selectedProject.project.id + '/web-sources', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({title:item.title, url:item.url})});
+    appState.selectedProject = await request('/api/projects/' + appState.selectedProject.project.id); appState.selectedDocument = {...result, blocks:null};
+    await loadProjects(); renderProjectDetail(); await viewDocumentMap(result.id);
+    showMessage('已导入公开网页并记录来源链接。请在主题地图中确认材料范围。');
+  } catch (error) { showMessage(readableError(error), true); } finally { setBusy(button, false); }
 }
 
 async function viewDocumentMap(documentId) {
@@ -741,6 +768,21 @@ function bindDialogs() {
     try {
       const [config, exportConfig] = await Promise.all([request('/api/settings/provider'), request('/api/settings/export')]);
       const form = $('#settings-form');
+      const note = $('.form-note', form);
+      if (note) note.textContent = '文本模型仅在生成或润色内容时需要；本地音频试听可单独使用。密钥仅保存在本机。';
+      const modelLegend = $('fieldset legend', form);
+      if (modelLegend) modelLegend.textContent = '文本模型（生成内容时需要）';
+      const ttsHint = $('select[name="tts_provider"]', form)?.closest('fieldset')?.querySelector('.field-hint');
+      if (ttsHint) ttsHint.textContent = 'macOS 本地语音完全免费、无需联网和密钥，适合学习与校对。Edge TTS 无需 Key、音质较自然，但属于实验性在线能力，不承诺稳定性、可用地区或商业用途；正式对外内容请使用有授权的大陆云服务。';
+      if (!$('#test-tts', form)) {
+        const ttsFieldset = $('select[name="tts_provider"]', form)?.closest('fieldset');
+        if (ttsFieldset) {
+          const testRow = document.createElement('div');
+          testRow.className = 'setting-test-row';
+          testRow.innerHTML = '<button type="button" class="button button-outline button-small" id="test-tts">保存并试听音色</button><span id="tts-test-result" class="field-hint"></span><audio id="tts-test-player" controls hidden></audio>';
+          ttsFieldset.querySelector('.field-hint')?.insertAdjacentElement('afterend', testRow);
+        }
+      }
       ['provider_preset','provider_name','base_url','model_name','api_key','tts_base_url','tts_model','tts_voice','tts_api_key','tts_provider','tts_speed','tts_instructions','asr_base_url','asr_model','asr_api_key'].forEach(key => { form.elements[key].value = config[key] ?? (key === 'provider_preset' ? 'openai' : key === 'tts_provider' ? 'compatible' : key === 'tts_speed' ? '1' : ''); });
       form.elements.allow_source_upload.checked = !!config.allow_source_upload;
       form.elements.output_directory.value = exportConfig.output_directory || exportConfig.default_directory || '';
@@ -789,6 +831,24 @@ function bindDialogs() {
       const message = readableError(error);
       result.textContent = typeof message === 'string' ? message : '模型设置校验失败，请检查必填项。';
       result.className = 'field-hint error-hint';
+    } finally { setBusy(button, false); }
+  });
+  document.addEventListener('click', async event => {
+    if (event.target.id !== 'test-tts') return;
+    const button = event.target; const result = $('#tts-test-result'); const player = $('#tts-test-player');
+    try {
+      setBusy(button, true, '保存并合成…');
+      const form = $('#settings-form'); const body = Object.fromEntries(new FormData(form)); body.allow_source_upload = form.elements.allow_source_upload.checked;
+      const exportBody = {output_directory: body.output_directory || ''}; delete body.output_directory;
+      await Promise.all([request('/api/settings/provider', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)}), request('/api/settings/export', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(exportBody)})]);
+      const response = await request('/api/settings/tts/test', {method:'POST'});
+      const audio = await response.blob();
+      if (player.src.startsWith('blob:')) URL.revokeObjectURL(player.src);
+      player.src = URL.createObjectURL(audio); player.hidden = false;
+      await player.play().catch(() => {});
+      result.textContent = '试听已生成，请播放确认音色和语速。'; result.className = 'field-hint success-hint';
+    } catch (error) {
+      result.textContent = readableError(error); result.className = 'field-hint error-hint';
     } finally { setBusy(button, false); }
   });
 }

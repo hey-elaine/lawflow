@@ -3,14 +3,40 @@ from __future__ import annotations
 
 import signal
 import socket
+import sqlite3
 import threading
 import time
 import webbrowser
 import os
+import shutil
+from pathlib import Path
 
 import uvicorn
 
-from app.main import app
+
+def project_count(db_path: Path) -> int:
+    if not db_path.is_file():
+        return 0
+    try:
+        with sqlite3.connect(db_path) as conn:
+            return int(conn.execute("SELECT COUNT(*) FROM projects").fetchone()[0])
+    except (sqlite3.DatabaseError, sqlite3.OperationalError):
+        return 0
+
+
+def migrate_legacy_data(data_dir: Path, legacy_dir: Path) -> bool:
+    """首次启动桌面版时，把开发版数据安全复制到 Application Support。"""
+    if data_dir.resolve() == legacy_dir.resolve():
+        return False
+    if project_count(data_dir / "app.db") or not project_count(legacy_dir / "app.db"):
+        return False
+    data_dir.parent.mkdir(parents=True, exist_ok=True)
+    if data_dir.exists() and any(data_dir.iterdir()):
+        backup = data_dir.parent / "migration-backups" / ("before-legacy-import-" + time.strftime("%Y%m%d-%H%M%S"))
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(data_dir, backup)
+    shutil.copytree(legacy_dir, data_dir, dirs_exist_ok=True)
+    return True
 
 
 def choose_port() -> int:
@@ -28,6 +54,12 @@ def choose_port() -> int:
 
 
 def main() -> None:
+    data_dir = Path(os.getenv("LAWFLOW_DATA_DIR", str(Path.home() / "Library/Application Support/LawFlow/data"))).expanduser()
+    legacy_dir = Path(os.getenv("LAWFLOW_LEGACY_DATA_DIR", str(Path.home() / "Projects/lawflow/data"))).expanduser()
+    migrate_legacy_data(data_dir, legacy_dir)
+    os.environ["LAWFLOW_DATA_DIR"] = str(data_dir)
+    from app.main import app
+
     port = choose_port()
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     server = uvicorn.Server(config)

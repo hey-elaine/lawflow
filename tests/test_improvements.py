@@ -1,7 +1,10 @@
 """Regression coverage for profiles, source boundaries, audio and exports."""
 import json
 import os
+import sqlite3
 import subprocess
+import sys
+import types
 import unittest
 from unittest.mock import patch
 from pathlib import Path
@@ -115,6 +118,21 @@ class ImprovementsTest(unittest.TestCase):
                 lawflow_desktop.os.environ.pop('LAWFLOW_PORT', None)
             else:
                 lawflow_desktop.os.environ['LAWFLOW_PORT'] = original
+
+    def test_desktop_launcher_migrates_legacy_projects_only_into_empty_data_dir(self):
+        from scripts import lawflow_desktop
+        legacy = self.temp_dir / 'legacy-data'
+        target = self.temp_dir / 'desktop-data'
+        legacy.mkdir()
+        target.mkdir()
+        with sqlite3.connect(legacy / 'app.db') as conn:
+            conn.execute('CREATE TABLE projects (id TEXT)')
+            conn.execute("INSERT INTO projects VALUES ('legacy-project')")
+        (legacy / 'projects').mkdir()
+        (legacy / 'projects' / 'note.txt').write_text('legacy', encoding='utf-8')
+        self.assertTrue(lawflow_desktop.migrate_legacy_data(target, legacy))
+        self.assertTrue((target / 'projects' / 'note.txt').is_file())
+        self.assertFalse(lawflow_desktop.migrate_legacy_data(target, legacy))
 
     def test_custom_profile_persistence_and_prompt(self):
         data = {'name':'自定义', 'description':'问答式', 'instruction':'先提出具体问题，再逐步解释，保持克制的表达。'}
@@ -305,6 +323,60 @@ class ImprovementsTest(unittest.TestCase):
             audio, provider = self.main.speech_chunk('本地语音测试。', {'tts_provider':'macos_say','tts_voice':'Tingting','tts_speed':1})
         self.assertEqual(audio, b'mp3')
         self.assertEqual(provider, 'macos-say:Tingting')
+
+    def test_edge_tts_uses_configured_voice_without_api_key(self):
+        class FakeCommunicate:
+            def __init__(self, text, voice, rate):
+                self.voice = voice
+                self.rate = rate
+
+            async def save(self, path):
+                Path(path).write_bytes(b'edge-mp3')
+
+        fake_module = types.SimpleNamespace(Communicate=FakeCommunicate)
+        with patch.object(self.main, 'edge_tts', fake_module):
+            audio, provider = self.main.speech_chunk(
+                '在线语音测试。',
+                {'tts_provider': 'edge_tts', 'tts_voice': 'zh-CN-XiaoxiaoNeural', 'tts_speed': 1},
+            )
+        self.assertEqual(audio, b'edge-mp3')
+        self.assertEqual(provider, 'edge-tts:zh-CN-XiaoxiaoNeural')
+
+    def test_tts_settings_preview_does_not_require_text_model(self):
+        with patch.object(self.main, 'get_internal_provider_settings', return_value={'tts_provider': 'edge_tts'}), patch.object(self.main, 'speech_chunk', return_value=(b'preview-mp3', 'edge-tts:test')):
+            response = self.client.post('/api/settings/tts/test')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, b'preview-mp3')
+        self.assertEqual(response.headers['content-type'], 'audio/mpeg')
+
+    def test_web_search_requires_explicit_import_and_preserves_source(self):
+        import httpx
+        project = self.client.post('/api/projects', json={'name': '人工智能治理', 'scenario': 'topic_learning'}).json()
+        search_response = httpx.Response(
+            200,
+            content='''<rss><channel><item><title>人工智能治理公开监管动态</title><link>https://example.com/news</link><description>&lt;b&gt;人工智能治理公开摘要&lt;/b&gt;</description></item></channel></rss>'''.encode('utf-8'),
+            request=httpx.Request('GET', 'https://www.bing.com/search'),
+        )
+        with patch.object(self.main.httpx, 'get', return_value=search_response):
+            search = self.client.post('/api/web-search', json={'query': '人工智能治理'})
+        self.assertEqual(search.status_code, 200)
+        self.assertEqual(len(search.json()['results']), 1)
+        self.assertEqual(self.client.get('/api/projects/' + project['id']).json()['documents'], [])
+
+        page_response = httpx.Response(
+            200,
+            headers={'content-type': 'text/html; charset=utf-8'},
+            text='<html><head><script>ignored()</script></head><body><h1>公开监管动态</h1><p>' + ('正文内容。' * 40) + '</p></body></html>',
+            request=httpx.Request('GET', 'https://example.com/news'),
+        )
+        with patch.object(self.main.httpx, 'get', return_value=page_response):
+            imported = self.client.post('/api/projects/' + project['id'] + '/web-sources', json={'title': '公开监管动态', 'url': 'https://example.com/news'})
+        self.assertEqual(imported.status_code, 201)
+        document = self.client.get('/api/documents/' + imported.json()['id']).json()
+        self.assertEqual(document['source_url'], 'https://example.com/news')
+        self.assertNotIn('ignored()', ' '.join(item['text'] for item in document['blocks']))
+        blocked = self.client.post('/api/projects/' + project['id'] + '/web-sources', json={'title': '本机', 'url': 'http://127.0.0.1:8080/'})
+        self.assertEqual(blocked.status_code, 400)
 
     def test_real_ffmpeg_merge_and_measured_duration(self):
         path = self.main.DATA_DIR / 'fixture.mp3'

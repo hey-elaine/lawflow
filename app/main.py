@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import httpx
+import ipaddress
 import json
 import os
 import re
 import asyncio
+import edge_tts
 import shutil
 import sqlite3
 import subprocess
@@ -15,9 +17,10 @@ import uuid
 import zipfile
 from collections import Counter
 from datetime import datetime, timezone
-from html import escape
+from html import escape, unescape
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 from xml.etree import ElementTree as ET
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -133,6 +136,16 @@ class TextSourceCreate(BaseModel):
     source_url: str = Field(default="", max_length=2000)
 
 
+class WebSearchRequest(BaseModel):
+    query: str = Field(min_length=2, max_length=200)
+    max_results: int = Field(default=6, ge=1, le=10)
+
+
+class WebSourceImport(BaseModel):
+    title: str = Field(min_length=1, max_length=240)
+    url: str = Field(min_length=8, max_length=2000)
+
+
 class PlanCreate(BaseModel):
     source_document_id: str
     audience: str = "企业法务与业务负责人"
@@ -156,7 +169,7 @@ class ProviderSettings(BaseModel):
     tts_model: str = ""
     tts_voice: str = ""
     tts_api_key: str = ""
-    tts_provider: Literal["compatible", "minimax", "macos_say"] = "compatible"
+    tts_provider: Literal["compatible", "minimax", "macos_say", "edge_tts"] = "compatible"
     tts_speed: float = Field(default=1.0, ge=0.5, le=2.0)
     tts_instructions: str = Field(default="", max_length=1000)
     asr_base_url: str = ""
@@ -1189,6 +1202,21 @@ def speech_chunk(text: str, settings: dict) -> tuple[bytes, str]:
         if not audio:
             raise HTTPException(502, "macOS 本地语音未生成可用音频。")
         return audio, "macos-say:" + voice
+    if provider == "edge_tts":
+        voice = settings.get("tts_voice") or "zh-CN-XiaoxiaoNeural"
+        rate = "{:+d}%".format(round((speed - 1) * 100))
+        try:
+            with tempfile.TemporaryDirectory(prefix="lawflow-edge-tts-") as temp:
+                output_path = Path(temp) / "speech.mp3"
+                async def synthesize() -> None:
+                    await edge_tts.Communicate(text, voice=voice, rate=rate).save(str(output_path))
+                asyncio.run(synthesize())
+                audio = output_path.read_bytes()
+        except Exception as error:
+            raise HTTPException(502, "Edge TTS 在线合成失败。该选项为实验性免费服务，可能受网络、服务策略或区域影响。") from error
+        if not audio:
+            raise HTTPException(502, "Edge TTS 未生成可用音频。")
+        return audio, "edge-tts:" + voice
     if provider == "minimax":
         base = base or "https://api.minimax.cn/v1"
         model = settings.get("tts_model") or "speech-2.8-hd"
@@ -1840,12 +1868,16 @@ async def upload_document(project_id: str, file: UploadFile = File(...)):
 
 @app.post("/api/projects/{project_id}/text-sources", status_code=201)
 def create_text_source(project_id: str, payload: TextSourceCreate):
+    return save_text_source(project_id, payload.title, payload.content, payload.source_url)
+
+
+def save_text_source(project_id: str, title: str, content: str, source_url: str = "") -> dict:
     project_or_404(project_id)
     document_id = str(uuid.uuid4())
     source_dir = PROJECTS_DIR / project_id / "sources"
     source_dir.mkdir(parents=True, exist_ok=True)
     stored_path = source_dir / f"{document_id}.md"
-    source_text = "# " + payload.title.strip() + "\n\n" + payload.content.strip() + "\n"
+    source_text = "# " + title.strip() + "\n\n" + content.strip() + "\n"
     stored_path.write_text(source_text, encoding="utf-8")
     digest = hashlib.sha256(source_text.encode("utf-8")).hexdigest()
     blocks, structure = parse_text(stored_path)
@@ -1857,7 +1889,7 @@ def create_text_source(project_id: str, payload: TextSourceCreate):
     conn.execute(
         """INSERT INTO source_documents (id, project_id, original_name, stored_path, file_hash, file_size, file_type, paragraph_count, block_count, structure_json, source_url, created_at)
         VALUES (?, ?, ?, ?, ?, ?, 'text', ?, ?, ?, ?, ?)""",
-        (document_id, project_id, payload.title.strip(), str(stored_path), digest, len(source_text.encode("utf-8")), structure["paragraph_count"], len(blocks), json.dumps(structure, ensure_ascii=False), payload.source_url.strip(), timestamp),
+        (document_id, project_id, title.strip(), str(stored_path), digest, len(source_text.encode("utf-8")), structure["paragraph_count"], len(blocks), json.dumps(structure, ensure_ascii=False), source_url.strip(), timestamp),
     )
     conn.executemany(
         """INSERT INTO source_blocks (id, document_id, sequence_no, heading_path, heading_level, kind, text, source_locator, created_at)
@@ -1867,7 +1899,86 @@ def create_text_source(project_id: str, payload: TextSourceCreate):
     conn.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (timestamp, project_id))
     conn.commit()
     conn.close()
-    return {"id": document_id, "original_name": payload.title.strip(), "file_hash": digest, "paragraph_count": structure["paragraph_count"], "block_count": len(blocks), "structure": structure, "material_map": build_material_map(blocks), "source_url": payload.source_url.strip()}
+    return {"id": document_id, "original_name": title.strip(), "file_hash": digest, "paragraph_count": structure["paragraph_count"], "block_count": len(blocks), "structure": structure, "material_map": build_material_map(blocks), "source_url": source_url.strip()}
+
+
+def strip_html_text(value: str) -> str:
+    value = re.sub(r"<(script|style|noscript)[^>]*>.*?</\1>", " ", value, flags=re.IGNORECASE | re.DOTALL)
+    value = re.sub(r"<[^>]+>", " ", value)
+    return clean_text(unescape(value))
+
+
+def valid_public_url(value: str) -> str:
+    parsed = urlsplit(value.strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise HTTPException(400, "请输入有效的 http 或 https 网页地址。")
+    host = (parsed.hostname or "").lower()
+    if host == "localhost" or host.endswith(".local"):
+        raise HTTPException(400, "仅支持导入公开网页，不能读取本机或局域网地址。")
+    try:
+        address = ipaddress.ip_address(host)
+        if address.is_private or address.is_loopback or address.is_link_local or address.is_reserved:
+            raise HTTPException(400, "仅支持导入公开网页，不能读取本机或局域网地址。")
+    except ValueError:
+        pass
+    return value.strip()
+
+
+def search_terms(query: str) -> list[str]:
+    terms = [part.strip() for part in re.split(r"[\s,，、;；]+", query) if len(part.strip()) >= 3]
+    return terms or [query]
+
+
+@app.post("/api/web-search")
+def search_web_sources(payload: WebSearchRequest):
+    """Search public web pages but leave import decisions entirely to the user."""
+    query = clean_text(payload.query)
+    terms = search_terms(query)
+    try:
+        response = httpx.get("https://www.bing.com/search", params={"q": query, "format": "rss"}, headers={"User-Agent": "LawFlow/0.1"}, follow_redirects=True, timeout=20.0)
+        response.raise_for_status()
+        root = ET.fromstring(response.content)
+    except (httpx.HTTPError, ET.ParseError) as error:
+        raise HTTPException(502, "联网检索暂时不可用，请稍后重试或手动粘贴公开材料。") from error
+    results = []
+    seen_urls = set()
+    for item in root.findall("./channel/item"):
+        title = clean_text(item.findtext("title") or "")
+        url = clean_text(item.findtext("link") or "")
+        summary = strip_html_text(item.findtext("description") or "")
+        if not title or not url or url in seen_urls:
+            continue
+        if not any(term.lower() in (title + " " + summary).lower() for term in terms):
+            continue
+        try:
+            valid_public_url(url)
+        except HTTPException:
+            continue
+        seen_urls.add(url)
+        results.append({"title": title[:240], "url": url, "summary": summary[:600]})
+        if len(results) >= payload.max_results:
+            break
+    return {"query": query, "results": results, "notice": "搜索结果仅供发现公开材料；请逐条确认来源后再导入，系统不会自动将结果写入讲稿。未显示与主题词不匹配的结果。"}
+
+
+@app.post("/api/projects/{project_id}/web-sources", status_code=201)
+def import_web_source(project_id: str, payload: WebSourceImport):
+    url = valid_public_url(payload.url)
+    try:
+        response = httpx.get(url, headers={"User-Agent": "LawFlow/0.1"}, follow_redirects=True, timeout=25.0)
+        response.raise_for_status()
+        content_type = response.headers.get("content-type", "")
+        if "html" not in content_type.lower() and content_type:
+            raise HTTPException(400, "该链接不是可直接解析的网页，请复制正文后以文字素材导入。")
+        html = response.text
+    except HTTPException:
+        raise
+    except httpx.HTTPError as error:
+        raise HTTPException(502, "无法读取该公开网页，请检查链接或改为手动粘贴正文。") from error
+    content = strip_html_text(html)
+    if len(content) < 100:
+        raise HTTPException(422, "该网页未提取到足够正文，可能需要登录或使用动态加载；请手动粘贴正文。")
+    return save_text_source(project_id, payload.title, content[:500000], url)
 
 
 @app.get("/api/documents/{document_id}")
@@ -2575,6 +2686,13 @@ def test_provider_connection(_: ProviderConnectionTest):
     except HTTPException as error:
         raise HTTPException(status_code=502, detail="模型连接测试失败：" + error.detail) from error
     return {"ready": True, "provider_name": settings.get("provider_name"), "model_name": settings.get("model_name"), "response": response[:80]}
+
+
+@app.post("/api/settings/tts/test")
+def test_tts_connection():
+    """Synthesise a short preview without requiring a text-model configuration."""
+    audio, _ = speech_chunk("你好，这是一段 LawFlow 语音试听。", get_internal_provider_settings())
+    return Response(audio, media_type="audio/mpeg")
 
 
 @app.get("/api/settings/export")

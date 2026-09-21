@@ -12,3 +12,6 @@ data/logs/
 build/
 dist/
 *.spec
+# Local secrets and one-off manual audio test artifact.
+.env
+本地语音测试。
