@@ -587,6 +587,25 @@ function bindNarrativeContentEvents() {
   }));
   $$('[data-export-narrative]').forEach(button => button.addEventListener('click', () => exportNarrative(button.dataset.exportNarrative, button)));
   $$('[data-save-narrative]').forEach(button => button.addEventListener('click', () => saveNarrative(button.dataset.saveNarrative, button)));
+  $$('[data-regenerate-section]').forEach(button => button.addEventListener('click', () => regenerateSection(button.dataset.regenerateSection, button.dataset.sectionId, button)));
+  $$('[data-export-section]').forEach(button => button.addEventListener('click', () => exportSection(button.dataset.exportSection, button.dataset.sectionId, button)));
+}
+
+async function regenerateSection(contentId, sectionId, button) {
+  try {
+    setBusy(button, true, '重写本节…');
+    await request('/api/narrative-contents/' + contentId + '/sections/' + encodeURIComponent(sectionId) + '/regenerate', {method:'POST'});
+    appState.selectedProject = await request('/api/projects/' + appState.selectedProject.project.id);
+    renderNarrativePanel(); showMessage('本节已重新生成，请重新审阅整篇讲稿。');
+  } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); }
+}
+
+async function exportSection(contentId, sectionId, button) {
+  try {
+    setBusy(button, true, '导出本节…');
+    const result = await request('/api/narrative-contents/' + contentId + '/sections/' + encodeURIComponent(sectionId) + '/export', {method:'POST'});
+    if (result.download_url) window.location.assign(result.download_url);
+  } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); }
 }
 
 function renderNarrativeOutline(record) {
@@ -616,6 +635,7 @@ function renderNarrativeOutline(record) {
 
 async function createNarrativeOutline() {
   const button = $('#create-narrative-outline');
+  const project = appState.selectedProject.project;
   try {
     setBusy(button, true, '正在规划大纲…');
     const documentId = $('#narrative-document').value;
@@ -631,7 +651,7 @@ async function createNarrativeOutline() {
     }
     if (!sourceBlockIds.length) throw new Error('当前范围内没有可用于写作的正文材料。');
     if (!$('#narrative-profile').value) throw new Error('请等待画像加载完成并选择画像。');
-    const payload = { document_id: documentId, source_plan_id: appState.activePlan?.id || '', title: $('#narrative-title').value.trim(), source_block_ids: sourceBlockIds, audience: $('#narrative-audience').value.trim() || '法律从业者与企业法务', style_profile: $('#narrative-profile').value, target_length: $('#narrative-length').value };
+    const payload = { document_id: documentId, source_plan_id: appState.activePlan?.id || '', title: $('#narrative-title').value.trim(), source_block_ids: sourceBlockIds, audience: $('#narrative-audience').value.trim() || '法律从业者与企业法务', style_profile: $('#narrative-profile').value, target_length: $('#narrative-length').value, minimum_output_mode: project.minimum_output_mode || 'auto', minimum_output_ratio: Number(project.minimum_output_ratio || 0.3), web_research_mode: project.web_research_mode || 'discover' };
     const outline = await request('/api/projects/' + appState.selectedProject.project.id + '/narrative-outlines', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     appState.selectedProject = await request('/api/projects/' + appState.selectedProject.project.id);
     const record = appState.selectedProject.narrative_outlines.find(item => item.id === outline.id) || outline;
@@ -672,7 +692,12 @@ function renderNarrativeContentCard(content) {
     '<textarea class="narrative-editor" data-narrative-editor="' + content.id + '">' + escapeHtml(content.markdown) + '</textarea>' :
     '<div class="narrative-article">' + renderNarrativeHtml(content.markdown) + '</div>';
 
-  return '<article class="narrative-content-card"><div class="content-card-header"><div><p class="doc-kicker">知识转译成稿 · 深度长文</p><h3>' + escapeHtml(content.title) + '</h3><small>模型：' + escapeHtml(content.model?.model_name || '未记录') + ' · <span class="status ' + content.status + '">' + statusText(content.status) + '</span></small></div><div class="detail-actions"><button class="button button-outline button-small" data-toggle-narrative-view="' + content.id + '">' + viewToggleText + '</button><button class="button button-outline button-small" data-confirm-narrative="' + content.id + '">确认审阅</button><button class="button button-outline button-small" data-export-narrative="' + content.id + '">导出 DOCX</button>' + (isEditing ? '<button class="button button-primary button-small" data-save-narrative="' + content.id + '">保存修改</button>' : '') + '</div></div>' + bodyContent + '<div class="review-bar"><span class="review-note">' + escapeHtml(content.review_note || '已生成深度叙事稿，支持直接在线修改与导出 Word。') + '</span></div></article>';
+  const model = content.model || {};
+  const floorText = model.output_floor ? ('长度检查：' + model.output_chars + ' / ' + model.output_floor + ' 字 · ' + (model.floor_status === 'pass' ? '通过' : '建议复核')) : '长度检查：未启用';
+  const researchText = model.web_research_mode === 'augment' ? '联网：已选来源可补充' : model.web_research_mode === 'off' ? '联网：关闭' : '联网：仅发现候选来源';
+  const sectionActions = (content.section_sources || []).map((section, index) => '<button class="button button-quiet button-small" data-regenerate-section="' + content.id + '" data-section-id="' + escapeHtml(section.section_id) + '">重做第' + (index + 1) + '节</button>').join('');
+  const sectionExportActions = (content.section_sources || []).map((section, index) => '<button class="button button-quiet button-small" data-export-section="' + content.id + '" data-section-id="' + escapeHtml(section.section_id) + '">导出第' + (index + 1) + '节</button>').join('');
+  return '<article class="narrative-content-card"><div class="content-card-header"><div><p class="doc-kicker">知识转译成稿 · 深度长文</p><h3>' + escapeHtml(content.title) + '</h3><small>模型：' + escapeHtml(model.model_name || '未记录') + ' · <span class="status ' + content.status + '">' + statusText(content.status) + '</span> · ' + escapeHtml(floorText) + ' · ' + escapeHtml(researchText) + '</small></div><div class="detail-actions"><button class="button button-outline button-small" data-toggle-narrative-view="' + content.id + '">' + viewToggleText + '</button><button class="button button-outline button-small" data-confirm-narrative="' + content.id + '">确认审阅</button><button class="button button-outline button-small" data-export-narrative="' + content.id + '">导出 DOCX</button>' + (isEditing ? '<button class="button button-primary button-small" data-save-narrative="' + content.id + '">保存修改</button>' : '') + '</div></div>' + bodyContent + '<div class="review-bar"><span class="review-note">' + escapeHtml(content.review_note || '已生成深度叙事稿，支持直接阅读、修改和导出 Word；长度检查只用于提醒，不会自动补写。') + '</span><span class="section-actions">' + sectionActions + sectionExportActions + '</span></div></article>';
 }
 
 async function saveNarrative(contentId, button) {
@@ -804,6 +829,13 @@ async function deleteProject() { const project = appState.selectedProject?.proje
 function showSourceOverlay(title, html) { const overlay = document.createElement('div'); overlay.className = 'source-modal'; overlay.innerHTML = '<div class="source-modal-card"><div class="source-modal-top"><div><p class="eyebrow">原始材料依据</p><h3>' + escapeHtml(title) + '</h3></div><button class="icon-button" aria-label="关闭">×</button></div><div>' + html + '</div></div>'; $('.icon-button', overlay).addEventListener('click', () => overlay.remove()); overlay.addEventListener('click', event => { if (event.target === overlay) overlay.remove(); }); document.body.appendChild(overlay); }
 
 function bindDialogs() {
+  const projectForm = $('#project-form');
+  if (projectForm && !$('#project-generation-preferences')) {
+    const preferences = document.createElement('fieldset');
+    preferences.id = 'project-generation-preferences';
+    preferences.innerHTML = '<legend>生成偏好（可选）</legend><label>成稿长度检查<select name="minimum_output_mode"><option value="auto" selected>自动估算（精炼模式更严格）</option><option value="none">不检查</option><option value="custom">自定义最低比例</option></select></label><label>最低保留比例<input name="minimum_output_ratio" type="number" min="0.1" max="1" step="0.05" value="0.3"><small>只用于生成后的提醒，不会让模型用套话凑字数。</small></label><label>联网检索<select name="web_research_mode"><option value="discover" selected>允许发现候选来源（不自动写入）</option><option value="off">关闭联网检索</option><option value="augment">允许已选来源参与补充</option></select></label>';
+    $('.dialog-actions', projectForm).before(preferences);
+  }
   $('#new-project').addEventListener('click', () => $('#project-dialog').showModal());
   $('#open-daily-brief').addEventListener('click', () => $('#daily-brief-dialog').showModal());
   $$('input[name="scenario"]').forEach(input => input.addEventListener('change', () => {
@@ -998,6 +1030,10 @@ function openProfileEditor() {
   const dialog = document.createElement('dialog');
   dialog.id = 'profile-dialog'; dialog.className = 'dialog';
   dialog.innerHTML = '<form id="profile-form"><div class="dialog-header"><h2>写作画像</h2><button type="button" id="close-profile" class="icon-button" aria-label="关闭">×</button></div><p class="form-note">可以手工定义风格，或从播客片段提取结构、表达方式和节奏。不会克隆音色，也不会将素材事实作为新稿依据。</p><label>画像名称<input id="profile-name" required maxlength="100"/></label><label>简介<textarea id="profile-description" maxlength="1000"></textarea></label><label>写作指令<textarea id="profile-instruction" required minlength="10" maxlength="6000" rows="6"></textarea></label><details><summary>从播客素材提取</summary><label>上传音频片段（≤20 MB，需配置转写服务）<input id="profile-audio" type="file" accept=".mp3,.wav,.m4a,.webm,.mp4"/></label><button type="button" id="transcribe-profile" class="button button-outline">转写音频</button><label>播客转写文本（100–30000 字；可直接粘贴）<textarea id="profile-transcript" rows="7" maxlength="30000"></textarea></label><button type="button" id="extract-profile" class="button button-outline">提取画像草稿</button><p class="field-hint">转写与画像提取分别调用已配置服务。请核对文本和提取结果后再保存。</p></details><p id="profile-message" role="status"></p><div class="dialog-actions"><button type="button" id="update-profile" class="button button-outline">更新当前自定义画像</button><button type="submit" class="button button-primary">保存为新画像</button></div></form>';
+  const profileTools = document.createElement('div');
+  profileTools.className = 'profile-tools';
+  profileTools.innerHTML = '<button type="button" class="button button-quiet button-small" id="export-profile">导出 Markdown</button><label class="button button-quiet button-small" for="import-profile-file">导入 Markdown<input id="import-profile-file" type="file" accept=".md,.markdown,text/markdown" hidden></label>';
+  $('.dialog-header', dialog).after(profileTools);
   document.body.appendChild(dialog);
   const current = (appState.profiles || []).find(item => item.id === $('#narrative-profile').value);
   $('#profile-name').value = current ? current.name + (current.builtin ? '（自定义）' : '') : '';
@@ -1005,6 +1041,18 @@ function openProfileEditor() {
   $('#profile-instruction').value = current?.instruction || '';
   $('#update-profile').disabled = !current || current.builtin;
   $('#close-profile').onclick = () => dialog.close();
+  $('#export-profile').onclick = () => {
+    if (!current) { $('#profile-message').textContent = '请先选择一个画像。'; return; }
+    window.open('/api/narrative/profiles/' + encodeURIComponent(current.id) + '/export', '_blank');
+  };
+  $('#import-profile-file').onchange = async event => {
+    const file = event.target.files[0];
+    if (!file) return;
+    try {
+      const result = await request('/api/narrative/profiles/import', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({markdown: await file.text()})});
+      await loadProfileOptions(result.id); dialog.close(); showMessage('画像已导入并保存为自定义画像。');
+    } catch (error) { $('#profile-message').textContent = error.message; }
+  };
   dialog.showModal();
   async function save(update, button) {
     if (!$('#profile-form').reportValidity()) return;

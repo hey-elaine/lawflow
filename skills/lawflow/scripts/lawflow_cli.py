@@ -30,6 +30,17 @@ def request(api: str, method: str, path: str, payload: dict | None = None) -> di
         raise SystemExit(f"无法连接 LawFlow 本地服务（{api}）：{error.reason}。请先启动应用。") from error
 
 
+def request_text(api: str, method: str, path: str) -> dict:
+    call = urllib.request.Request(api.rstrip("/") + path, method=method)
+    try:
+        with urllib.request.urlopen(call, timeout=190) as response:
+            return {"content": response.read().decode("utf-8")}
+    except urllib.error.HTTPError as error:
+        raise SystemExit(error.read().decode("utf-8", errors="replace")) from error
+    except urllib.error.URLError as error:
+        raise SystemExit(f"无法连接 LawFlow 本地服务（{api}）：{error.reason}。请先启动应用。") from error
+
+
 def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(description="LawFlow local API CLI")
     root.add_argument("--api", default=DEFAULT_API)
@@ -60,6 +71,16 @@ def parser() -> argparse.ArgumentParser:
     generate.add_argument("--outline-id", required=True)
     export = commands.add_parser("export-narrative")
     export.add_argument("--content-id", required=True)
+    regenerate = commands.add_parser("regenerate-section")
+    regenerate.add_argument("--content-id", required=True)
+    regenerate.add_argument("--section-id", required=True)
+    section_export = commands.add_parser("export-section")
+    section_export.add_argument("--content-id", required=True)
+    section_export.add_argument("--section-id", required=True)
+    profile_export = commands.add_parser("export-profile")
+    profile_export.add_argument("--profile-id", required=True)
+    profile_import = commands.add_parser("import-profile")
+    profile_import.add_argument("--markdown-file", required=True)
     return root
 
 
@@ -87,6 +108,14 @@ def main() -> None:
         })
     elif args.command == "app-generate":
         result = request(args.api, "POST", f"/api/narrative-outlines/{args.outline_id}/contents")
+    elif args.command == "regenerate-section":
+        result = request(args.api, "POST", f"/api/narrative-contents/{args.content_id}/sections/{urllib.parse.quote(args.section_id, safe='')}/regenerate")
+    elif args.command == "export-section":
+        result = request(args.api, "POST", f"/api/narrative-contents/{args.content_id}/sections/{urllib.parse.quote(args.section_id, safe='')}/export")
+    elif args.command == "export-profile":
+        result = request_text(args.api, "GET", f"/api/narrative/profiles/{urllib.parse.quote(args.profile_id, safe='')}/export")
+    elif args.command == "import-profile":
+        result = request(args.api, "POST", "/api/narrative/profiles/import", {"markdown": Path(args.markdown_file).read_text(encoding="utf-8")})
     else:
         result = request(args.api, "POST", f"/api/narrative-contents/{args.content_id}/export")
     print(json.dumps(result, ensure_ascii=False, indent=2))

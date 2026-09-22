@@ -28,7 +28,7 @@ from fastapi import Request
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from docx import Document
-from docx.shared import Pt
+from docx.shared import Inches, Pt, RGBColor
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from pydantic import BaseModel, Field
@@ -128,6 +128,9 @@ class ProjectCreate(BaseModel):
     verification_mode: Literal["source_only", "material_check", "external_verify"] = "material_check"
     target_duration: Literal[3, 5, 10, 20, 30] = 10
     audio_enabled: bool = True
+    minimum_output_mode: Literal["auto", "none", "custom"] = "auto"
+    minimum_output_ratio: float = Field(default=0.3, ge=0.1, le=1.0)
+    web_research_mode: Literal["off", "discover", "augment"] = "discover"
 
 
 class TextSourceCreate(BaseModel):
@@ -228,6 +231,10 @@ class ProfileExtract(BaseModel):
     transcript: str = Field(min_length=100, max_length=30000)
 
 
+class ProfileMarkdownImport(BaseModel):
+    markdown: str = Field(min_length=30, max_length=12000)
+
+
 class AudioScriptUpdate(BaseModel):
     script: str = Field(min_length=1, max_length=60000)
 
@@ -287,6 +294,9 @@ class NarrativeOutlineRequest(BaseModel):
     verification_mode: Literal["source_only", "material_check", "external_verify"] = "material_check"
     scenario: Literal["daily_brief", "topic_learning", "speaking_note", "legal_podcast"] = "topic_learning"
     target_duration: Literal[3, 5, 10, 20, 30] = 10
+    minimum_output_mode: Literal["auto", "none", "custom"] = "auto"
+    minimum_output_ratio: float = Field(default=0.3, ge=0.1, le=1.0)
+    web_research_mode: Literal["off", "discover", "augment"] = "discover"
 
 
 class NarrativeOutlineConfirm(BaseModel):
@@ -456,6 +466,9 @@ def init_db() -> None:
             verification_mode TEXT NOT NULL DEFAULT 'material_check',
             target_duration INTEGER NOT NULL DEFAULT 10,
             audio_enabled INTEGER NOT NULL DEFAULT 1,
+            minimum_output_mode TEXT NOT NULL DEFAULT 'auto',
+            minimum_output_ratio REAL NOT NULL DEFAULT 0.3,
+            web_research_mode TEXT NOT NULL DEFAULT 'discover',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         );
@@ -622,6 +635,9 @@ def init_db() -> None:
         "verification_mode": "TEXT NOT NULL DEFAULT 'material_check'",
         "target_duration": "INTEGER NOT NULL DEFAULT 10",
         "audio_enabled": "INTEGER NOT NULL DEFAULT 1",
+        "minimum_output_mode": "TEXT NOT NULL DEFAULT 'auto'",
+        "minimum_output_ratio": "REAL NOT NULL DEFAULT 0.3",
+        "web_research_mode": "TEXT NOT NULL DEFAULT 'discover'",
     }
     for column, definition in migrations.items():
         if column not in existing_columns:
@@ -1068,6 +1084,17 @@ STYLE_PROFILES = {
     },
 }
 
+SCENARIO_QUALITY_RULES = {
+    "daily_brief": ["保留时间、主体、事件和结论等关键事实，优先提高信息密度"],
+    "topic_learning": ["完整保留关键观点、规则背景和逻辑链", "遇到术语时解释其必要背景和具体场景"],
+    "speaking_note": ["保留专家或机构的名称、观点、依据和适用边界", "按背景、规则、实务场景和表达收束展开", "数据、案例和时间不能被概括成无依据的判断"],
+    "legal_podcast": ["保留专家或机构的名称、观点、依据和适用边界", "对规则说明背景、适用对象、具体内容和实务场景", "数据、案例和时间不能被概括成无依据的判断"],
+}
+
+def scenario_quality_rules(scenario: str) -> str:
+    rules = SCENARIO_QUALITY_RULES.get(scenario, SCENARIO_QUALITY_RULES["topic_learning"])
+    return "\n".join(f"- {rule}" for rule in rules)
+
 NARRATIVE_LENGTHS = {
     "short": {"label": "短篇", "total_words": 1800, "section_words": 450},
     "standard": {"label": "标准", "total_words": 3800, "section_words": 850},
@@ -1089,7 +1116,18 @@ def project_preferences(project: dict) -> dict:
         "verification_mode": project.get("verification_mode", "material_check"),
         "target_duration": int(project.get("target_duration", 10)),
         "audio_enabled": bool(project.get("audio_enabled", True)),
+        "minimum_output_mode": project.get("minimum_output_mode", "auto"),
+        "minimum_output_ratio": float(project.get("minimum_output_ratio", 0.3)),
+        "web_research_mode": project.get("web_research_mode", "discover"),
     }
+
+
+def output_floor(source_chars: int, transform_mode: str, minimum_output_mode: str, minimum_output_ratio: float) -> int:
+    """Return a review threshold, not a forced padding target."""
+    if minimum_output_mode == "none":
+        return 0
+    ratio = minimum_output_ratio if minimum_output_mode == "custom" else (0.3 if transform_mode == "condense" else 0.15)
+    return max(0, round(source_chars * ratio))
 
 
 def scenario_requires_tasks(project: dict) -> bool:
@@ -1351,6 +1389,9 @@ def normalize_narrative_outline(raw: dict, request: NarrativeOutlineRequest, blo
         "sections": sections,
         "target_total_words": total_words,
         "style_profile": request.style_profile,
+        "minimum_output_mode": request.minimum_output_mode,
+        "minimum_output_ratio": request.minimum_output_ratio,
+        "web_research_mode": request.web_research_mode,
     }
 
 
@@ -1363,6 +1404,11 @@ def create_narrative_outline(request: NarrativeOutlineRequest, blocks: list[dict
     transform = TRANSFORM_MODES[request.transform_mode]
     verification = VERIFICATION_MODES[request.verification_mode]
     scenario = CONTENT_SCENARIOS[request.scenario]
+    research_instruction = {
+        "off": "不使用联网检索；只根据已导入材料规划。",
+        "discover": "联网检索仅用于发现候选公开来源；不要把搜索结果直接写入大纲。",
+        "augment": "允许使用用户后续明确导入的公开来源补充背景；未导入、未审阅的网页不得写入大纲。",
+    }[request.web_research_mode]
     prompt = """你是资深法律内容主笔。请基于下列唯一材料规划一篇适合听、讲或学习的中文专业内容大纲。
 
 应用场景：{scenario}
@@ -1371,7 +1417,10 @@ def create_narrative_outline(request: NarrativeOutlineRequest, blocks: list[dict
 目标时长：约 {duration} 分钟；建议篇幅：约 {words} 字
 加工方式：{transform_name}。{transform_description}
 核验策略：{verification_name}。{verification_description}
+联网检索策略：{research_instruction}
 写作画像：{style}
+场景化质量要求：
+{quality_rules}
 
 要求：
 1. 只使用材料中可支持的事实、观点、规则和案例；不要补充材料外法规、日期、数字、机构观点或个案结论。
@@ -1384,8 +1433,8 @@ def create_narrative_outline(request: NarrativeOutlineRequest, blocks: list[dict
 允许材料块 ID：
 {allowed_ids}
 
-唯一材料：
-{dossier}""".format(scenario=scenario["name"], audience=request.audience, title=request.title, duration=request.target_duration, words=length["total_words"], transform_name=transform["name"], transform_description=transform["description"], verification_name=verification["name"], verification_description=verification["description"], style=profile["instruction"], allowed_ids="\n".join(block["id"] for block in blocks if block["kind"] != "heading"), dossier=dossier)
+    唯一材料：
+{dossier}""".format(scenario=scenario["name"], audience=request.audience, title=request.title, duration=request.target_duration, words=length["total_words"], transform_name=transform["name"], transform_description=transform["description"], verification_name=verification["name"], verification_description=verification["description"], research_instruction=research_instruction, quality_rules=scenario_quality_rules(request.scenario), style=profile["instruction"], allowed_ids="\n".join(block["id"] for block in blocks if block["kind"] != "heading"), dossier=dossier)
     raw = model_chat([{"role": "system", "content": "你严格遵守材料边界，并只返回可解析 JSON。"}, {"role": "user", "content": prompt}], temperature=0.25, max_tokens=3600)
     return normalize_narrative_outline(parse_model_json(raw), request, blocks)
 
@@ -1412,11 +1461,16 @@ def collapse_duplicate_headings(markdown: str) -> str:
     return "\n".join(output)
 
 
-def generate_narrative_markdown(outline: dict, blocks: list[dict], audience: str, style_profile: str, transform_mode: str = "adapt", scenario: str = "topic_learning", target_duration: int = 10) -> tuple[str, list[dict], dict]:
+def generate_narrative_markdown(outline: dict, blocks: list[dict], audience: str, style_profile: str, transform_mode: str = "adapt", scenario: str = "topic_learning", target_duration: int = 10, web_research_mode: str = "discover") -> tuple[str, list[dict], dict]:
     profile = get_style_profiles().get(style_profile)
     if profile is None:
         raise HTTPException(status_code=400, detail="未知的写作风格画像。")
     block_map = {block["id"]: block for block in blocks}
+    research_instruction = {
+        "off": "不得使用联网检索内容。",
+        "discover": "联网检索仅用于候选来源发现；不得把未导入、未审阅的网页事实写入正文。",
+        "augment": "仅可使用用户明确导入并审阅的公开来源；来源之外的网页信息不得写入正文。",
+    }.get(web_research_mode, "不得使用联网检索内容。")
     rendered_sections, section_sources = [], []
     for section_index, section in enumerate(outline["sections"]):
         selected = [block_map[block_id] for block_id in section["source_block_ids"] if block_id in block_map]
@@ -1434,6 +1488,9 @@ def generate_narrative_markdown(outline: dict, blocks: list[dict], audience: str
 目标时长：约 {duration} 分钟；目标长度：约 {words} 个汉字
 加工方式：{transform_name}。{transform_description}
 写作画像：{style}
+场景化质量要求：
+{quality_rules}
+联网检索策略：{research_instruction}
 
 本节关键点：
 {points}
@@ -1445,7 +1502,7 @@ def generate_narrative_markdown(outline: dict, blocks: list[dict], audience: str
 4. 可使用小标题，但不要重复总标题。只输出这一节的 Markdown 正文，不要输出来源列表。
 
 本节材料：
-{dossier}""".format(scenario=scenario_config["name"], title=outline["title"], heading=section["heading"], purpose=section.get("purpose", ""), audience=audience, duration=target_duration, words=section["target_words"], transform_name=transform["name"], transform_description=transform["description"], style=profile["instruction"], points=points, dossier=dossier)
+{dossier}""".format(scenario=scenario_config["name"], title=outline["title"], heading=section["heading"], purpose=section.get("purpose", ""), audience=audience, duration=target_duration, words=section["target_words"], transform_name=transform["name"], transform_description=transform["description"], style=profile["instruction"], quality_rules=scenario_quality_rules(scenario), research_instruction=research_instruction, points=points, dossier=dossier)
         prompt += "\n全文结构：" + " → ".join(item["heading"] for item in outline["sections"])
         if section_index == 0:
             prompt += "\n请将以下开场思路写成实际口播正文，不照抄写作指令：" + outline.get("opening_angle", "")
@@ -1459,15 +1516,26 @@ def generate_narrative_markdown(outline: dict, blocks: list[dict], audience: str
     markdown = "# {}\n".format(outline["title"])
     markdown += "\n\n".join(rendered_sections)
     settings = get_internal_provider_settings()
-    model_metadata = {"provider_name": settings.get("provider_name", ""), "base_url": settings.get("base_url", ""), "model_name": settings.get("model_name", ""), "generated_at": now_iso(), "style_profile": style_profile, "transform_mode": transform_mode, "scenario": scenario, "target_duration": target_duration}
+    source_chars = sum(len(block.get("text", "")) for block in blocks)
+    floor = output_floor(source_chars, transform_mode, outline.get("minimum_output_mode", "auto"), float(outline.get("minimum_output_ratio", 0.3)))
+    output_chars = len(re.sub(r"[#*_`>\-\[\]]", "", markdown))
+    model_metadata = {"provider_name": settings.get("provider_name", ""), "base_url": settings.get("base_url", ""), "model_name": settings.get("model_name", ""), "generated_at": now_iso(), "style_profile": style_profile, "transform_mode": transform_mode, "scenario": scenario, "target_duration": target_duration, "web_research_mode": web_research_mode, "quality_rules": SCENARIO_QUALITY_RULES.get(scenario, []), "output_floor": floor, "source_chars": source_chars, "output_chars": output_chars, "floor_status": "pass" if not floor or output_chars >= floor else "review"}
     return markdown, section_sources, model_metadata
 
 
-def markdown_to_docx(markdown: str, output_path: Path) -> None:
+def markdown_to_docx(markdown: str, output_path: Path, template: str = "legal") -> None:
     document = Document()
     normal = document.styles["Normal"]
-    normal.font.name = "Microsoft YaHei"
+    normal.font.name = "宋体" if template == "podcast" else "Microsoft YaHei"
     normal.font.size = Pt(11)
+    if template == "podcast":
+        normal.paragraph_format.line_spacing = 3.0
+        normal.paragraph_format.space_after = Pt(8)
+        for section in document.sections:
+            section.top_margin = Inches(1)
+            section.bottom_margin = Inches(1)
+            section.left_margin = Inches(1.25)
+            section.right_margin = Inches(1.25)
     for line in markdown.splitlines():
         value = line.strip()
         if not value:
@@ -1483,6 +1551,12 @@ def markdown_to_docx(markdown: str, output_path: Path) -> None:
         else:
             paragraph = document.add_paragraph(value)
         paragraph.paragraph_format.space_after = Pt(8)
+        if template == "podcast" and not value.startswith("#") and not value.startswith("- "):
+            paragraph.paragraph_format.first_line_indent = Pt(22)
+            paragraph.paragraph_format.line_spacing = 3.0
+        if template == "podcast" and value.startswith("#"):
+            for run in paragraph.runs:
+                run.font.color.rgb = RGBColor(31, 73, 125)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     document.save(output_path)
 
@@ -1712,9 +1786,9 @@ def create_project(payload: ProjectCreate):
     timestamp = now_iso()
     conn = db()
     conn.execute(
-        """INSERT INTO projects (id, name, client_name, description, scenario, transform_mode, verification_mode, target_duration, audio_enabled, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (project_id, payload.name.strip(), payload.client_name.strip(), payload.description.strip(), payload.scenario, payload.transform_mode, payload.verification_mode, payload.target_duration, int(payload.audio_enabled), timestamp, timestamp),
+        """INSERT INTO projects (id, name, client_name, description, scenario, transform_mode, verification_mode, target_duration, audio_enabled, minimum_output_mode, minimum_output_ratio, web_research_mode, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (project_id, payload.name.strip(), payload.client_name.strip(), payload.description.strip(), payload.scenario, payload.transform_mode, payload.verification_mode, payload.target_duration, int(payload.audio_enabled), payload.minimum_output_mode, payload.minimum_output_ratio, payload.web_research_mode, timestamp, timestamp),
     )
     conn.commit()
     row = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
@@ -2095,6 +2169,38 @@ def get_style_profiles():
     return {**STYLE_PROFILES, **{row["id"]: dict(row) for row in rows}}
 
 
+def profile_markdown(profile_id: str) -> str:
+    profile = get_style_profiles().get(profile_id)
+    if not profile:
+        raise HTTPException(404, "画像不存在。")
+    return "# {}\n\n## 简介\n{}\n\n## 写作要求\n{}\n".format(profile["name"], profile.get("description", ""), profile["instruction"])
+
+
+@app.get("/api/narrative/profiles/{profile_id}/export")
+def export_profile(profile_id: str):
+    if profile_id not in get_style_profiles():
+        raise HTTPException(404, "画像不存在。")
+    return Response(profile_markdown(profile_id), media_type="text/markdown", headers={"Content-Disposition": "attachment; filename=style-profile.md"})
+
+
+@app.post("/api/narrative/profiles/import", status_code=201)
+def import_profile(payload: ProfileMarkdownImport):
+    markdown = payload.markdown.strip()
+    headings = re.findall(r"^#\s+(.+)$", markdown, flags=re.MULTILINE)
+    sections = re.split(r"^##\s+", markdown, flags=re.MULTILINE)
+    name = clean_text(headings[0]) if headings else "导入画像"
+    description, instruction = "", markdown
+    for section in sections[1:]:
+        title, _, body = section.partition("\n")
+        if title.strip() in {"简介", "描述"}:
+            description = body.strip()
+        elif title.strip() in {"写作要求", "风格指令", "instruction"}:
+            instruction = body.strip()
+    if len(instruction) < 10:
+        raise HTTPException(400, "画像文件中没有足够的写作要求。")
+    return persist_profile("custom-" + uuid.uuid4().hex, ProfileCreate(name=name[:100], description=description[:1000], instruction=instruction[:6000]))
+
+
 @app.post("/api/narrative/profiles", status_code=201)
 def create_profile(payload: ProfileCreate):
     return persist_profile("custom-" + uuid.uuid4().hex, payload)
@@ -2303,6 +2409,9 @@ def create_narrative_outline_route(project_id: str, payload: NarrativeOutlineReq
     payload.verification_mode = project.get("verification_mode", payload.verification_mode)
     payload.scenario = project.get("scenario", payload.scenario)
     payload.target_duration = int(project.get("target_duration", payload.target_duration))
+    payload.minimum_output_mode = project.get("minimum_output_mode", payload.minimum_output_mode)
+    payload.minimum_output_ratio = float(project.get("minimum_output_ratio", payload.minimum_output_ratio))
+    payload.web_research_mode = project.get("web_research_mode", payload.web_research_mode)
     outline = create_narrative_outline(payload, blocks)
     outline_id = str(uuid.uuid4())
     timestamp = now_iso()
@@ -2363,7 +2472,8 @@ def generate_narrative_content(outline_id: str):
     blocks = read_blocks(row["document_id"], source_ids)
     project = project_or_404(row["project_id"])
     preferences = project_preferences(project)
-    markdown, section_sources, model_metadata = generate_narrative_markdown(outline, blocks, row["audience"], row["style_profile"], preferences["transform_mode"], preferences["scenario"], preferences["target_duration"])
+    outline.update({"minimum_output_mode": preferences["minimum_output_mode"], "minimum_output_ratio": preferences["minimum_output_ratio"]})
+    markdown, section_sources, model_metadata = generate_narrative_markdown(outline, blocks, row["audience"], row["style_profile"], preferences["transform_mode"], preferences["scenario"], preferences["target_duration"], preferences["web_research_mode"])
     content_id = str(uuid.uuid4())
     timestamp = now_iso()
     conn = db()
@@ -2376,6 +2486,47 @@ def generate_narrative_content(outline_id: str):
     conn.commit()
     conn.close()
     return {"id": content_id, "outline_id": outline_id, "title": outline["title"], "markdown": markdown, "section_sources": section_sources, "model": model_metadata, "status": "pending_review", "created_at": timestamp}
+
+
+@app.post("/api/narrative-contents/{content_id}/sections/{section_id}/regenerate")
+def regenerate_narrative_section(content_id: str, section_id: str):
+    with db() as conn:
+        row = conn.execute("SELECT * FROM narrative_contents WHERE id = ?", (content_id,)).fetchone()
+    if row is None:
+        raise HTTPException(404, "知识转译成稿不存在。")
+    project = project_or_404(row["project_id"])
+    with db() as conn:
+        outline_row = conn.execute("SELECT * FROM narrative_outlines WHERE id = ?", (row["outline_id"],)).fetchone()
+    if outline_row is None:
+        raise HTTPException(404, "对应的大纲不存在。")
+    outline = parse_json(outline_row["outline_json"], {})
+    section = next((item for item in outline.get("sections", []) if item.get("id") == section_id), None)
+    if section is None:
+        raise HTTPException(404, "章节不存在。")
+    blocks = read_blocks(row["document_id"], section.get("source_block_ids", []))
+    if not blocks:
+        raise HTTPException(400, "章节没有可用的材料块。")
+    preferences = project_preferences(project)
+    single_outline = {**outline, "sections": [section], "title": outline.get("title", row["title"])}
+    markdown, sources, metadata = generate_narrative_markdown(single_outline, blocks, outline_row["audience"], outline_row["style_profile"], preferences["transform_mode"], preferences["scenario"], preferences["target_duration"], preferences["web_research_mode"])
+    generated = re.sub(r"^(?:#{1,6}[ \t]+[^\n]*\r?\n+)+", "", markdown.strip()).strip()
+    current = collapse_duplicate_headings(row["markdown"])
+    heading = "## " + section["heading"]
+    start = current.find(heading)
+    if start < 0:
+        raise HTTPException(409, "原稿中未找到该章节，请重新生成整篇讲稿。")
+    next_start = re.search(r"\n##\s+", current[start + len(heading):])
+    end = start + len(heading) + (next_start.start() if next_start else len(current) - start - len(heading))
+    replacement = heading + "\n\n" + generated
+    updated_markdown = current[:start] + replacement + current[end:]
+    metadata["regenerated_section_id"] = section_id
+    existing_sources = parse_json(row["section_sources_json"], [])
+    merged_sources = [sources[0] if item.get("section_id") == section_id and sources else item for item in existing_sources]
+    if not any(item.get("section_id") == section_id for item in merged_sources) and sources:
+        merged_sources.append(sources[0])
+    with db() as conn:
+        conn.execute("UPDATE narrative_contents SET markdown = ?, model_json = ?, section_sources_json = ?, status = 'needs_revision', review_note = ?, updated_at = ? WHERE id = ?", (updated_markdown, json.dumps(metadata, ensure_ascii=False), json.dumps(merged_sources, ensure_ascii=False), "已单独重新生成章节，需重新审阅。", now_iso(), content_id))
+    return {"id": content_id, "section_id": section_id, "markdown": updated_markdown, "status": "needs_revision"}
 
 
 @app.put("/api/narrative-contents/{content_id}")
@@ -2393,6 +2544,61 @@ def update_narrative_content(content_id: str, payload: NarrativeContentUpdate):
     conn.commit()
     conn.close()
     return {"id": content_id, "markdown": payload.markdown, "review_note": payload.review_note, "status": payload.status, "updated_at": timestamp}
+
+
+@app.post("/api/narrative-contents/{content_id}/sections/{section_id}/export", status_code=201)
+def export_narrative_section(content_id: str, section_id: str):
+    with db() as conn:
+        content = conn.execute("SELECT * FROM narrative_contents WHERE id = ?", (content_id,)).fetchone()
+    if content is None:
+        raise HTTPException(404, "知识转译成稿不存在。")
+    sources = parse_json(content["section_sources_json"], [])
+    section = next((item for item in sources if item.get("section_id") == section_id), None)
+    if section is None:
+        raise HTTPException(404, "章节不存在。")
+    heading = "## " + section["heading"]
+    markdown = collapse_duplicate_headings(content["markdown"])
+    start = markdown.find(heading)
+    if start < 0:
+        raise HTTPException(409, "原稿中未找到该章节。")
+    next_start = re.search(r"\n##\s+", markdown[start + len(heading):])
+    end = start + len(heading) + (next_start.start() if next_start else len(markdown) - start - len(heading))
+    section_markdown = markdown[start:end].strip()
+    output_root = get_configured_export_directory()
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    safe_title = re.sub(r"[\\/:*?\"<>|]", "_", section["heading"]).strip() or "lawflow-section"
+    markdown_path = output_root / f"{safe_title}-{stamp}.md"
+    docx_path = output_root / f"{safe_title}-{stamp}.docx"
+    markdown_path.write_text(section_markdown, encoding="utf-8")
+    project = project_or_404(content["project_id"])
+    template = "podcast" if project.get("scenario") in {"daily_brief", "legal_podcast"} else "legal"
+    markdown_to_docx(section_markdown, docx_path, template=template)
+    return {"markdown_path": str(markdown_path), "docx_path": str(docx_path), "download_url": f"/api/narrative-contents/{content_id}/download-section/{section_id}"}
+
+
+@app.get("/api/narrative-contents/{content_id}/download-section/{section_id}")
+def download_narrative_section(content_id: str, section_id: str):
+    with db() as conn:
+        content = conn.execute("SELECT * FROM narrative_contents WHERE id = ?", (content_id,)).fetchone()
+    if content is None:
+        raise HTTPException(404, "知识转译成稿不存在。")
+    sources = parse_json(content["section_sources_json"], [])
+    section = next((item for item in sources if item.get("section_id") == section_id), None)
+    if section is None:
+        raise HTTPException(404, "章节不存在。")
+    markdown = collapse_duplicate_headings(content["markdown"])
+    heading = "## " + section["heading"]
+    start = markdown.find(heading)
+    next_start = re.search(r"\n##\s+", markdown[start + len(heading):]) if start >= 0 else None
+    end = start + len(heading) + (next_start.start() if next_start else len(markdown) - start - len(heading))
+    if start < 0:
+        raise HTTPException(409, "原稿中未找到该章节。")
+    temp_path = DATA_DIR / "temp" / (uuid.uuid4().hex + ".docx")
+    project = project_or_404(content["project_id"])
+    template = "podcast" if project.get("scenario") in {"daily_brief", "legal_podcast"} else "legal"
+    markdown_to_docx(markdown[start:end].strip(), temp_path, template=template)
+    safe_title = re.sub(r"[\\/:*?\"<>|]", "_", section["heading"]).strip() or "lawflow-section"
+    return FileResponse(temp_path, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", filename=f"{safe_title}.docx")
 
 
 @app.post("/api/narrative-contents/{content_id}/export", status_code=201)
@@ -2616,7 +2822,9 @@ def download_narrative_docx(content_id: str):
     temp_dir.mkdir(parents=True, exist_ok=True)
     safe_title = re.sub(r"[\\/:*?\"<>|]", "_", content["title"]).strip() or "lawflow-narrative"
     docx_path = temp_dir / f"{safe_title}.docx"
-    markdown_to_docx(collapse_duplicate_headings(content["markdown"]), docx_path)
+    project = project_or_404(content["project_id"])
+    template = "podcast" if project.get("scenario") in {"daily_brief", "legal_podcast"} else "legal"
+    markdown_to_docx(collapse_duplicate_headings(content["markdown"]), docx_path, template=template)
     return FileResponse(docx_path, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", filename=f"{safe_title}.docx")
 
 
@@ -2806,7 +3014,7 @@ def export_project(project_id: str):
     for index, content in enumerate(narratives, start=1):
         filename = f"讲稿-{index:02d}"
         (output_dir / (filename + ".md")).write_text(content["markdown"], encoding="utf-8")
-        markdown_to_docx(content["markdown"], output_dir / (filename + ".docx"))
+        markdown_to_docx(content["markdown"], output_dir / (filename + ".docx"), template="podcast" if project.get("scenario") in {"daily_brief", "legal_podcast"} else "legal")
         evidence.append({"content_id": content["id"], "title": content["title"], "status": content["status"], "section_sources": parse_json(content["section_sources_json"], [])})
     for index, audio in enumerate(audios, start=1):
         (output_dir / f"口播脚本-{index:02d}.txt").write_text(audio["script"], encoding="utf-8")

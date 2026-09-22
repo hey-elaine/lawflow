@@ -22,6 +22,8 @@ description: Use a local LawFlow app to turn legal materials and selected public
 4. 调用 `PUT /api/narrative-outlines/{outline_id}/confirm`，再调用 `POST /api/narrative-outlines/{outline_id}/contents` 生成讲稿。
 5. 成稿由用户确认后，调用 `POST /api/projects/{project_id}/audio-scripts` 生成口播脚本；最终 MP3 只能基于已确认讲稿生成。若用户希望按章节碎片时间收听，在同一接口传入 `section_heading`（讲稿中的二级标题），只整理该章节。
 6. 通过 `POST /api/narrative-contents/{content_id}/export` 导出 Markdown 与 DOCX。
+7. 如果只需返工一节，调用 `POST /api/narrative-contents/{content_id}/sections/{section_id}/regenerate`；确认章节来源映射未丢失后，可调用同路径的 `/export` 单独导出该节。
+8. 写作画像可通过 `GET /api/narrative/profiles/{profile_id}/export` 导出 Markdown，也可通过 `POST /api/narrative/profiles/import` 导入为新的自定义画像。
 
 ## 宿主模型模式
 
@@ -39,6 +41,7 @@ description: Use a local LawFlow app to turn legal materials and selected public
 - 解释术语应给出必要背景和具体场景，不堆砌法条。
 - 不使用“核心提示”“对企业的影响”“建议动作”等泛化模板标题。
 - 不使用“作为 AI”“根据材料显示”等元话语。
+- 根据场景保留关键观点、专家/机构、数据、案例、时间和规则适用边界；日常速听可以压缩，但培训和对外播客不得把这些内容概括成无依据的泛泛判断。
 
 ## 每日速听
 

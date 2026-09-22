@@ -17,6 +17,25 @@ class ImprovementsTest(unittest.TestCase):
     setUpClass = classmethod(fixtures.LawFlowApiTest.setUpClass.__func__)
     tearDownClass = classmethod(fixtures.LawFlowApiTest.tearDownClass.__func__)
 
+    def test_output_floor_is_optional_and_mode_aware(self):
+        self.assertEqual(self.main.output_floor(1000, 'condense', 'none', 0.3), 0)
+        self.assertEqual(self.main.output_floor(1000, 'condense', 'auto', 0.3), 300)
+        self.assertEqual(self.main.output_floor(1000, 'adapt', 'auto', 0.3), 150)
+        self.assertEqual(self.main.output_floor(1000, 'adapt', 'custom', 0.42), 420)
+
+    def test_project_keeps_research_and_output_preferences(self):
+        project = self.client.post('/api/projects', json={
+            'name': '可配置策略',
+            'minimum_output_mode': 'none',
+            'minimum_output_ratio': 0.4,
+            'web_research_mode': 'augment',
+        })
+        self.assertEqual(project.status_code, 201)
+        data = self.client.get('/api/projects/' + project.json()['id']).json()['project']
+        self.assertEqual(data['minimum_output_mode'], 'none')
+        self.assertEqual(data['minimum_output_ratio'], 0.4)
+        self.assertEqual(data['web_research_mode'], 'augment')
+
     def make_content(self):
         project = self.client.post('/api/projects', json={'name': '回归', 'scenario': 'daily_brief', 'transform_mode': 'condense', 'verification_mode': 'source_only'}).json()
         source = self.client.post(f"/api/projects/{project['id']}/text-sources", json={'title': '素材', 'content': '这是原始材料，需要保留事实和限制条件。企业应当按照实际情况评估。'}).json()
@@ -152,6 +171,54 @@ class ImprovementsTest(unittest.TestCase):
             self.assertIn(data['instruction'], model.call_args.args[0][-1]['content'])
         self.assertEqual(len(outline['sections']), 1)
         self.assertLessEqual(outline['target_total_words'], 720)
+
+    def test_profile_markdown_export_and_import(self):
+        created = self.client.post('/api/narrative/profiles', json={
+            'name': '可迁移画像',
+            'description': '适合专题学习',
+            'instruction': '先说明具体问题，再按背景、规则和实务场景展开，保留必要的事实边界。',
+        }).json()
+        exported = self.client.get('/api/narrative/profiles/' + created['id'] + '/export')
+        self.assertEqual(exported.status_code, 200)
+        self.assertIn('# 可迁移画像', exported.text)
+        imported = self.client.post('/api/narrative/profiles/import', json={'markdown': exported.text})
+        self.assertEqual(imported.status_code, 201)
+        self.assertEqual(imported.json()['name'], '可迁移画像')
+        self.assertIn('具体问题', imported.json()['instruction'])
+
+    def test_podcast_docx_template_sets_layout(self):
+        output = self.temp_dir / 'podcast.docx'
+        self.main.markdown_to_docx('# 标题\n\n正文段落。', output, template='podcast')
+        from docx import Document
+        document = Document(output)
+        paragraph = document.paragraphs[1]
+        self.assertEqual(paragraph.paragraph_format.line_spacing, 3.0)
+        self.assertEqual(paragraph.paragraph_format.first_line_indent.pt, 22)
+        self.assertEqual(document.sections[0].left_margin.inches, 1.25)
+
+    def test_regenerate_section_preserves_other_source_mappings(self):
+        project = self.client.post('/api/projects', json={'name': '章节重做', 'scenario': 'topic_learning'}).json()
+        source = self.client.post('/api/projects/' + project['id'] + '/text-sources', json={'title': '素材', 'content': '第一节材料内容，需要保留背景、事实和规则边界。第二节材料内容，需要说明实务场景、责任分工和后续核验事项。'}).json()
+        document = self.client.get('/api/documents/' + source['id']).json()
+        ids = [block['id'] for block in document['blocks'] if block['kind'] == 'paragraph']
+        outline = {'title': '章节稿', 'opening_angle': '', 'closing_angle': '', 'sections': [
+            {'id': 'section-1', 'heading': '第一节', 'purpose': '', 'key_points': [], 'source_block_ids': [ids[0]], 'target_words': 100},
+            {'id': 'section-2', 'heading': '第二节', 'purpose': '', 'key_points': [], 'source_block_ids': [ids[-1]], 'target_words': 100},
+        ]}
+        with self.main.db() as conn:
+            outline_id = 'outline-regenerate'
+            content_id = 'content-regenerate'
+            timestamp = self.main.now_iso()
+            conn.execute("INSERT INTO narrative_outlines VALUES (?, ?, ?, '', ?, '法律从业者', 'law_podcast_v4', 'short', ?, ?, 'confirmed', ?, ?)", (outline_id, project['id'], source['id'], '章节稿', json.dumps(ids), json.dumps(outline, ensure_ascii=False), timestamp, timestamp))
+            markdown = '# 章节稿\n\n## 第一节\n\n旧第一节。\n\n## 第二节\n\n旧第二节。'
+            mappings = [{'section_id': 'section-1', 'heading': '第一节', 'source_block_ids': [ids[0]]}, {'section_id': 'section-2', 'heading': '第二节', 'source_block_ids': [ids[-1]]}]
+            conn.execute("INSERT INTO narrative_contents VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending_review', '', ?, ?)", (content_id, outline_id, project['id'], source['id'], '章节稿', markdown, json.dumps(mappings), json.dumps({}), timestamp, timestamp))
+        with patch.object(self.main, 'model_chat', return_value='重做后的第一节。'):
+            response = self.client.post('/api/narrative-contents/' + content_id + '/sections/section-1/regenerate')
+        self.assertEqual(response.status_code, 200)
+        state = self.client.get('/api/projects/' + project['id']).json()['narrative_contents'][0]
+        self.assertEqual({item['section_id'] for item in state['section_sources']}, {'section-1', 'section-2'})
+        self.assertIn('重做后的第一节', state['markdown'])
 
     def test_outline_prompt_uses_actual_source_ids_not_legacy_placeholder(self):
         request = self.main.NarrativeOutlineRequest(document_id='d', title='测试', source_block_ids=['actual:paragraph'], transform_mode='condense', target_duration=3)
