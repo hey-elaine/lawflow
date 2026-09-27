@@ -334,3 +334,11 @@
 .select-box-option:hover { background: var(--accent-light); }
 .select-box-option.active { background: var(--accent-light); color: var(--accent-dark); font-weight: 700; }
 .select-box-option.disabled { color: #9aa39d; cursor: not-allowed; background: transparent; }
+
+/* 内容处理方式：三选一选择卡，比下拉更直观。 */
+.mode-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; margin-bottom: 14px; }
+.mode-options label { display: grid; gap: 4px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: #fffefa; cursor: pointer; transition: border .15s ease, background .15s ease; font-size: 13.5px; font-weight: 700; }
+.mode-options label:hover { border-color: #bdb7aa; }
+.mode-options label:has(input:checked) { border-color: var(--accent); background: var(--accent-light); color: var(--accent-dark); }
+.mode-options input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); }
+.mode-options small { color: var(--ink-soft); font-weight: 400; font-size: 11.5px; line-height: 1.5; }

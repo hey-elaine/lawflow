@@ -1047,22 +1047,15 @@ function bindDialogs() {
       try { await checkForUpdates(true); } finally { setBusy(button, false); }
     });
   }
-  const projectForm = $('#project-form');
-  if (projectForm && !$('#project-generation-preferences')) {
-    const preferences = document.createElement('fieldset');
-    preferences.id = 'project-generation-preferences';
-    preferences.innerHTML = '<legend>生成偏好（可选）</legend><label>成稿长度检查<select name="minimum_output_mode"><option value="auto" selected>自动估算（精炼模式更严格）</option><option value="none">不检查</option><option value="custom">自定义最低比例</option></select></label><label>最低保留比例<input name="minimum_output_ratio" type="number" min="0.1" max="1" step="0.05" value="0.3"><small>只用于生成后的提醒，不会让模型用套话凑字数。</small></label><label>联网检索<select name="web_research_mode"><option value="discover" selected>允许发现候选来源（不自动写入）</option><option value="off">关闭联网检索</option><option value="augment">允许已选来源参与补充</option></select></label>';
-    $('.dialog-actions', projectForm).before(preferences);
-  }
   $('#new-project').addEventListener('click', () => $('#project-dialog').showModal());
   $('#open-daily-brief').addEventListener('click', () => $('#daily-brief-dialog').showModal());
   $$('input[name="scenario"]').forEach(input => input.addEventListener('change', () => {
     const config = SCENARIOS[input.value];
     const form = $('#project-form');
-    form.elements.transform_mode.value = config.transform;
+    const modeRadio = form.querySelector('input[name="transform_mode"][value="' + config.transform + '"]');
+    if (modeRadio) modeRadio.checked = true;
     form.elements.verification_mode.value = config.verification;
-    form.elements.target_duration.value = String(config.duration);
-    form.elements.audio_enabled.value = String(config.audio);
+    form.elements.audio_enabled.checked = !!config.audio;
   }));
   $$('[data-close-dialog]').forEach(button => button.addEventListener('click', () => {
     const dialog = $('#' + button.dataset.closeDialog);
@@ -1076,7 +1069,7 @@ function bindDialogs() {
     try {
       setBusy(submit, true, '创建中…');
       const body = Object.fromEntries(form);
-      body.audio_enabled = body.audio_enabled === 'true';
+      body.audio_enabled = formEl.elements.audio_enabled.checked;
       body.target_duration = Number(body.target_duration || 10);
       const project = await request('/api/projects', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
       $('#project-dialog').close();

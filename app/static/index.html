@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>律析 LawFlow｜法律内容学习与表达工作台</title>
-  <link rel="stylesheet" href="/styles.css?v=20260927-7" />
+  <link rel="stylesheet" href="/styles.css?v=20260927-8" />
 </head>
 <body>
   <header class="nav shell">
@@ -80,12 +80,20 @@
     <label>客户 / 主题（可选）<input name="client_name" maxlength="120" placeholder="例如：跨境数据合规" /></label>
     <fieldset><legend>选择应用场景</legend><div class="scenario-options"><label><input type="radio" name="scenario" value="daily_brief" />晨间 / 晚间法律速听<small>单篇资讯，短时精炼收听</small></label><label><input type="radio" name="scenario" value="topic_learning" checked />专题学习与表达<small>围绕选定材料形成分章节学习内容</small></label><label><input type="radio" name="scenario" value="speaking_note" />客户培训 / Speak Note<small>准备培训、发言和对外交流讲稿</small></label><label><input type="radio" name="scenario" value="legal_podcast" />法律科普播客<small>实务热点与经验积累的对外表达</small></label></div></fieldset>
     <label>项目说明（可选）<textarea name="description" maxlength="1000" placeholder="记录学习主题、培训对象或表达目的"></textarea></label>
-    <fieldset><legend>学习与表达偏好</legend>
-      <label>内容加工方式<select name="transform_mode"><option value="condense">提炼：保留重点</option><option value="adapt" selected>转译：重组并解释</option><option value="enrich">扩充：仅基于已选材料增加背景解释</option></select></label>
-      <label>预计收听时长<select name="target_duration"><option value="3">3 分钟</option><option value="5">5 分钟</option><option value="10" selected>10 分钟</option><option value="20">20 分钟</option><option value="30">30 分钟</option></select></label>
-      <label>音频<select name="audio_enabled"><option value="true" selected>保留音频制作入口</option><option value="false">只做文字学习</option></select></label>
+    <fieldset><legend>内容偏好</legend>
+      <label>内容处理方式</label>
+      <div class="mode-options">
+        <label><input type="radio" name="transform_mode" value="condense" />提炼<small>压缩成要点，快速掌握核心</small></label>
+        <label><input type="radio" name="transform_mode" value="adapt" checked />转译<small>重组并解释，适合系统学习</small></label>
+        <label><input type="radio" name="transform_mode" value="enrich" />扩充<small>补充背景知识，讲得更透</small></label>
+      </div>
+      <label class="check-label"><input type="checkbox" name="audio_enabled" checked /> 生成音频制作入口（通勤、运动时逐章收听）</label>
     </fieldset>
     <input type="hidden" name="verification_mode" value="material_check" />
+    <input type="hidden" name="target_duration" value="10" />
+    <input type="hidden" name="web_research_mode" value="discover" />
+    <input type="hidden" name="minimum_output_mode" value="auto" />
+    <input type="hidden" name="minimum_output_ratio" value="0.3" />
     <div class="dialog-actions"><button type="button" class="button button-outline" data-close-dialog="project-dialog">取消</button><button type="submit" class="button button-primary">创建内容任务</button></div>
   </form></dialog>
 
@@ -93,6 +101,6 @@
 
   <dialog id="daily-brief-dialog" class="dialog"><form id="daily-brief-form"><div class="dialog-header"><h2>每日法律速听</h2><button type="button" aria-label="关闭" class="icon-button" data-close-dialog="daily-brief-dialog">×</button></div><p class="form-note">订阅公开 RSS 或 Atom 源。系统每天只收集新文章并建立待审速听任务；不会自动发布，也不会自动生成最终 MP3。</p><label>订阅名称<input required name="name" maxlength="120" placeholder="例如：数据合规资讯" /></label><label>RSS / Atom 地址<input required name="feed_url" type="url" placeholder="https://example.com/feed.xml" /></label><div class="plan-settings"><div class="field"><label>每日运行时间<input name="daily_time" type="time" value="08:00" /></label></div><div class="field"><label>每次最多收集<input name="max_items" type="number" min="1" max="10" value="3" /> 篇</label></div></div><label class="check-label"><input type="checkbox" name="auto_generate" /> 允许自动生成待审速听稿与音频脚本（仅在模型已配置且允许发送素材时）</label><div class="dialog-actions"><button type="button" class="button button-outline" data-close-dialog="daily-brief-dialog">取消</button><button type="submit" class="button button-primary">保存订阅</button></div></form></dialog>
 
-  <script src="/app.js?v=20260927-7"></script>
+  <script src="/app.js?v=20260927-8"></script>
 </body>
 </html>
