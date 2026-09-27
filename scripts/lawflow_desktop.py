@@ -6,7 +6,6 @@ import socket
 import sqlite3
 import threading
 import time
-import urllib.parse
 import webbrowser
 import os
 import shutil
@@ -26,17 +25,12 @@ h1{margin:0 0 8px;font-size:20px;letter-spacing:-.02em}p{margin:0;color:#41534d;
 </style></head><body><div class="card"><div class="mark">律</div><h1>律析 LawFlow</h1><p>正在启动本地服务，请稍候…</p><div class="bar"></div></div></body></html>"""
 
 
-def data_uri(html: str) -> str:
-    return "data:text/html;charset=utf-8," + urllib.parse.quote(html)
-
-
 def error_page(message: str) -> str:
     safe = message.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     return LOADING_PAGE.replace(
         "正在启动本地服务，请稍候…",
         f"启动失败：{safe}<br/>请关闭窗口后重新打开 LawFlow。",
     ).replace(".bar{", ".bar-hidden{")
-
 
 def project_count(db_path: Path) -> int:
     if not db_path.is_file():
@@ -95,9 +89,11 @@ def main() -> None:
         webview = None
 
     if webview is not None:
+        # 用原生 html= 渲染加载页。不要用 data: URI：pywebview 会把它当本地文件
+        # 交给内部 HTTP 服务器解析，产生一次短暂约 404 错误页。
         window = webview.create_window(
             "律析 LawFlow",
-            data_uri(LOADING_PAGE),
+            html=LOADING_PAGE,
             width=1440,
             height=960,
             min_size=(1120, 760),
@@ -117,10 +113,13 @@ def main() -> None:
                     if server.started:
                         break
                     time.sleep(0.1)
-                window.load_url(url if server.started else data_uri(error_page("本地服务未能在 60 秒内就绪")))
+                if server.started:
+                    window.load_url(url)
+                else:
+                    window.load_html(error_page("本地服务未能在 60 秒内就绪"))
             except Exception as error:  # noqa: BLE001 - 启动失败也要把原因呈现给用户
                 try:
-                    window.load_url(data_uri(error_page(str(error))))
+                    window.load_html(error_page(str(error)))
                 except Exception:
                     pass
 
