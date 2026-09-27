@@ -1233,6 +1233,8 @@ async function checkForUpdates(manual = false) {
 }
 async function boot() {
   bindDialogs();
+  enhanceSelects();
+  new MutationObserver(() => { enhanceSelects(); $$('.select-box select').forEach(syncSelectBox); }).observe(document.body, { childList: true, subtree: true });
   $('#hero-load-demo')?.addEventListener('click', loadDemoProject);
   if (window.location.protocol === 'file:') {
     showMessage('你正在打开源码页面。请打开 LawFlow.app 使用完整功能。', true);
@@ -1340,3 +1342,70 @@ async function confirmNarrativeContent(id, button) {
     renderProjectDetail(); showMessage('讲稿审阅已确认。');
   } catch (error) {showMessage(error.message, true);} finally {setBusy(button, false);}
 }
+
+/* 自定义下拉框：隐藏原生 select、用统一样式的弹出列表替代系统菜单。 */
+function selectBoxSignature(select) { return select.options.length + ':' + select.selectedIndex + ':' + (select.disabled ? 1 : 0); }
+
+function syncSelectBox(select) {
+  const wrap = select.closest('.select-box');
+  if (!wrap) return;
+  const sig = selectBoxSignature(select);
+  if (select.dataset.selectSig === sig && wrap.querySelector('.select-box-trigger').textContent) return;
+  select.dataset.selectSig = sig;
+  const trigger = wrap.querySelector('.select-box-trigger');
+  const list = wrap.querySelector('.select-box-list');
+  const options = [...select.options];
+  const selected = options[select.selectedIndex] || null;
+  const label = selected ? selected.textContent : (options[0]?.textContent || '请选择');
+  trigger.innerHTML = '<span class="select-box-value">' + escapeHtml(label) + '</span><span class="select-box-arrow"></span>';
+  wrap.classList.toggle('disabled', select.disabled);
+  trigger.disabled = select.disabled;
+  list.innerHTML = options.map((opt, index) => '<button type="button" class="select-box-option' + (opt === selected ? ' active' : '') + (opt.disabled ? ' disabled' : '') + '" data-option-index="' + index + '">' + (opt === selected ? '✓ ' : '') + escapeHtml(opt.textContent) + '</button>').join('');
+}
+
+function closeAllSelectBoxes() { $$('.select-box-list[data-open]').forEach(list => { delete list.dataset.open; }); }
+
+function enhanceSelects(root) {
+  $$('select:not([data-custom])', root || document).forEach(select => {
+    if (select.multiple) { select.dataset.custom = '1'; return; }
+    select.dataset.custom = '1';
+    const wrap = document.createElement('span');
+    wrap.className = 'select-box';
+    select.parentNode.insertBefore(wrap, select);
+    wrap.appendChild(select);
+    const trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'select-box-trigger';
+    trigger.setAttribute('aria-haspopup', 'listbox');
+    const list = document.createElement('span');
+    list.className = 'select-box-list';
+    wrap.append(trigger, list);
+    const valueDescriptor = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
+    try {
+      Object.defineProperty(select, 'value', {
+        configurable: true,
+        get() { return valueDescriptor.get.call(this); },
+        set(v) { valueDescriptor.set.call(this, v); syncSelectBox(this); },
+      });
+    } catch (error) { /* 极老内核不支持时退化为仅事件同步 */ }
+    syncSelectBox(select);
+    trigger.addEventListener('click', event => {
+      event.stopPropagation();
+      if (select.disabled) return;
+      const willOpen = !list.dataset.open;
+      closeAllSelectBoxes();
+      if (willOpen) list.dataset.open = '1';
+    });
+    list.addEventListener('click', event => {
+      const option = event.target.closest('.select-box-option');
+      if (!option || option.classList.contains('disabled')) return;
+      select.selectedIndex = Number(option.dataset.optionIndex);
+      delete list.dataset.open;
+      syncSelectBox(select);
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  });
+}
+
+document.addEventListener('click', event => { if (!event.target.closest('.select-box')) closeAllSelectBoxes(); });
+document.addEventListener('keydown', event => { if (event.key === 'Escape') closeAllSelectBoxes(); });

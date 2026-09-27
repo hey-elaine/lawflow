@@ -319,3 +319,18 @@
 /* 下拉框：去掉 macOS 原生高亮外观，与输入框统一。 */
 .field select, .dialog select { -webkit-appearance: none; appearance: none; background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%2341534d' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 34px; cursor: pointer; }
 .field select:disabled, .dialog select:disabled { color: #9aa39d; background-color: #f4f2ec; cursor: not-allowed; }
+
+/* 自定义下拉框：替代 macOS 原生 select 弹出菜单，与整体风格统一。 */
+.select-box { position: relative; display: block; width: 100%; }
+.select-box select { display: none !important; }
+.select-box-trigger { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; padding: 9px 10px; border: 1px solid #d8d3c7; border-radius: 8px; background: #fffefa; color: var(--ink); text-align: left; cursor: pointer; }
+.select-box-trigger:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(29,91,73,.1); outline: none; }
+.select-box.disabled .select-box-trigger { color: #9aa39d; background: #f4f2ec; cursor: not-allowed; }
+.select-box-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.select-box-arrow { flex-shrink: 0; width: 10px; height: 6px; background: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%2341534d' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat center / contain; }
+.select-box-list { position: absolute; z-index: 60; top: calc(100% + 4px); left: 0; right: 0; display: none; padding: 5px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); box-shadow: 0 14px 34px rgba(30,44,38,.16); max-height: 264px; overflow-y: auto; }
+.select-box-list[data-open] { display: block; }
+.select-box-option { display: block; width: 100%; padding: 8px 10px; border: 0; border-radius: 7px; background: transparent; color: var(--ink); text-align: left; font-size: 13.5px; cursor: pointer; }
+.select-box-option:hover { background: var(--accent-light); }
+.select-box-option.active { background: var(--accent-light); color: var(--accent-dark); font-weight: 700; }
+.select-box-option.disabled { color: #9aa39d; cursor: not-allowed; background: transparent; }
