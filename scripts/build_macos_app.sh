@@ -18,12 +18,13 @@ pyinstaller \
   --noconfirm \
   --windowed \
   --name LawFlow \
-  --osx-bundle-identifier com.donghyq.lawflow \
+  --osx-bundle-identifier com.hey-elaine.lawflow \
   --paths "$ROOT_DIR" \
   --add-data "app/static:app/static" \
   --collect-data setuptools \
   --collect-all mcp \
   --collect-all edge_tts \
+  --collect-all webview \
   scripts/lawflow_desktop.py
 
 set_plist_string() {

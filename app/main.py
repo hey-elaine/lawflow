@@ -41,7 +41,7 @@ if getattr(sys, "frozen", False):
     DATA_DIR = Path(os.getenv("LAWFLOW_DATA_DIR", str(Path.home() / "Library/Application Support/LawFlow/data"))).expanduser()
     STATIC_DIR = Path(getattr(sys, "_MEIPASS", ROOT_DIR)) / "app" / "static"
 else:
-    DATA_DIR = ROOT_DIR / "data"
+    DATA_DIR = Path(os.getenv("LAWFLOW_DATA_DIR", str(ROOT_DIR / "data"))).expanduser()
     STATIC_DIR = ROOT_DIR / "app" / "static"
 PROJECTS_DIR = DATA_DIR / "projects"
 EXPORTS_DIR = DATA_DIR / "exports"
@@ -53,8 +53,8 @@ for directory in (DATA_DIR, PROJECTS_DIR, EXPORTS_DIR, DATA_DIR / "temp", DATA_D
 
 app = FastAPI(title="律析 LawFlow", version=__version__)
 
-RELEASE_REPOSITORY = os.getenv("LAWFLOW_RELEASE_REPOSITORY", "donghyq/lawflow-releases").strip()
-SCHEMA_VERSION = 1
+RELEASE_REPOSITORY = os.getenv("LAWFLOW_RELEASE_REPOSITORY", "hey-elaine/lawflow").strip()
+SCHEMA_VERSION = 2
 
 MODEL_PRESETS = {
     "openai": {"provider_name": "OpenAI", "base_url": "https://api.openai.com/v1", "model_name": "gpt-4.1-mini", "tts_model": "gpt-4o-mini-tts"},
@@ -151,6 +151,7 @@ class WebSourceImport(BaseModel):
 
 class PlanCreate(BaseModel):
     source_document_id: str
+    selected_heading_ids: list[str] = Field(default_factory=list, max_length=8)
     audience: str = "企业法务与业务负责人"
     output_type: Literal["partner_brief", "client_brief", "lexcast"] = "client_brief"
     style_name: str = "专业、克制、结论先行"
@@ -287,9 +288,11 @@ class NarrativeOutlineRequest(BaseModel):
     source_plan_id: str = ""
     title: str = Field(min_length=1, max_length=200)
     source_block_ids: list[str] = Field(min_length=1)
+    supplemental_document_ids: list[str] = Field(default_factory=list)
     audience: str = "企业法务与法律从业者"
     style_profile: str = "law_podcast_v4"
     target_length: Literal["short", "standard", "deep"] = "standard"
+    target_words: int | None = Field(default=None, ge=400, le=8000)
     transform_mode: Literal["condense", "adapt", "enrich"] = "adapt"
     verification_mode: Literal["source_only", "material_check", "external_verify"] = "material_check"
     scenario: Literal["daily_brief", "topic_learning", "speaking_note", "legal_podcast"] = "topic_learning"
@@ -315,6 +318,11 @@ class NarrativeContentUpdate(BaseModel):
     markdown: str = Field(min_length=1)
     review_note: str = ""
     status: Literal["draft", "pending_review", "confirmed", "needs_revision", "discarded"] = "needs_revision"
+
+
+class LearningProgressUpdate(BaseModel):
+    section_id: str = Field(min_length=1, max_length=80)
+    completed: bool | None = None
 
 
 class SkillHostContentRequest(BaseModel):
@@ -551,6 +559,12 @@ def init_db() -> None:
             status TEXT NOT NULL,
             review_note TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS learning_progress (
+            content_id TEXT PRIMARY KEY REFERENCES narrative_contents(id) ON DELETE CASCADE,
+            last_section_id TEXT NOT NULL DEFAULT '',
+            completed_section_ids_json TEXT NOT NULL DEFAULT '[]',
             updated_at TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS audio_outputs (
@@ -841,6 +855,27 @@ def read_blocks(document_id: str, block_ids: list[str] | None = None) -> list[di
     return [dict(row) for row in rows]
 
 
+def read_project_blocks(project_id: str, block_ids: list[str]) -> list[dict]:
+    """Read explicitly selected blocks across this project's documents, preserving selection order."""
+    if not block_ids:
+        return []
+    conn = db()
+    placeholders = ",".join("?" for _ in block_ids)
+    rows = conn.execute(
+        f"""SELECT b.*, d.original_name, d.source_url
+        FROM source_blocks b JOIN source_documents d ON d.id = b.document_id
+        WHERE d.project_id = ? AND b.id IN ({placeholders})""",
+        [project_id, *block_ids],
+    ).fetchall()
+    conn.close()
+    by_id = {}
+    for row in rows:
+        block = dict(row)
+        block["source_locator"] = f"{block['original_name']} · {block['source_locator']}"
+        by_id[block["id"]] = block
+    return [by_id[block_id] for block_id in dict.fromkeys(block_ids) if block_id in by_id]
+
+
 def build_chapter_question(heading_text: str, excerpt_text: str = "") -> str:
     # 章节标题优先决定“本章关注”，避免正文里偶然出现的“出海”等词
     # 把所有章节都误归入同一个泛化问题。
@@ -870,7 +905,28 @@ def build_chapter_question(heading_text: str, excerpt_text: str = "") -> str:
     return f"围绕“{shorten(cleaned_h or heading_text, 24)}”梳理核心事实与规则，重点核查哪些边界条件与落地任务？"
 
 
-def create_plan_chapters(blocks: list[dict], output_type: str) -> list[dict]:
+def create_plan_chapters(blocks: list[dict], output_type: str, selected_heading_ids: list[str] | None = None) -> list[dict]:
+    if selected_heading_ids:
+        by_id = {block["id"]: block for block in blocks}
+        if len(set(selected_heading_ids)) != len(selected_heading_ids) or any(block_id not in by_id or by_id[block_id]["kind"] != "heading" for block_id in selected_heading_ids):
+            raise HTTPException(400, "所选目录章节不存在或重复，请重新选择。")
+        headings = sorted((by_id[block_id] for block_id in selected_heading_ids), key=lambda item: item["sequence_no"])
+        ranges = []
+        for heading in headings:
+            next_heading = next((item for item in blocks if item["kind"] == "heading" and item["sequence_no"] > heading["sequence_no"] and item["heading_level"] <= heading["heading_level"]), None)
+            end = next_heading["sequence_no"] if next_heading else len(blocks) + 1
+            scoped = [block for block in blocks if heading["sequence_no"] <= block["sequence_no"] < end]
+            if not any(block["kind"] == "paragraph" for block in scoped):
+                raise HTTPException(400, "所选目录章节没有正文，请排除目录页并选择实际内容。")
+            if ranges and heading["sequence_no"] < ranges[-1][1]:
+                raise HTTPException(400, "所选目录章节的正文范围重叠，请保留其中一个。")
+            ranges.append((heading["sequence_no"], end, scoped))
+        prefix = {"partner_brief": "决策速览：", "client_brief": "法律简报：", "lexcast": "法声解读："}[output_type]
+        return [{"id": f"chapter-{index}", "title": f"{prefix}第{index:02d}章 · {clean_text(heading['text'])}",
+                 "source_heading": heading["text"], "source_block_ids": [block["id"] for block in scoped],
+                 "question": build_chapter_question(heading["text"], next((block["text"] for block in scoped if block["kind"] == "paragraph"), "")),
+                 "estimated_length": "按成稿目标分配", "enabled": True}
+                for index, (heading, (_, _, scoped)) in enumerate(zip(headings, ranges), start=1)]
     primary = [block for block in blocks if block["kind"] == "heading" and block["heading_level"] == 1]
     # DOCX 往往先带一个静态目录。目录中的标题与正文标题高度相似，
     # 因此仅从第一个有正文跟随的一级标题开始创建章节。
@@ -1354,9 +1410,9 @@ def parse_model_json(content: str) -> dict:
 
 def normalize_narrative_outline(raw: dict, request: NarrativeOutlineRequest, blocks: list[dict]) -> dict:
     raw_sections = raw.get("sections") if isinstance(raw, dict) else None
-    minimum = 1 if request.transform_mode == "condense" else 2
+    minimum = 1
     if not isinstance(raw_sections, list) or not minimum <= len(raw_sections) <= 8:
-        raise HTTPException(status_code=502, detail=f"模型返回的大纲章节数不在 {minimum}–8 节范围内，请重试。")
+        raise HTTPException(status_code=400, detail=f"大纲章节数须在 {minimum}–8 节之间。")
     allowed_ids = {block["id"] for block in blocks}
     section_words = NARRATIVE_LENGTHS[request.target_length]["section_words"]
     sections = []
@@ -1379,7 +1435,9 @@ def normalize_narrative_outline(raw: dict, request: NarrativeOutlineRequest, blo
         })
     if len(sections) < minimum:
         raise HTTPException(status_code=502, detail="模型未生成足够的大纲章节，请重试。")
-    total_words = min(NARRATIVE_LENGTHS[request.target_length]["total_words"], request.target_duration * 240)
+    total_words = request.target_words if request.target_words is not None else min(NARRATIVE_LENGTHS[request.target_length]["total_words"], request.target_duration * 240)
+    if total_words / len(sections) > 2400:
+        raise HTTPException(400, "每节目标超过 2400 字；请增加章节，或降低目标字数。")
     for section in sections:
         section["target_words"] = max(100, total_words // len(sections))
     return {
@@ -1389,6 +1447,7 @@ def normalize_narrative_outline(raw: dict, request: NarrativeOutlineRequest, blo
         "sections": sections,
         "target_total_words": total_words,
         "style_profile": request.style_profile,
+        "transform_mode": request.transform_mode,
         "minimum_output_mode": request.minimum_output_mode,
         "minimum_output_ratio": request.minimum_output_ratio,
         "web_research_mode": request.web_research_mode,
@@ -1399,7 +1458,7 @@ def create_narrative_outline(request: NarrativeOutlineRequest, blocks: list[dict
     profile = get_style_profiles().get(request.style_profile)
     if profile is None:
         raise HTTPException(status_code=400, detail="未知的写作风格画像。")
-    length = NARRATIVE_LENGTHS[request.target_length]
+    target_words = request.target_words if request.target_words is not None else min(NARRATIVE_LENGTHS[request.target_length]["total_words"], request.target_duration * 240)
     dossier = source_dossier(blocks)
     transform = TRANSFORM_MODES[request.transform_mode]
     verification = VERIFICATION_MODES[request.verification_mode]
@@ -1409,12 +1468,12 @@ def create_narrative_outline(request: NarrativeOutlineRequest, blocks: list[dict
         "discover": "联网检索仅用于发现候选公开来源；不要把搜索结果直接写入大纲。",
         "augment": "允许使用用户后续明确导入的公开来源补充背景；未导入、未审阅的网页不得写入大纲。",
     }[request.web_research_mode]
-    prompt = """你是资深法律内容主笔。请基于下列唯一材料规划一篇适合听、讲或学习的中文专业内容大纲。
+    prompt = """你是资深法律内容主笔。请基于下列已选材料规划一篇适合听、讲或学习的中文专业内容大纲。
 
 应用场景：{scenario}
 写作对象：{audience}
 标题：{title}
-目标时长：约 {duration} 分钟；建议篇幅：约 {words} 字
+目标篇幅：约 {words} 字；按每分钟约 240 字估算，朗读约 {duration} 分钟
 加工方式：{transform_name}。{transform_description}
 核验策略：{verification_name}。{verification_description}
 联网检索策略：{research_instruction}
@@ -1433,10 +1492,32 @@ def create_narrative_outline(request: NarrativeOutlineRequest, blocks: list[dict
 允许材料块 ID：
 {allowed_ids}
 
-    唯一材料：
-{dossier}""".format(scenario=scenario["name"], audience=request.audience, title=request.title, duration=request.target_duration, words=length["total_words"], transform_name=transform["name"], transform_description=transform["description"], verification_name=verification["name"], verification_description=verification["description"], research_instruction=research_instruction, quality_rules=scenario_quality_rules(request.scenario), style=profile["instruction"], allowed_ids="\n".join(block["id"] for block in blocks if block["kind"] != "heading"), dossier=dossier)
+    已选材料：
+{dossier}""".format(scenario=scenario["name"], audience=request.audience, title=request.title, duration=max(1, round(target_words / 240)), words=target_words, transform_name=transform["name"], transform_description=transform["description"], verification_name=verification["name"], verification_description=verification["description"], research_instruction=research_instruction, quality_rules=scenario_quality_rules(request.scenario), style=profile["instruction"], allowed_ids="\n".join(block["id"] for block in blocks if block["kind"] != "heading"), dossier=dossier)
     raw = model_chat([{"role": "system", "content": "你严格遵守材料边界，并只返回可解析 JSON。"}, {"role": "user", "content": prompt}], temperature=0.25, max_tokens=3600)
     return normalize_narrative_outline(parse_model_json(raw), request, blocks)
+
+
+def outline_from_confirmed_plan(request: NarrativeOutlineRequest, chapters: list[dict], blocks: list[dict]) -> dict:
+    """Carry the lawyer-edited chapter structure into writing without re-planning it."""
+    selected = {block["id"]: block for block in blocks}
+    supplemental_ids = [block["id"] for block in blocks if block["document_id"] != request.document_id and block["kind"] == "paragraph"]
+    sections = []
+    for chapter in chapters:
+        if chapter.get("enabled", True) is False:
+            continue
+        primary_ids = list(dict.fromkeys(chapter.get("source_block_ids", [])))
+        if not primary_ids or any(block_id not in selected or selected[block_id]["document_id"] != request.document_id for block_id in primary_ids):
+            raise HTTPException(400, "已确认章节的材料范围与当前选择不一致，请重新确认章节。")
+        source_ids = list(dict.fromkeys([*primary_ids, *supplemental_ids]))
+        source_dossier([selected[block_id] for block_id in source_ids], max_total_chars=18000)
+        heading = re.sub(r"^(?:决策速览：|法律简报：|法声解读：)?第\d+章\s*·\s*", "", chapter.get("title", "")).strip()
+        purpose = clean_text(chapter.get("question", ""))
+        sections.append({"heading": heading or chapter.get("title", ""), "purpose": purpose,
+                         "key_points": [purpose] if purpose else [], "source_block_ids": source_ids})
+    if not sections:
+        raise HTTPException(400, "请先在内容结构中启用至少一个章节。")
+    return normalize_narrative_outline({"title": request.title, "sections": sections}, request, blocks)
 
 
 def collapse_duplicate_headings(markdown: str) -> str:
@@ -1459,6 +1540,12 @@ def collapse_duplicate_headings(markdown: str) -> str:
             last_heading = None
         output.append(line)
     return "\n".join(output)
+
+
+def reading_section_ids(markdown: str) -> list[str]:
+    """Return position-based section IDs, including a fallback for articles without H2 headings."""
+    headings = re.findall(r"^##[ \t]+.+$", collapse_duplicate_headings(markdown), flags=re.MULTILINE)
+    return [f"section-{index}" for index in range(1, max(1, len(headings)) + 1)]
 
 
 def generate_narrative_markdown(outline: dict, blocks: list[dict], audience: str, style_profile: str, transform_mode: str = "adapt", scenario: str = "topic_learning", target_duration: int = 10, web_research_mode: str = "discover") -> tuple[str, list[dict], dict]:
@@ -1559,6 +1646,13 @@ def markdown_to_docx(markdown: str, output_path: Path, template: str = "legal") 
                 run.font.color.rgb = RGBColor(31, 73, 125)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     document.save(output_path)
+
+
+def mark_unreviewed_export(markdown: str, status: str) -> str:
+    body = collapse_duplicate_headings(markdown)
+    if status == "confirmed":
+        return body
+    return "待审核｜仅供内部审阅，不得作为正式交付稿。\n\n" + body
 
 
 def project_or_404(project_id: str) -> dict:
@@ -1877,6 +1971,10 @@ def get_project(project_id: str):
     contents = [dict(row) for row in conn.execute("SELECT * FROM generated_contents WHERE project_id = ? ORDER BY updated_at DESC", (project_id,)).fetchall()]
     narrative_outlines = [dict(row) for row in conn.execute("SELECT * FROM narrative_outlines WHERE project_id = ? ORDER BY updated_at DESC", (project_id,)).fetchall()]
     narrative_contents = [dict(row) for row in conn.execute("SELECT * FROM narrative_contents WHERE project_id = ? ORDER BY updated_at DESC", (project_id,)).fetchall()]
+    progress_by_content = {row["content_id"]: dict(row) for row in conn.execute(
+        "SELECT progress.* FROM learning_progress AS progress JOIN narrative_contents AS content ON content.id = progress.content_id WHERE content.project_id = ?",
+        (project_id,),
+    ).fetchall()}
     audio_outputs = [dict(row) for row in conn.execute("SELECT * FROM audio_outputs WHERE project_id = ? ORDER BY updated_at DESC", (project_id,)).fetchall()]
     tasks = [dict(row) for row in conn.execute("SELECT * FROM tasks WHERE project_id = ? ORDER BY CASE risk_level WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, created_at DESC", (project_id,)).fetchall()]
     # 兼容改造前已确认的章节方案：旧项目可能尚未在确认时创建任务。
@@ -1918,6 +2016,13 @@ def get_project(project_id: str):
         content["markdown"] = collapse_duplicate_headings(content["markdown"])
         content["section_sources"] = parse_json(content.pop("section_sources_json"), [])
         content["model"] = parse_json(content.pop("model_json"), {})
+        saved_progress = progress_by_content.get(content["id"], {})
+        available_sections = set(reading_section_ids(content["markdown"]))
+        content["reading_progress"] = {
+            "last_section_id": saved_progress.get("last_section_id", "") if saved_progress.get("last_section_id") in available_sections else "",
+            "completed_section_ids": [section_id for section_id in parse_json(saved_progress.get("completed_section_ids_json"), []) if section_id in available_sections],
+            "updated_at": saved_progress.get("updated_at", ""),
+        }
     for audio in audio_outputs:
         audio["audio_available"] = bool(audio.get("audio_path")) and Path(audio["audio_path"]).is_file()
     for task in tasks:
@@ -2105,17 +2210,20 @@ def create_plan(project_id: str, payload: PlanCreate):
     if document is None:
         raise HTTPException(status_code=404, detail="项目中未找到指定材料")
     blocks = read_blocks(payload.source_document_id)
+    if len(blocks) > 300 and not payload.selected_heading_ids:
+        raise HTTPException(400, "这份长文档请先选择要学习的目录章节。")
     output_type = CONTENT_SCENARIOS.get(project.get("scenario"), CONTENT_SCENARIOS["topic_learning"])["output_type"]
-    chapters = create_plan_chapters(blocks, output_type)
+    chapters = create_plan_chapters(blocks, output_type, payload.selected_heading_ids)
+    include_audio = bool(project.get("audio_enabled")) and bool(payload.include_audio)
     plan_id = str(uuid.uuid4())
     timestamp = now_iso()
     conn = db()
     conn.execute("""INSERT INTO content_plans (id, project_id, document_id, audience, output_type, style_name, include_audio, status, chapters_json, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)""", (plan_id, project_id, payload.source_document_id, payload.audience, output_type, payload.style_name, int(project.get("audio_enabled", payload.include_audio)), json.dumps(chapters, ensure_ascii=False), timestamp, timestamp))
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)""", (plan_id, project_id, payload.source_document_id, payload.audience, output_type, payload.style_name, int(include_audio), json.dumps(chapters, ensure_ascii=False), timestamp, timestamp))
     conn.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (timestamp, project_id))
     conn.commit()
     conn.close()
-    return {"id": plan_id, "project_id": project_id, "document_id": payload.source_document_id, "audience": payload.audience, "output_type": output_type, "style_name": payload.style_name, "include_audio": bool(project.get("audio_enabled", payload.include_audio)), "status": "draft", "chapters": chapters}
+    return {"id": plan_id, "project_id": project_id, "document_id": payload.source_document_id, "audience": payload.audience, "output_type": output_type, "style_name": payload.style_name, "include_audio": include_audio, "status": "draft", "chapters": chapters}
 
 
 @app.put("/api/plans/{plan_id}/confirm")
@@ -2399,20 +2507,31 @@ def create_narrative_outline_route(project_id: str, payload: NarrativeOutlineReq
     require_external_verification(project)
     conn = db()
     document = conn.execute("SELECT id FROM source_documents WHERE id = ? AND project_id = ?", (payload.document_id, project_id)).fetchone()
+    plan = conn.execute("SELECT * FROM content_plans WHERE id = ? AND project_id = ? AND document_id = ? AND status = 'confirmed'", (payload.source_plan_id, project_id, payload.document_id)).fetchone() if payload.source_plan_id else None
     conn.close()
     if document is None:
         raise HTTPException(status_code=404, detail="项目中未找到指定材料。")
-    blocks = read_blocks(payload.document_id, payload.source_block_ids)
+    if payload.source_plan_id and plan is None:
+        raise HTTPException(status_code=400, detail="所选章节结构未确认，或不属于当前材料。")
+    preferences = project_preferences(project)
+    for key in ("transform_mode", "verification_mode", "scenario", "target_duration", "minimum_output_mode", "minimum_output_ratio", "web_research_mode"):
+        if key not in payload.model_fields_set:
+            setattr(payload, key, preferences[key])
+    blocks = read_project_blocks(project_id, payload.source_block_ids)
     if not blocks or {block["id"] for block in blocks} != set(payload.source_block_ids):
-        raise HTTPException(status_code=400, detail="没有找到选定章节对应的材料块。")
-    payload.transform_mode = project.get("transform_mode", payload.transform_mode)
-    payload.verification_mode = project.get("verification_mode", payload.verification_mode)
-    payload.scenario = project.get("scenario", payload.scenario)
-    payload.target_duration = int(project.get("target_duration", payload.target_duration))
-    payload.minimum_output_mode = project.get("minimum_output_mode", payload.minimum_output_mode)
-    payload.minimum_output_ratio = float(project.get("minimum_output_ratio", payload.minimum_output_ratio))
-    payload.web_research_mode = project.get("web_research_mode", payload.web_research_mode)
-    outline = create_narrative_outline(payload, blocks)
+        raise HTTPException(status_code=400, detail="没有找到选定章节对应的材料块，或材料不属于当前项目。")
+    supplemental_docs = {block["document_id"] for block in blocks if block["document_id"] != payload.document_id}
+    if supplemental_docs != set(payload.supplemental_document_ids):
+        raise HTTPException(400, "补充资料与选定材料块不一致，请重新选择。")
+    if supplemental_docs and payload.web_research_mode != "augment":
+        raise HTTPException(400, "只有启用‘已选公开来源补充’后，才能使用补充资料。")
+    for block in blocks:
+        if block["document_id"] in supplemental_docs:
+            if not block["source_url"]:
+                raise HTTPException(400, "补充资料必须登记公开来源链接。")
+            valid_public_url(block["source_url"])
+    outline = outline_from_confirmed_plan(payload, parse_json(plan["chapters_json"], []), blocks) if plan else create_narrative_outline(payload, blocks)
+    outline["supplemental_sources"] = {document_id: [block["id"] for block in blocks if block["document_id"] == document_id and block["kind"] == "paragraph"] for document_id in supplemental_docs}
     outline_id = str(uuid.uuid4())
     timestamp = now_iso()
     conn = db()
@@ -2442,10 +2561,19 @@ def confirm_narrative_outline(outline_id: str, payload: NarrativeOutlineConfirm)
         raise HTTPException(400, "宿主导入稿没有可重新生成的模型大纲，请直接编辑讲稿或新建大纲。")
     project = project_or_404(existing["project_id"])
     source_ids = parse_json(existing["source_block_ids_json"], [])
+    selected_blocks = read_project_blocks(existing["project_id"], source_ids)
+    if {block["id"] for block in selected_blocks} != set(source_ids):
+        raise HTTPException(400, "大纲所选材料已变化，请重新选择材料并建立大纲。")
+    stored_outline = parse_json(existing["outline_json"], {})
+    preferences = project_preferences(project)
+    preferences["transform_mode"] = stored_outline.get("transform_mode", preferences["transform_mode"])
+    preferences["web_research_mode"] = stored_outline.get("web_research_mode", preferences["web_research_mode"])
     request = NarrativeOutlineRequest(document_id=existing["document_id"], title=existing["title"], source_block_ids=source_ids,
-                                     style_profile=existing["style_profile"], target_length=existing["target_length"], **project_preferences(project))
+                                     source_plan_id=existing["source_plan_id"], style_profile=existing["style_profile"],
+                                     target_length=existing["target_length"], target_words=stored_outline.get("target_total_words"), **preferences)
     try:
-        outline = normalize_narrative_outline(outline, request, read_blocks(existing["document_id"], source_ids))
+        outline = normalize_narrative_outline(outline, request, selected_blocks)
+        outline["supplemental_sources"] = stored_outline.get("supplemental_sources", {})
     except HTTPException as error:
         raise HTTPException(400, error.detail) from error
     conn = db()
@@ -2469,11 +2597,13 @@ def generate_narrative_content(outline_id: str):
         raise HTTPException(status_code=400, detail="请先确认写作大纲，再生成长文。")
     outline = parse_json(row["outline_json"], {})
     source_ids = parse_json(row["source_block_ids_json"], [])
-    blocks = read_blocks(row["document_id"], source_ids)
+    blocks = read_project_blocks(row["project_id"], source_ids)
+    if {block["id"] for block in blocks} != set(source_ids):
+        raise HTTPException(409, "所选材料已变更，请重新确认大纲后再生成。")
     project = project_or_404(row["project_id"])
     preferences = project_preferences(project)
     outline.update({"minimum_output_mode": preferences["minimum_output_mode"], "minimum_output_ratio": preferences["minimum_output_ratio"]})
-    markdown, section_sources, model_metadata = generate_narrative_markdown(outline, blocks, row["audience"], row["style_profile"], preferences["transform_mode"], preferences["scenario"], preferences["target_duration"], preferences["web_research_mode"])
+    markdown, section_sources, model_metadata = generate_narrative_markdown(outline, blocks, row["audience"], row["style_profile"], outline.get("transform_mode", preferences["transform_mode"]), preferences["scenario"], max(1, round(outline.get("target_total_words", 2400) / 240)), outline.get("web_research_mode", preferences["web_research_mode"]))
     content_id = str(uuid.uuid4())
     timestamp = now_iso()
     conn = db()
@@ -2503,12 +2633,12 @@ def regenerate_narrative_section(content_id: str, section_id: str):
     section = next((item for item in outline.get("sections", []) if item.get("id") == section_id), None)
     if section is None:
         raise HTTPException(404, "章节不存在。")
-    blocks = read_blocks(row["document_id"], section.get("source_block_ids", []))
+    blocks = read_project_blocks(row["project_id"], section.get("source_block_ids", []))
     if not blocks:
         raise HTTPException(400, "章节没有可用的材料块。")
     preferences = project_preferences(project)
     single_outline = {**outline, "sections": [section], "title": outline.get("title", row["title"])}
-    markdown, sources, metadata = generate_narrative_markdown(single_outline, blocks, outline_row["audience"], outline_row["style_profile"], preferences["transform_mode"], preferences["scenario"], preferences["target_duration"], preferences["web_research_mode"])
+    markdown, sources, metadata = generate_narrative_markdown(single_outline, blocks, outline_row["audience"], outline_row["style_profile"], outline.get("transform_mode", preferences["transform_mode"]), preferences["scenario"], max(1, round(section.get("target_words", 800) / 240)), outline.get("web_research_mode", preferences["web_research_mode"]))
     generated = re.sub(r"^(?:#{1,6}[ \t]+[^\n]*\r?\n+)+", "", markdown.strip()).strip()
     current = collapse_duplicate_headings(row["markdown"])
     heading = "## " + section["heading"]
@@ -2540,10 +2670,45 @@ def update_narrative_content(content_id: str, payload: NarrativeContentUpdate):
     conn.execute("UPDATE narrative_contents SET markdown = ?, review_note = ?, status = ?, updated_at = ? WHERE id = ?", (payload.markdown, payload.review_note, payload.status, timestamp, content_id))
     if payload.markdown != content["markdown"]:
         conn.execute("UPDATE audio_outputs SET status='source_changed', updated_at=? WHERE narrative_content_id=?", (timestamp, content_id))
+        progress = conn.execute("SELECT * FROM learning_progress WHERE content_id = ?", (content_id,)).fetchone()
+        if progress is not None:
+            valid_sections = set(reading_section_ids(payload.markdown))
+            completed = [section_id for section_id in parse_json(progress["completed_section_ids_json"], []) if section_id in valid_sections]
+            last_section_id = progress["last_section_id"] if progress["last_section_id"] in valid_sections else ""
+            conn.execute(
+                "UPDATE learning_progress SET last_section_id = ?, completed_section_ids_json = ?, updated_at = ? WHERE content_id = ?",
+                (last_section_id, json.dumps(completed, ensure_ascii=False), timestamp, content_id),
+            )
     conn.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (timestamp, content["project_id"]))
     conn.commit()
     conn.close()
     return {"id": content_id, "markdown": payload.markdown, "review_note": payload.review_note, "status": payload.status, "updated_at": timestamp}
+
+
+@app.put("/api/narrative-contents/{content_id}/progress")
+def update_learning_progress(content_id: str, payload: LearningProgressUpdate):
+    with db() as conn:
+        content = conn.execute("SELECT id, project_id, markdown FROM narrative_contents WHERE id = ?", (content_id,)).fetchone()
+        if content is None:
+            raise HTTPException(404, "学习内容不存在。")
+        section_ids = reading_section_ids(content["markdown"])
+        if payload.section_id not in section_ids:
+            raise HTTPException(400, "所选章节不在当前内容中，请刷新后重试。")
+        current = conn.execute("SELECT * FROM learning_progress WHERE content_id = ?", (content_id,)).fetchone()
+        completed = [section_id for section_id in parse_json(current["completed_section_ids_json"], []) if section_id in section_ids] if current else []
+        if payload.completed is True and payload.section_id not in completed:
+            completed.append(payload.section_id)
+        elif payload.completed is False:
+            completed = [section_id for section_id in completed if section_id != payload.section_id]
+        timestamp = now_iso()
+        conn.execute(
+            """INSERT INTO learning_progress (content_id, last_section_id, completed_section_ids_json, updated_at)
+            VALUES (?, ?, ?, ?) ON CONFLICT(content_id) DO UPDATE SET
+            last_section_id=excluded.last_section_id, completed_section_ids_json=excluded.completed_section_ids_json, updated_at=excluded.updated_at""",
+            (content_id, payload.section_id, json.dumps(completed, ensure_ascii=False), timestamp),
+        )
+        conn.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (timestamp, content["project_id"]))
+    return {"content_id": content_id, "last_section_id": payload.section_id, "completed_section_ids": completed, "updated_at": timestamp}
 
 
 @app.post("/api/narrative-contents/{content_id}/sections/{section_id}/export", status_code=201)
@@ -2563,7 +2728,7 @@ def export_narrative_section(content_id: str, section_id: str):
         raise HTTPException(409, "原稿中未找到该章节。")
     next_start = re.search(r"\n##\s+", markdown[start + len(heading):])
     end = start + len(heading) + (next_start.start() if next_start else len(markdown) - start - len(heading))
-    section_markdown = markdown[start:end].strip()
+    section_markdown = mark_unreviewed_export(markdown[start:end].strip(), content["status"])
     output_root = get_configured_export_directory()
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     safe_title = re.sub(r"[\\/:*?\"<>|]", "_", section["heading"]).strip() or "lawflow-section"
@@ -2596,7 +2761,7 @@ def download_narrative_section(content_id: str, section_id: str):
     temp_path = DATA_DIR / "temp" / (uuid.uuid4().hex + ".docx")
     project = project_or_404(content["project_id"])
     template = "podcast" if project.get("scenario") in {"daily_brief", "legal_podcast"} else "legal"
-    markdown_to_docx(markdown[start:end].strip(), temp_path, template=template)
+    markdown_to_docx(mark_unreviewed_export(markdown[start:end].strip(), content["status"]), temp_path, template=template)
     safe_title = re.sub(r"[\\/:*?\"<>|]", "_", section["heading"]).strip() or "lawflow-section"
     return FileResponse(temp_path, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", filename=f"{safe_title}.docx")
 
@@ -2613,9 +2778,11 @@ def export_narrative_content(content_id: str):
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     markdown_path = output_root / f"{safe_title}-{stamp}.md"
     docx_path = output_root / f"{safe_title}-{stamp}.docx"
-    markdown = collapse_duplicate_headings(content["markdown"])
+    markdown = mark_unreviewed_export(content["markdown"], content["status"])
     markdown_path.write_text(markdown, encoding="utf-8")
-    markdown_to_docx(markdown, docx_path)
+    project = project_or_404(content["project_id"])
+    template = "podcast" if project.get("scenario") in {"daily_brief", "legal_podcast"} else "legal"
+    markdown_to_docx(markdown, docx_path, template=template)
     return {"markdown_path": str(markdown_path), "docx_path": str(docx_path), "download_url": f"/api/narrative-contents/{content_id}/download"}
 
 
@@ -2824,7 +2991,7 @@ def download_narrative_docx(content_id: str):
     docx_path = temp_dir / f"{safe_title}.docx"
     project = project_or_404(content["project_id"])
     template = "podcast" if project.get("scenario") in {"daily_brief", "legal_podcast"} else "legal"
-    markdown_to_docx(collapse_duplicate_headings(content["markdown"]), docx_path, template=template)
+    markdown_to_docx(mark_unreviewed_export(content["markdown"], content["status"]), docx_path, template=template)
     return FileResponse(docx_path, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", filename=f"{safe_title}.docx")
 
 
@@ -3009,12 +3176,13 @@ def export_project(project_id: str):
     for index, content in enumerate(contents, start=1):
         content_safe_name = re.sub(r"[\\/:*?\"<>|]", "_", content["title"])[:60]
         filename = f"{index:02d}-{content_safe_name}.md"
-        (output_dir / filename).write_text(content["markdown"], encoding="utf-8")
+        (output_dir / filename).write_text(mark_unreviewed_export(content["markdown"], content["status"]), encoding="utf-8")
         evidence.append({"content_id": content["id"], "title": content["title"], "status": content["status"], "claims": parse_json(content["claims_json"], [])})
     for index, content in enumerate(narratives, start=1):
         filename = f"讲稿-{index:02d}"
-        (output_dir / (filename + ".md")).write_text(content["markdown"], encoding="utf-8")
-        markdown_to_docx(content["markdown"], output_dir / (filename + ".docx"), template="podcast" if project.get("scenario") in {"daily_brief", "legal_podcast"} else "legal")
+        markdown = mark_unreviewed_export(content["markdown"], content["status"])
+        (output_dir / (filename + ".md")).write_text(markdown, encoding="utf-8")
+        markdown_to_docx(markdown, output_dir / (filename + ".docx"), template="podcast" if project.get("scenario") in {"daily_brief", "legal_podcast"} else "legal")
         evidence.append({"content_id": content["id"], "title": content["title"], "status": content["status"], "section_sources": parse_json(content["section_sources_json"], [])})
     for index, audio in enumerate(audios, start=1):
         (output_dir / f"口播脚本-{index:02d}.txt").write_text(audio["script"], encoding="utf-8")

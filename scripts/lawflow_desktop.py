@@ -9,6 +9,7 @@ import time
 import webbrowser
 import os
 import shutil
+import sys
 from pathlib import Path
 
 import uvicorn
@@ -53,7 +54,29 @@ def choose_port() -> int:
     raise RuntimeError("LawFlow 无法找到可用的本地端口，请关闭占用 8080–8089 的程序后重试。")
 
 
+def open_native_window(url: str) -> bool:
+    """优先使用独立桌面窗口；失败时返回 False，由调用方回退到浏览器。"""
+    try:
+        import webview
+
+        webview.create_window(
+            "律析 LawFlow",
+            url,
+            width=1440,
+            height=960,
+            min_size=(1120, 760),
+            background_color="#f7f5ef",
+        )
+        webview.start()
+        return True
+    except Exception:
+        return False
+
+
 def main() -> None:
+    project_root = Path(__file__).resolve().parent.parent
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
     data_dir = Path(os.getenv("LAWFLOW_DATA_DIR", str(Path.home() / "Library/Application Support/LawFlow/data"))).expanduser()
     legacy_dir = Path(os.getenv("LAWFLOW_LEGACY_DATA_DIR", str(Path.home() / "Projects/lawflow/data"))).expanduser()
     migrate_legacy_data(data_dir, legacy_dir)
@@ -67,9 +90,16 @@ def main() -> None:
     worker.start()
     for _ in range(100):
         if server.started:
-            webbrowser.open(f"http://127.0.0.1:{port}")
             break
         time.sleep(0.1)
+
+    url = f"http://127.0.0.1:{port}"
+    if open_native_window(url):
+        server.should_exit = True
+        worker.join()
+        return
+
+    webbrowser.open(url)
 
     def stop(*_args):
         server.should_exit = True

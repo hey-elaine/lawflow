@@ -2,22 +2,18 @@
 
 LawFlow 面向客户时采用“本地桌面 App + GitHub Releases”模式，不运行公共业务后端。客户材料、项目数据库、讲稿与音频保存在客户电脑；模型和语音服务使用客户自行配置的凭据。
 
-## 仓库布局
+桌面版默认使用独立原生窗口打开本地工作台；仅在本机窗口组件初始化失败时回退到默认浏览器。业务服务仍只监听 `127.0.0.1`，不会暴露到局域网。
 
-- 私有源码仓库：`donghyq/lawflow`
-- 公共二进制仓库：建议创建 `donghyq/lawflow-releases`
+## 下载与仓库
 
-公共仓库只存放签名、公证后的 DMG、SHA256 和版本说明，不应包含源码、客户材料、构建日志或签名凭据。应用默认从该公共仓库检查更新；可以用 `LAWFLOW_RELEASE_REPOSITORY=owner/repo` 覆盖。
+源码与正式安装包使用同一个公开仓库：`hey-elaine/lawflow`。通过该仓库的 Releases 页面下载安装包；只有签名、公证和验证均通过的构建才发布为正式版本。
+
+应用默认从该仓库检查更新；开发部署可以用 `LAWFLOW_RELEASE_REPOSITORY=owner/repo` 覆盖。不要将客户材料、构建日志或签名凭据提交到仓库或发布附件。
 
 ## 首次配置
 
-在源码仓库配置 Actions variable：
-
-- `LAWFLOW_RELEASE_REPOSITORY`：例如 `donghyq/lawflow-releases`
-
 配置 Actions secrets：
 
-- `LAWFLOW_RELEASE_TOKEN`：只允许向公共发布仓库创建 Release 的细粒度 Token
 - `APPLE_CERTIFICATE_P12_BASE64`
 - `APPLE_CERTIFICATE_PASSWORD`
 - `APPLE_SIGNING_IDENTITY`：例如 `Developer ID Application: Example (TEAMID)`
@@ -26,7 +22,7 @@ LawFlow 面向客户时采用“本地桌面 App + GitHub Releases”模式，�
 - `APPLE_API_ISSUER_ID`
 - `KEYCHAIN_PASSWORD`：仅用于 Actions 临时钥匙串
 
-不要将以上内容提交到仓库或写入 App。公共发布仓库需要至少有一个初始提交，并允许 Token 写入 Releases。
+不要将以上内容提交到仓库或写入 App。Actions 使用仓库自带的 `GITHUB_TOKEN` 发布 Release。
 
 ## 发布步骤
 
@@ -36,9 +32,9 @@ LawFlow 面向客户时采用“本地桌面 App + GitHub Releases”模式，�
 4. 创建并推送完全一致的标签：`v0.2.0`。
 5. GitHub Actions 在 `macos-15` 和 `macos-15-intel` 分别构建 arm64、x86_64 安装包。
 6. 工作流执行 Developer ID 签名、Apple 公证、staple 和 Gatekeeper 校验。
-7. 两个 DMG 与 SHA256 自动发布到公共仓库。
+7. 两个 DMG 与 SHA256 自动发布到 `hey-elaine/lawflow` 的 Releases 页面。
 
-标签版本与 `app/version.py` 不一致、缺少证书、公证密钥或发布 Token 时，工作流会失败，不会发布未签名客户包。
+标签版本与 `app/version.py` 不一致，或缺少证书、公证密钥时，工作流会失败，不会发布未签名客户包。
 
 ## 本地开发构建
 

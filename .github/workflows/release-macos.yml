@@ -111,9 +111,11 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     env:
-      GH_TOKEN: ${{ secrets.LAWFLOW_RELEASE_TOKEN }}
-      RELEASE_REPOSITORY: ${{ vars.LAWFLOW_RELEASE_REPOSITORY }}
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_REPOSITORY: ${{ github.repository }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -121,8 +123,6 @@ jobs:
           merge-multiple: true
       - name: Publish customer download release
         run: |
-          test -n "$GH_TOKEN" || { echo "缺少 LAWFLOW_RELEASE_TOKEN"; exit 1; }
-          test -n "$RELEASE_REPOSITORY" || { echo "缺少 LAWFLOW_RELEASE_REPOSITORY"; exit 1; }
           gh release create "$GITHUB_REF_NAME" dist/* \
             --repo "$RELEASE_REPOSITORY" \
             --title "LawFlow $GITHUB_REF_NAME" \

@@ -55,9 +55,9 @@ class ImprovementsTest(unittest.TestCase):
             200,
             json={
                 'tag_name': 'v0.2.0',
-                'html_url': 'https://github.com/donghyq/lawflow-releases/releases/tag/v0.2.0',
+                'html_url': 'https://github.com/hey-elaine/lawflow/releases/tag/v0.2.0',
             },
-            request=httpx.Request('GET', 'https://api.github.com/repos/donghyq/lawflow-releases/releases/latest'),
+            request=httpx.Request('GET', 'https://api.github.com/repos/hey-elaine/lawflow/releases/latest'),
         )
         with patch.object(self.main.httpx, 'get', return_value=response):
             result = self.client.get('/api/app/version')
@@ -90,6 +90,26 @@ class ImprovementsTest(unittest.TestCase):
         self.assertEqual(len(backups), 1)
         with sqlite3.connect(backups[0]) as conn:
             self.assertEqual(conn.execute('SELECT value FROM legacy_marker').fetchone()[0], 'keep-me')
+
+    def test_learning_progress_migration_backs_up_existing_v1_database(self):
+        old_dir = self.temp_dir / 'progress-upgrade'
+        old_dir.mkdir()
+        database = old_dir / 'app.db'
+        with sqlite3.connect(database) as conn:
+            conn.execute('CREATE TABLE app_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)')
+            conn.execute("INSERT INTO app_metadata VALUES ('schema_version', '1', 'previous')")
+            conn.execute('CREATE TABLE existing_content (value TEXT)')
+            conn.execute("INSERT INTO existing_content VALUES ('keep-me')")
+        with patch.object(self.main, 'DATA_DIR', old_dir), patch.object(self.main, 'DB_PATH', database):
+            self.main.init_db()
+        backups = list((old_dir / 'backups').glob('app-before-schema-2-*.db'))
+        self.assertEqual(len(backups), 1)
+        with sqlite3.connect(backups[0]) as conn:
+            self.assertEqual(conn.execute("SELECT value FROM app_metadata WHERE key = 'schema_version'").fetchone()[0], '1')
+        with sqlite3.connect(database) as conn:
+            self.assertEqual(conn.execute('SELECT value FROM existing_content').fetchone()[0], 'keep-me')
+            self.assertEqual(conn.execute("SELECT value FROM app_metadata WHERE key = 'schema_version'").fetchone()[0], '2')
+            self.assertIsNotNone(conn.execute("SELECT name FROM sqlite_master WHERE name = 'learning_progress'").fetchone())
 
     def test_chatgpt_mcp_exposes_core_lawflow_tools(self):
         import asyncio
@@ -230,6 +250,84 @@ class ImprovementsTest(unittest.TestCase):
         self.assertIn('actual:paragraph', prompt)
         self.assertNotIn('b-00001', prompt)
 
+    def test_confirmed_chapter_structure_controls_writing_and_selected_public_source(self):
+        project = self.client.post('/api/projects', json={'name': '长文学习', 'scenario': 'topic_learning', 'verification_mode': 'source_only'}).json()
+        primary = self.client.post(f"/api/projects/{project['id']}/text-sources", json={'title': '原始材料', 'content': '原始材料说明背景和关键事实，同时写明适用条件与事实边界。'}).json()
+        public = self.client.post(f"/api/projects/{project['id']}/text-sources", json={'title': '公开背景', 'content': '公开资料补充背景知识，并说明相关概念的含义和通常适用场景。'}).json()
+        primary_ids = [block['id'] for block in self.client.get('/api/documents/' + primary['id']).json()['blocks']]
+        public_ids = [block['id'] for block in self.client.get('/api/documents/' + public['id']).json()['blocks'] if block['kind'] == 'paragraph']
+        with self.main.db() as conn:
+            conn.execute('UPDATE source_documents SET source_url = ? WHERE id = ?', ('https://example.com/public', public['id']))
+        plan = self.client.post(f"/api/projects/{project['id']}/plans", json={'source_document_id': primary['id'], 'include_audio': False}).json()
+        chapter = {**plan['chapters'][0], 'title': '我确认的学习章节'}
+        self.assertEqual(self.client.put(f"/api/plans/{plan['id']}/confirm", json={'chapters': [chapter]}).status_code, 200)
+        request_body = {'document_id': primary['id'], 'source_plan_id': plan['id'], 'title': '专题学习',
+                        'source_block_ids': primary_ids + public_ids, 'supplemental_document_ids': [public['id']],
+                        'target_words': 1200, 'transform_mode': 'enrich', 'web_research_mode': 'augment'}
+        with patch.object(self.main, 'model_chat') as model:
+            response = self.client.post(f"/api/projects/{project['id']}/narrative-outlines", json=request_body)
+        self.assertEqual(response.status_code, 201, response.text)
+        model.assert_not_called()
+        outline = response.json()['outline']
+        self.assertEqual(outline['sections'][0]['heading'], '我确认的学习章节')
+        self.assertEqual(outline['target_total_words'], 1200)
+        self.assertEqual(outline['transform_mode'], 'enrich')
+        self.assertTrue(set(public_ids).issubset(outline['sections'][0]['source_block_ids']))
+        self.assertEqual(self.client.put(f"/api/narrative-outlines/{response.json()['id']}/confirm", json={'outline': outline}).status_code, 200)
+        with patch.object(self.main, 'model_chat', return_value='测试生成内容。') as model:
+            generated = self.client.post(f"/api/narrative-outlines/{response.json()['id']}/contents")
+        self.assertEqual(generated.status_code, 201, generated.text)
+        self.assertIn('公开资料补充背景知识', model.call_args.args[0][-1]['content'])
+        self.assertIn('我确认的学习章节', generated.json()['markdown'])
+        self.assertEqual(self.client.post(f"/api/projects/{project['id']}/narrative-outlines", json={**request_body, 'web_research_mode': 'off'}).status_code, 400)
+
+    def test_heading_selection_uses_full_section_and_rejects_overlap(self):
+        blocks = [
+            {'id': 'h1', 'sequence_no': 1, 'kind': 'heading', 'heading_level': 1, 'text': '第一部分'},
+            {'id': 'p1', 'sequence_no': 2, 'kind': 'paragraph', 'text': '前一部分'},
+            {'id': 'h2', 'sequence_no': 3, 'kind': 'heading', 'heading_level': 1, 'text': '第二部分'},
+            {'id': 'h3', 'sequence_no': 4, 'kind': 'heading', 'heading_level': 2, 'text': '第二部分的细节'},
+            {'id': 'p2', 'sequence_no': 5, 'kind': 'paragraph', 'text': '后一部分细节'},
+        ]
+        chapters = self.main.create_plan_chapters(blocks, 'lexcast', ['h2'])
+        self.assertEqual(chapters[0]['source_block_ids'], ['h2', 'h3', 'p2'])
+        with self.assertRaises(self.main.HTTPException):
+            self.main.create_plan_chapters(blocks, 'lexcast', ['h2', 'h3'])
+
+    def test_plan_respects_optional_audio_choice(self):
+        project = self.client.post('/api/projects', json={'name': '音频可选', 'audio_enabled': True}).json()
+        source = self.client.post(f"/api/projects/{project['id']}/text-sources", json={
+            'title': '学习素材', 'content': '这份学习素材说明了背景、适用条件和主要问题，适合生成一节学习内容。',
+        }).json()
+        base = {'source_document_id': source['id']}
+        text_only = self.client.post(f"/api/projects/{project['id']}/plans", json={**base, 'include_audio': False})
+        with_audio = self.client.post(f"/api/projects/{project['id']}/plans", json={**base, 'include_audio': True})
+        self.assertEqual(text_only.status_code, 201)
+        self.assertEqual(with_audio.status_code, 201)
+        self.assertFalse(text_only.json()['include_audio'])
+        self.assertTrue(with_audio.json()['include_audio'])
+
+    def test_learning_progress_survives_reopening_and_tracks_current_sections(self):
+        project, _source, _ids, content = self.make_content()
+        content_id = content['id']
+        markdown = '# 学习内容\n\n## 第一节\n第一节正文。\n\n## 第二节\n第二节正文。'
+        saved = self.client.put(f'/api/narrative-contents/{content_id}', json={'markdown': markdown})
+        self.assertEqual(saved.status_code, 200)
+        endpoint = f'/api/narrative-contents/{content_id}/progress'
+        self.assertEqual(self.client.put(endpoint, json={'section_id': 'section-1', 'completed': True}).status_code, 200)
+        moved = self.client.put(endpoint, json={'section_id': 'section-2'})
+        self.assertEqual(moved.status_code, 200)
+        self.assertEqual(self.client.put(endpoint, json={'section_id': 'section-3'}).status_code, 400)
+        reopened = self.client.get(f"/api/projects/{project['id']}").json()
+        progress = next(item for item in reopened['narrative_contents'] if item['id'] == content_id)['reading_progress']
+        self.assertEqual(progress['last_section_id'], 'section-2')
+        self.assertEqual(progress['completed_section_ids'], ['section-1'])
+        self.client.put(f'/api/narrative-contents/{content_id}', json={'markdown': '# 学习内容\n\n## 第一节\n保留的正文。'})
+        reopened = self.client.get(f"/api/projects/{project['id']}").json()
+        progress = next(item for item in reopened['narrative_contents'] if item['id'] == content_id)['reading_progress']
+        self.assertEqual(progress['last_section_id'], '')
+        self.assertEqual(progress['completed_section_ids'], ['section-1'])
+
     def test_profile_extraction_is_draft_and_validates_response(self):
         before = len(self.client.get('/api/narrative/profiles').json())
         draft = {'name':'叙事', 'description':'自然', 'instruction':'用具体问题切入，解释术语并用自然的承接句组织段落。'}
@@ -330,7 +428,11 @@ class ImprovementsTest(unittest.TestCase):
 
         exported = self.client.post('/api/narrative-contents/' + content['id'] + '/export')
         exported_markdown = Path(exported.json()['markdown_path']).read_text(encoding='utf-8')
+        self.assertTrue(exported_markdown.startswith('待审核｜仅供内部审阅'))
         self.assertEqual(exported_markdown.count('## 第一节'), 1)
+        from docx import Document
+        exported_docx = Document(exported.json()['docx_path'])
+        self.assertIn('待审核', exported_docx.paragraphs[0].text)
 
     def test_audio_script_can_target_a_single_section(self):
         project, source, ids, content = self.make_content()
@@ -441,7 +543,7 @@ class ImprovementsTest(unittest.TestCase):
     def test_macos_say_tts_uses_local_voice_without_api_key(self):
         with patch.object(self.main.sys, 'platform', 'darwin'), patch.object(self.main.shutil, 'which', return_value='/usr/bin/say'), patch.object(self.main.subprocess, 'run') as run:
             def make_output(args, **_kwargs):
-                target = Path(args[-1])
+                target = Path(args[args.index('-o') + 1] if '-o' in args else args[-1])
                 target.write_bytes(b'mp3')
                 return subprocess.CompletedProcess(args, 0)
             run.side_effect = make_output

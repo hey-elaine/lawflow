@@ -4,24 +4,23 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>律析 LawFlow｜法律内容学习与表达工作台</title>
-  <link rel="stylesheet" href="/styles.css?v=20260921-5" />
+  <link rel="stylesheet" href="/styles.css?v=20260927-2" />
 </head>
 <body>
   <header class="nav shell">
     <a class="brand" href="#top" aria-label="律析 LawFlow 首页"><span class="brand-mark">律</span><span>律析 <strong>LawFlow</strong></span></a>
     <nav><a href="#workspace">开始整理</a><a href="#workflow">使用方式</a><a href="#trust">审阅依据</a><a href="#skill">AI 协作</a></nav>
-    <button class="button button-quiet" id="open-settings">✨ 模型设置</button>
+    <button class="button button-quiet" id="open-settings">设置</button>
   </header>
 
   <main id="top">
     <div id="update-notice" class="update-notice hidden" role="status"></div>
     <section class="hero shell">
       <div class="hero-copy">
-        <p class="eyebrow">面向律师、法务与专业内容创作者</p>
-        <h1>把法律材料，<br/><em>整理成可学习、可讲述、可复核的专业内容。</em></h1>
-        <p class="hero-description">导入法规动态、判决、客户资料或个人笔记，形成晨晚速听、培训讲稿和播客稿；需要对外使用时，再逐项确认材料依据与事实边界。</p>
-        <div class="hero-actions"><a href="#workspace" class="button button-primary">开始整理一份材料</a><a href="#workspace" class="button button-outline">查看完整示例</a></div>
-        <div class="hero-facts"><span>一篇长文，五分钟听懂</span><span>准备一次培训或发言</span><span>形成可审阅专业内容</span></div>
+        <p class="eyebrow">律析 · 法律内容工作台</p>
+        <h1>从材料到讲稿，<br/><em>每一步都可审阅。</em></h1>
+        <p class="hero-description">导入法规、判决或实务笔记，确认大纲后生成可编辑讲稿。审阅完成，再导出 Word 或制作音频。</p>
+        <div class="hero-actions"><a href="#workspace" class="button button-primary">开始整理材料</a><button type="button" class="button button-outline" id="hero-load-demo">查看完整示例</button></div>
       </div>
       <div class="hero-visual" aria-label="律析工作成果示意">
         <div class="visual-layout">
@@ -54,16 +53,6 @@
 
     <section id="trust" class="trust-section"><div class="shell trust-grid"><div><p class="eyebrow light">审阅依据</p><h2>每篇内容都有材料范围，<br/>每个判断都保留确认空间。</h2></div><div class="trust-points"><div><b>限定材料范围</b><p>讲稿只使用选定材料能够支持的事实、规则和观点，不把材料外信息混入正文。</p></div><div><b>保留原文定位</b><p>审阅时可回看材料块、标题路径和来源链接，快速确认这段内容从哪里来。</p></div><div><b>把待确认内容留在核验清单</b><p>材料不足以支撑的判断不会伪装成结论；需要对外使用时，由律师完成发布前确认。</p></div></div></div></section>
 
-    <section id="skill" class="skill-home shell">
-      <div class="section-heading"><div><p class="eyebrow">AI 协作</p><h2>选择适合你的 AI 方式，<br/>成果始终回到本地审阅。</h2></div><span class="tag" id="home-skill-status">检测本地服务中</span></div>
-      <div class="skill-home-grid">
-        <article><span class="skill-index">A</span><h3>使用自己的模型</h3><p>连接 DeepSeek、OpenAI 或企业网关，在本地完成大纲、讲稿与 DOCX 导出。</p><small>适合需要批量处理或团队统一模型策略的场景。</small></article>
-        <article><span class="skill-index">B</span><h3>使用本机 Agent</h3><p>通过 Codex 或 CatPaw 读取受控材料块、生成内容并回写 LawFlow，继续审阅和导出。</p><small>无需在 LawFlow 中再配置额外模型 Key。</small></article>
-        <article><span class="skill-index">C</span><h3>使用 ChatGPT Plus</h3><p>复制当前材料包到 ChatGPT App 生成 Markdown，再粘贴回 LawFlow 审阅。</p><small>适合个人按需生成；不需要 OpenAI API 余额。</small></article>
-        <article class="skill-invoke"><p class="eyebrow">安装与调用</p><code>$lawflow</code><p>先将本仓库的独立 Skill 安装到任意支持 Codex Skill 的 Agent，再在对话中输入 <code>$lawflow</code> 加你的任务。</p><a class="button button-outline button-small" href="https://github.com/donghyq/lawflow/tree/main/skills/lawflow" target="_blank" rel="noreferrer">打开 GitHub Skill</a><button class="button button-outline button-small" id="copy-skill-invoke">复制调用示例</button></article>
-      </div>
-    </section>
-
     <section id="workspace" class="workspace shell">
       <div class="workspace-top"><div><p class="eyebrow">内容工作台</p><h2>开始整理一份材料</h2><p>选择学习或表达用途，再导入法规、资讯、判决或实务笔记。支持 DOCX、TXT 和 Markdown。</p></div><div class="workspace-actions"><button class="button button-outline" id="open-daily-brief">设置每日速听</button><button class="button button-primary" id="new-project">开始整理材料</button></div></div>
       <div id="workspace-message" class="message hidden"></div>
@@ -71,16 +60,39 @@
       <div id="project-list" class="project-grid"><div class="empty-state"><b>还没有项目</b><p>创建一个项目，开始处理法律材料。</p></div></div>
       <div id="project-detail" class="project-detail hidden"></div>
     </section>
+
+    <section id="skill" class="skill-home shell">
+      <div class="section-heading"><div><p class="eyebrow">AI 协作</p><h2>选择适合你的 AI 方式，<br/>成果始终回到本地审阅。</h2></div><span class="tag" id="home-skill-status">检测本地服务中</span></div>
+      <div class="skill-home-grid">
+        <article><span class="skill-index">A</span><h3>使用自己的模型</h3><p>连接 DeepSeek、OpenAI 或企业网关，在本地完成大纲、讲稿与 DOCX 导出。</p><small>适合需要批量处理或团队统一模型策略的场景。</small></article>
+        <article><span class="skill-index">B</span><h3>使用本机 Agent</h3><p>通过 Codex 或 CatPaw 读取受控材料块、生成内容并回写 LawFlow，继续审阅和导出。</p><small>无需在 LawFlow 中再配置额外模型 Key。</small></article>
+        <article><span class="skill-index">C</span><h3>使用 ChatGPT Plus</h3><p>复制当前材料包到 ChatGPT App 生成 Markdown，再粘贴回 LawFlow 审阅。</p><small>适合个人按需生成；不需要 OpenAI API 余额。</small></article>
+        <article class="skill-invoke"><p class="eyebrow">安装与调用</p><code>$lawflow</code><p>先将本仓库的独立 Skill 安装到任意支持 Codex Skill 的 Agent，再在对话中输入 <code>$lawflow</code> 加你的任务。</p><a class="button button-outline button-small" href="https://github.com/hey-elaine/lawflow/tree/main/skills/lawflow" target="_blank" rel="noreferrer">打开 GitHub Skill</a><button class="button button-outline button-small" id="copy-skill-invoke">复制调用示例</button></article>
+      </div>
+    </section>
   </main>
 
   <footer class="footer shell"><span>律析 LawFlow · 法律材料转译与专业表达工作台</span><span id="app-version">材料整理 · 讲稿审阅 · 按需核验</span></footer>
 
-  <dialog id="project-dialog" class="dialog"><form id="project-form"><div class="dialog-header"><h2>新建内容任务</h2><button type="button" aria-label="关闭" class="icon-button" data-close-dialog="project-dialog">×</button></div><label>任务名称<input required name="name" maxlength="120" placeholder="例如：本周数据合规晨间速听" /></label><label>客户 / 主题（可选）<input name="client_name" maxlength="120" placeholder="例如：跨境数据合规" /></label><fieldset><legend>选择应用场景</legend><div class="scenario-options"><label><input type="radio" name="scenario" value="daily_brief" />晨间 / 晚间法律速听<small>单篇资讯，短时精炼收听</small></label><label><input type="radio" name="scenario" value="topic_learning" checked />专题学习与表达<small>围绕一份素材形成分章节学习内容</small></label><label><input type="radio" name="scenario" value="speaking_note" />客户培训 / Speak Note<small>准备培训、发言和对外交流讲稿</small></label><label><input type="radio" name="scenario" value="legal_podcast" />法律科普播客<small>实务热点与经验积累的对外表达</small></label></div></fieldset><label>项目说明（可选）<textarea name="description" maxlength="1000" placeholder="记录学习主题、培训对象或表达目的"></textarea></label><input type="hidden" name="transform_mode" value="adapt" /><input type="hidden" name="verification_mode" value="material_check" /><input type="hidden" name="target_duration" value="10" /><input type="hidden" name="audio_enabled" value="true" /><div class="dialog-actions"><button type="button" class="button button-outline" data-close-dialog="project-dialog">取消</button><button type="submit" class="button button-primary">创建内容任务</button></div></form></dialog>
+  <dialog id="project-dialog" class="dialog"><form id="project-form">
+    <div class="dialog-header"><h2>新建内容任务</h2><button type="button" aria-label="关闭" class="icon-button" data-close-dialog="project-dialog">×</button></div>
+    <label>任务名称<input required name="name" maxlength="120" placeholder="例如：本周数据合规晨间速听" /></label>
+    <label>客户 / 主题（可选）<input name="client_name" maxlength="120" placeholder="例如：跨境数据合规" /></label>
+    <fieldset><legend>选择应用场景</legend><div class="scenario-options"><label><input type="radio" name="scenario" value="daily_brief" />晨间 / 晚间法律速听<small>单篇资讯，短时精炼收听</small></label><label><input type="radio" name="scenario" value="topic_learning" checked />专题学习与表达<small>围绕选定材料形成分章节学习内容</small></label><label><input type="radio" name="scenario" value="speaking_note" />客户培训 / Speak Note<small>准备培训、发言和对外交流讲稿</small></label><label><input type="radio" name="scenario" value="legal_podcast" />法律科普播客<small>实务热点与经验积累的对外表达</small></label></div></fieldset>
+    <label>项目说明（可选）<textarea name="description" maxlength="1000" placeholder="记录学习主题、培训对象或表达目的"></textarea></label>
+    <fieldset><legend>学习与表达偏好</legend>
+      <label>内容加工方式<select name="transform_mode"><option value="condense">提炼：保留重点</option><option value="adapt" selected>转译：重组并解释</option><option value="enrich">扩充：仅基于已选材料增加背景解释</option></select></label>
+      <label>预计收听时长<select name="target_duration"><option value="3">3 分钟</option><option value="5">5 分钟</option><option value="10" selected>10 分钟</option><option value="20">20 分钟</option><option value="30">30 分钟</option></select></label>
+      <label>音频<select name="audio_enabled"><option value="true" selected>保留音频制作入口</option><option value="false">只做文字学习</option></select></label>
+    </fieldset>
+    <input type="hidden" name="verification_mode" value="material_check" />
+    <div class="dialog-actions"><button type="button" class="button button-outline" data-close-dialog="project-dialog">取消</button><button type="submit" class="button button-primary">创建内容任务</button></div>
+  </form></dialog>
 
   <dialog id="settings-dialog" class="dialog"><form id="settings-form"><div class="dialog-header"><h2>模型与音频设置</h2><button type="button" aria-label="关闭" class="icon-button" data-close-dialog="settings-dialog">×</button></div><p class="form-note">默认只需选择服务商并粘贴 API Key。密钥仅保存在本机；选择“保存并测试”后会发送一条极短测试请求。</p><fieldset><legend>文本模型（必填）</legend><label>服务商<select name="provider_preset" id="provider-preset"><option value="openai">OpenAI（推荐）</option><option value="deepseek">DeepSeek</option><option value="custom">企业网关 / 其他兼容接口</option></select></label><label>API Key<input type="password" name="api_key" placeholder="粘贴 API Key，仅保存于本机" /></label><label class="check-label"><input type="checkbox" name="allow_source_upload" /> 我确认可将选定素材发送给该模型服务</label><div class="setting-test-row"><button type="button" class="button button-outline button-small" id="test-provider">测试连接</button><span id="provider-test-result" class="field-hint"></span></div></fieldset><details class="advanced-settings"><summary>高级设置：自定义网关、音色与播客转写</summary><fieldset><legend>兼容接口</legend><label>服务商名称<input name="provider_name" placeholder="仅自定义接口需要填写" /></label><label>Base URL<input name="base_url" placeholder="https://api.example.com/v1" /></label><label>模型名称<input name="model_name" placeholder="例如：gpt-4.1-mini" /></label></fieldset><fieldset><legend>语音合成（可选）</legend><label>接口类型<select name="tts_provider"><option value="macos_say">macOS 免费本地语音（推荐学习速听）</option><option value="edge_tts">Edge TTS 实验性在线免费语音</option><option value="compatible">兼容 /audio/speech</option><option value="minimax">MiniMax 原生</option></select></label><label>默认音色<input name="tts_voice" placeholder="本地推荐 Tingting；Edge 推荐 zh-CN-XiaoxiaoNeural；或填写云端音色 ID" /></label><label>语速<input name="tts_speed" type="number" min="0.5" max="2" step="0.05" value="1"/></label><p class="field-hint">macOS 本地语音完全免费、无需联网和密钥，适合学习与校对。Edge TTS 无需 Key、音质较自然，但属于实验性在线能力，不承诺稳定性、可用地区或商业用途；正式对外内容请使用有授权的大陆云服务。</p><label>TTS Base URL<input name="tts_base_url" placeholder="仅云端 TTS 需要填写" /></label><label>TTS 模型<input name="tts_model" placeholder="仅云端 TTS 需要填写" /></label><label>TTS API Key<input type="password" name="tts_api_key" placeholder="仅云端 TTS 需要填写" /></label><label>语气指令<textarea name="tts_instructions" maxlength="1000" placeholder="仅支持 instructions 的云端模型需要填写"></textarea></label></fieldset><fieldset><legend>播客语音转写（可选）</legend><label>转写 Base URL<input name="asr_base_url" /></label><label>转写模型<input name="asr_model" /></label><label>转写 API Key<input type="password" name="asr_api_key"/></label></fieldset><fieldset><legend>成果导出</legend><label>导出目录<input name="output_directory" placeholder="~/Desktop/ai_law" /></label></fieldset></details><div class="dialog-actions"><button type="button" class="button button-outline" data-close-dialog="settings-dialog">取消</button><button type="submit" class="button button-primary">保存设置</button></div></form></dialog>
 
   <dialog id="daily-brief-dialog" class="dialog"><form id="daily-brief-form"><div class="dialog-header"><h2>每日法律速听</h2><button type="button" aria-label="关闭" class="icon-button" data-close-dialog="daily-brief-dialog">×</button></div><p class="form-note">订阅公开 RSS 或 Atom 源。系统每天只收集新文章并建立待审速听任务；不会自动发布，也不会自动生成最终 MP3。</p><label>订阅名称<input required name="name" maxlength="120" placeholder="例如：数据合规资讯" /></label><label>RSS / Atom 地址<input required name="feed_url" type="url" placeholder="https://example.com/feed.xml" /></label><div class="plan-settings"><div class="field"><label>每日运行时间<input name="daily_time" type="time" value="08:00" /></label></div><div class="field"><label>每次最多收集<input name="max_items" type="number" min="1" max="10" value="3" /> 篇</label></div></div><label class="check-label"><input type="checkbox" name="auto_generate" /> 允许自动生成待审速听稿与音频脚本（仅在模型已配置且允许发送素材时）</label><div class="dialog-actions"><button type="button" class="button button-outline" data-close-dialog="daily-brief-dialog">取消</button><button type="submit" class="button button-primary">保存订阅</button></div></form></dialog>
 
-  <script src="/app.js?v=20260921-5"></script>
+  <script src="/app.js?v=20260927-2"></script>
 </body>
 </html>
