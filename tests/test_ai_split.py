@@ -44,6 +44,19 @@ class AiChapterProposalTest(unittest.TestCase):
             picked = app_main.ai_chapter_proposal(make_blocks())
         self.assertEqual(len(picked), 2)
 
+    def test_truncated_output_rescues_complete_chapters(self):
+        full = json.dumps({"chapters": [
+            {"heading_id": "h1", "question": "人工智能治理的背景是什么？"},
+            {"heading_id": "h3", "question": "数据出境有哪些触发条件？"},
+            {"heading_id": "h4", "question": "总体影响如何评估？"},
+        ]}, ensure_ascii=False)
+        # 模拟 max_tokens 截断：最后一个章节对象被切在半截
+        truncated = full[: full.rfind("}") - 40]
+        with patch.object(app_main, "model_chat", return_value=truncated):
+            picked = app_main.ai_chapter_proposal(make_blocks())
+        self.assertEqual([hid for hid, _ in picked], ["h1", "h3"])
+        self.assertEqual(picked[1][1], "数据出境有哪些触发条件？")
+
     def test_overlapping_parent_and_child_keeps_outer(self):
         model_output = json.dumps({"chapters": [
             {"heading_id": "h1", "question": "外层主题"},

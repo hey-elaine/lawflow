@@ -950,12 +950,26 @@ def ai_chapter_proposal(blocks: list[dict]) -> list[tuple[str, str]]:
         "1. 每章围绕一个完整的学习主题，目标 1500–4000 字；整份材料通常切成 4–12 章。\n"
         "2. 超大主题（超过 6000 字）优先用其下级标题拆开；过碎（不足 800 字）的标题并入相邻主题，不要单独成章。\n"
         "3. 不要同时选择父子标题；选中的章节按材料顺序排列，尽量覆盖全文。\n"
-        "4. 为每章设计一个具体的学习问题（这一章要弄清楚什么），避免空泛套话。\n\n"
+        "4. 为每章设计一个具体的学习问题（这一章要弄清楚什么），避免空泛套话；问题不超过 40 字。\n"
+        "5. 直接输出 JSON，不要任何解释性文字。\n\n"
         "候选标题：\n" + listing + "\n\n"
         '只输出 JSON，格式：{"chapters":[{"heading_id":"候选中的 id","question":"学习问题"}]}'
     )
-    content = model_chat([{"role": "system", "content": system}, {"role": "user", "content": user}], temperature=0.2, max_tokens=2400)
-    payload = json.loads(re.sub(r"^```(?:json)?|```$", "", content.strip(), flags=re.MULTILINE).strip())
+    content = model_chat([{"role": "system", "content": system}, {"role": "user", "content": user}], temperature=0.2, max_tokens=6000)
+    text = re.sub(r"^```(?:json)?|```$", "", content.strip(), flags=re.MULTILINE).strip()
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        # 输出被 max_tokens 截断时，逐个抿救已完整的章节对象
+        rescued = []
+        for match in re.findall(r"\{[^{}]*heading_id[^{}]*\}", text):
+            try:
+                rescued.append(json.loads(match))
+            except json.JSONDecodeError:
+                continue
+        if not rescued:
+            raise ValueError("模型返回的章节划分不可用")
+        payload = {"chapters": rescued}
     items = payload.get("chapters") if isinstance(payload, dict) else None
     if not isinstance(items, list) or len(items) < 2:
         raise ValueError("模型返回的章节划分不可用")
