@@ -998,6 +998,20 @@ def ai_chapter_proposal(blocks: list[dict]) -> list[tuple[str, str]]:
     return picked
 
 
+def strip_heading_numbering(text: str) -> str:
+    """去掉标题自带的小节编号（如 “一、” “（一）” “1.”），章节序号已由「第NN章」承担。"""
+    original = clean_text(text)
+    result = original
+    for pattern in (
+        r"^[（(][一二三四五六七八九十百0-9]+[）)]\s*",
+        r"^[一二三四五六七八九十百]+[、.．:：]\s*",
+        r"^[0-9]+[、.．]\s*",
+        r"^第[一二三四五六七八九十百0-9]+[章节部分][、.．:：]?\s*",
+    ):
+        result = re.sub(pattern, "", result)
+    return result or original
+
+
 def create_plan_chapters(blocks: list[dict], output_type: str, selected_heading_ids: list[str] | None = None) -> list[dict]:
     if selected_heading_ids:
         by_id = {block["id"]: block for block in blocks}
@@ -1015,7 +1029,7 @@ def create_plan_chapters(blocks: list[dict], output_type: str, selected_heading_
                 raise HTTPException(400, "所选目录章节的正文范围重叠，请保留其中一个。")
             ranges.append((heading["sequence_no"], end, scoped))
         prefix = {"partner_brief": "决策速览：", "client_brief": "法律简报：", "lexcast": "法声解读："}[output_type]
-        return [{"id": f"chapter-{index}", "title": f"第{index:02d}章 · {clean_text(heading['text'])}",
+        return [{"id": f"chapter-{index}", "title": f"第{index:02d}章 · {strip_heading_numbering(heading['text'])}",
                  "source_heading": heading["text"], "source_heading_id": heading["id"], "source_block_ids": [block["id"] for block in scoped],
                  "question": build_chapter_question(heading["text"], next((block["text"] for block in scoped if block["kind"] == "paragraph"), "")),
                  "estimated_length": "按成稿目标分配", "enabled": True}
@@ -1041,7 +1055,7 @@ def create_plan_chapters(blocks: list[dict], output_type: str, selected_heading_
         if not any(block["kind"] == "paragraph" for block in blocks if block["id"] in scoped):
             following = [block["id"] for block in blocks if block["sequence_no"] >= start and block["kind"] == "paragraph"]
             scoped = scoped + following[:12]
-        raw_text = clean_text(heading["text"])
+        raw_text = strip_heading_numbering(heading["text"])
         # 寻找紧随其后的二级标题辅助消歧义
         sub_heading = next((b["text"] for b in blocks if start < b["sequence_no"] < next_start and b["kind"] == "heading" and b.get("heading_level") == 2), "")
         sub_heading = clean_text(sub_heading)

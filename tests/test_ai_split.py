@@ -109,7 +109,7 @@ class PlanTitleCleanupTest(unittest.TestCase):
 
     def test_manual_selection_titles_have_no_output_prefix(self):
         chapters = app_main.create_plan_chapters(make_blocks(), "lexcast", ["h1", "h3"])
-        self.assertEqual([chapter["title"] for chapter in chapters], ["第01章 · 一、背景", "第02章 · 二、数据出境"])
+        self.assertEqual([chapter["title"] for chapter in chapters], ["第01章 · 背景", "第02章 · 数据出境"])
         self.assertEqual([chapter["source_heading_id"] for chapter in chapters], ["h1", "h3"])
 
 
