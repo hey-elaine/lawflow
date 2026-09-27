@@ -1006,6 +1006,7 @@ def strip_heading_numbering(text: str) -> str:
         r"^[（(][一二三四五六七八九十百0-9]+[）)]\s*",
         r"^[一二三四五六七八九十百]+[、.．:：]\s*",
         r"^[0-9]+[、.．]\s*",
+        r"^[A-Za-z][、.．]\s*",
         r"^第[一二三四五六七八九十百0-9]+[章节部分][、.．:：]?\s*",
     ):
         result = re.sub(pattern, "", result)
