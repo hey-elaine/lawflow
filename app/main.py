@@ -156,6 +156,7 @@ class PlanCreate(BaseModel):
     output_type: Literal["partner_brief", "client_brief", "lexcast"] = "client_brief"
     style_name: str = "专业、克制、结论先行"
     include_audio: bool = False
+    auto_split: bool = False
 
 
 class PlanConfirm(BaseModel):
@@ -944,7 +945,7 @@ def create_plan_chapters(blocks: list[dict], output_type: str, selected_heading_
     for index, heading in enumerate(primary[:6], start=1):
         start = heading["sequence_no"]
         next_start = primary[index]["sequence_no"] if index < len(primary) else len(blocks) + 1
-        scoped = [block["id"] for block in blocks if start <= block["sequence_no"] < next_start][:100]
+        scoped = [block["id"] for block in blocks if start <= block["sequence_no"] < next_start][:400]
         if not any(block["kind"] == "paragraph" for block in blocks if block["id"] in scoped):
             following = [block["id"] for block in blocks if block["sequence_no"] >= start and block["kind"] == "paragraph"]
             scoped = scoped + following[:12]
@@ -1119,9 +1120,18 @@ def extract_tasks(document_id: str, project_id: str, blocks: list[dict]) -> list
 
 STYLE_PROFILES = {
     "law_podcast_v4": {
-        "name": "海问合规播客 / 深度博客风格",
-        "description": "以具体问题切入，沿时间线、规则逻辑与业务场景递进展开；专业但自然，适合长篇播讲与专业内容传播。",
-        "instruction": "以一个具体问题或变化建立阅读动机，再按背景、规则或事实、为什么重要、业务含义的逻辑推进。解释术语时给出必要上下文和具体场景，不堆砌法条。段落有节奏，使用自然承接句，但避免机械播客套话。不要虚构数据、案例、机构观点或材料外事实。",
+        "name": "深度播客改写（默认）",
+        "description": "源自 podcast-rewriter 验证过的深度改写方法：口语化表达但保留专业深度，先框架后拆解，适合碎片时间逐章收听与阅读。",
+        "instruction": (
+            "你是一位面向法律从业者的深度播客主播。改写时遵守："
+            "1）先给框架再逐层拆解，用一个具体问题或变化开场，建立收听动机；"
+            "2）每个规则或概念按四层展开：出现背景与解决什么问题 → 适用对象与义务主体 → 规则细节与内在逻辑 → 实务场景与应对；"
+            "3）术语先定义再分析，用已知解释未知，用反问牵引思考；"
+            "4）原文引用的专家观点必须完整保留：姓名、机构、核心论点与论据，不能只说“有专家认为”；"
+            "5）提到影响或依赖时给出数据与案例，没有原文数据时明确标注需核实，不虚构；"
+            "6）压缩比红线：原文每 1 万字，改写输出不少于 3,000 字，宁可详尽不可遗漏关键知识点；"
+            "7）口语化不等于浅薄：语言自然、句子有节奏，每段末尾用一两句收束核心判断。"
+        ),
     },
     "professional_blog": {
         "name": "专业法律博客",
@@ -2210,8 +2220,8 @@ def create_plan(project_id: str, payload: PlanCreate):
     if document is None:
         raise HTTPException(status_code=404, detail="项目中未找到指定材料")
     blocks = read_blocks(payload.source_document_id)
-    if len(blocks) > 300 and not payload.selected_heading_ids:
-        raise HTTPException(400, "这份长文档请先选择要学习的目录章节。")
+    if len(blocks) > 300 and not payload.selected_heading_ids and not payload.auto_split:
+        raise HTTPException(400, "这份长文档请先选择要学习的目录章节，或使用自动分章。")
     output_type = CONTENT_SCENARIOS.get(project.get("scenario"), CONTENT_SCENARIOS["topic_learning"])["output_type"]
     chapters = create_plan_chapters(blocks, output_type, payload.selected_heading_ids)
     include_audio = bool(project.get("audio_enabled")) and bool(payload.include_audio)
@@ -3110,7 +3120,7 @@ def save_provider(payload: ProviderSettings):
 
 
 @app.post("/api/settings/provider/test")
-def test_provider_connection(_: ProviderConnectionTest):
+def test_provider_connection(_: ProviderConnectionTest | None = None):
     settings = get_internal_provider_settings()
     if not model_generation_ready(settings):
         raise HTTPException(status_code=400, detail="请先选择服务商、填写 API Key，并确认允许发送选定材料。")

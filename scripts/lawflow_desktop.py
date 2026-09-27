@@ -6,6 +6,7 @@ import socket
 import sqlite3
 import threading
 import time
+import urllib.parse
 import webbrowser
 import os
 import shutil
@@ -13,6 +14,28 @@ import sys
 from pathlib import Path
 
 import uvicorn
+
+
+LOADING_PAGE = """<!doctype html><html><head><meta charset="utf-8"><style>
+body{margin:0;display:grid;place-items:center;height:100vh;background:#f7f5ef;font-family:-apple-system,"Noto Sans SC",sans-serif;color:#14251f}
+.card{text-align:center}.mark{width:58px;height:58px;margin:0 auto 18px;display:grid;place-items:center;border-radius:15px;background:#1d5b49;color:#fff;font:700 27px/1 "Noto Serif SC",Georgia,serif}
+h1{margin:0 0 8px;font-size:20px;letter-spacing:-.02em}p{margin:0;color:#41534d;font-size:13px}
+.bar{width:190px;height:3px;margin:24px auto 0;border-radius:99px;background:#e6e1d5;overflow:hidden}
+.bar::after{content:"";display:block;width:40%;height:100%;border-radius:99px;background:#1d5b49;animation:slide 1.1s ease-in-out infinite}
+@keyframes slide{0%{transform:translateX(-110%)}100%{transform:translateX(290%)}}
+</style></head><body><div class="card"><div class="mark">律</div><h1>律析 LawFlow</h1><p>正在启动本地服务，请稍候…</p><div class="bar"></div></div></body></html>"""
+
+
+def data_uri(html: str) -> str:
+    return "data:text/html;charset=utf-8," + urllib.parse.quote(html)
+
+
+def error_page(message: str) -> str:
+    safe = message.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return LOADING_PAGE.replace(
+        "正在启动本地服务，请稍候…",
+        f"启动失败：{safe}<br/>请关闭窗口后重新打开 LawFlow。",
+    ).replace(".bar{", ".bar-hidden{")
 
 
 def project_count(db_path: Path) -> int:
@@ -54,25 +77,6 @@ def choose_port() -> int:
     raise RuntimeError("LawFlow 无法找到可用的本地端口，请关闭占用 8080–8089 的程序后重试。")
 
 
-def open_native_window(url: str) -> bool:
-    """优先使用独立桌面窗口；失败时返回 False，由调用方回退到浏览器。"""
-    try:
-        import webview
-
-        webview.create_window(
-            "律析 LawFlow",
-            url,
-            width=1440,
-            height=960,
-            min_size=(1120, 760),
-            background_color="#f7f5ef",
-        )
-        webview.start()
-        return True
-    except Exception:
-        return False
-
-
 def main() -> None:
     project_root = Path(__file__).resolve().parent.parent
     if str(project_root) not in sys.path:
@@ -81,9 +85,53 @@ def main() -> None:
     legacy_dir = Path(os.getenv("LAWFLOW_LEGACY_DATA_DIR", str(Path.home() / "Projects/lawflow/data"))).expanduser()
     migrate_legacy_data(data_dir, legacy_dir)
     os.environ["LAWFLOW_DATA_DIR"] = str(data_dir)
-    from app.main import app
 
     port = choose_port()
+    url = f"http://127.0.0.1:{port}"
+    holder: dict[str, uvicorn.Server] = {}
+    try:
+        import webview
+    except Exception:
+        webview = None
+
+    if webview is not None:
+        window = webview.create_window(
+            "律析 LawFlow",
+            data_uri(LOADING_PAGE),
+            width=1440,
+            height=960,
+            min_size=(1120, 760),
+            background_color="#f7f5ef",
+        )
+
+        def boot() -> None:
+            try:
+                from app.main import app  # 重导入放在窗口出现之后，避免长时间白屏
+
+                config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+                server = uvicorn.Server(config)
+                holder["server"] = server
+                worker = threading.Thread(target=server.run, daemon=True)
+                worker.start()
+                for _ in range(600):
+                    if server.started:
+                        break
+                    time.sleep(0.1)
+                window.load_url(url if server.started else data_uri(error_page("本地服务未能在 60 秒内就绪")))
+            except Exception as error:  # noqa: BLE001 - 启动失败也要把原因呈现给用户
+                try:
+                    window.load_url(data_uri(error_page(str(error))))
+                except Exception:
+                    pass
+
+        webview.start(boot)
+        server = holder.get("server")
+        if server is not None:
+            server.should_exit = True
+        return
+
+    from app.main import app
+
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     server = uvicorn.Server(config)
     worker = threading.Thread(target=server.run, daemon=True)
@@ -92,12 +140,6 @@ def main() -> None:
         if server.started:
             break
         time.sleep(0.1)
-
-    url = f"http://127.0.0.1:{port}"
-    if open_native_window(url):
-        server.should_exit = True
-        worker.join()
-        return
 
     webbrowser.open(url)
 

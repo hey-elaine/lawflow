@@ -1,11 +1,12 @@
 const appState = { projects: [], selectedProjectId: null, selectedProject: null, selectedDocument: null, activeTab: 'materials', activePlan: null, editingContentId: null };
 const SCENARIOS = {
-  daily_brief: { name: '晨间 / 晚间法律速听', transform: 'condense', verification: 'source_only', duration: 5, audio: true, audience: '个人学习', narrativeLabel: '速听讲稿' },
-  topic_learning: { name: '专题学习与表达', transform: 'adapt', verification: 'material_check', duration: 10, audio: true, audience: '法律从业者与企业法务', narrativeLabel: '主题讲稿' },
-  speaking_note: { name: '客户培训 / Speak Note', transform: 'enrich', verification: 'external_verify', duration: 20, audio: false, audience: '客户法务与业务团队', narrativeLabel: 'Speak Note' },
-  legal_podcast: { name: '法律科普播客', transform: 'enrich', verification: 'external_verify', duration: 20, audio: true, audience: '行业听众与潜在客户', narrativeLabel: '播客讲稿' },
+  daily_brief: { name: '晨间 / 晚间法律速听', description: '单篇资讯的短时精炼收听', transform: 'condense', verification: 'source_only', duration: 5, audio: true, audience: '个人学习', narrativeLabel: '速听讲稿' },
+  topic_learning: { name: '专题学习与表达', description: '围绕选定材料形成分章节学习内容', transform: 'adapt', verification: 'material_check', duration: 10, audio: true, audience: '法律从业者与企业法务', narrativeLabel: '主题讲稿' },
+  speaking_note: { name: '客户培训 / Speak Note', description: '准备培训、发言和对外交流讲稿', transform: 'enrich', verification: 'external_verify', duration: 20, audio: false, audience: '客户法务与业务团队', narrativeLabel: 'Speak Note' },
+  legal_podcast: { name: '法律科普播客', description: '实务热点与经验积累的对外表达', transform: 'enrich', verification: 'external_verify', duration: 20, audio: true, audience: '行业听众与潜在客户', narrativeLabel: '播客讲稿' },
 };
 const TRANSFORM_NAMES = { condense: '内容精炼', adapt: '正常转译', enrich: '内容丰富' };
+const lengthOfWords = words => words <= 2200 ? 'short' : words <= 5000 ? 'standard' : 'deep';
 const VERIFICATION_NAMES = { source_only: '资讯转译', material_check: '材料一致性检查', external_verify: '外部事实核验' };
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -237,51 +238,10 @@ async function viewDocumentMap(documentId) {
 
 async function showSourceBlock(documentId, blockId) { try { const block = await request('/api/documents/' + documentId + '/blocks/' + blockId); showSourceOverlay('材料块依据', '<h4>' + escapeHtml(block.source_locator) + '</h4><pre>' + escapeHtml(block.text) + '</pre>'); } catch (error) { showMessage(error.message, true); } }
 
-function renderPlanPanel() {
-  const panel = $('#detail-panel'); const docs = appState.selectedProject.documents;
-  if (!docs.length) { panel.innerHTML = '<section class="panel-card"><h3>先导入素材</h3><p>主题与结构依赖已整理的源素材。请先在“素材库”中导入 DOCX、TXT 或 Markdown。</p></section>'; return; }
-  const plan = appState.activePlan;
-  const project = appState.selectedProject.project;
-  const scenario = SCENARIOS[project.scenario] || SCENARIOS.topic_learning;
-  const currentStyle = plan?.style_name || (project.scenario === 'speaking_note' ? '专业、克制、适合口头培训' : project.scenario === 'legal_podcast' ? '海问合规播客 / 深度博客风格' : '深入浅出、适合朗读');
-  const presets = project.scenario === 'speaking_note' ? ['专业、克制、适合口头培训', '商业导向、重决策风险', '严谨合规、重法条与留痕'] : project.scenario === 'daily_brief' ? ['简洁、信息密度高、适合晨间速听', '自然、口语化、适合晚间收听'] : ['海问合规播客 / 深度博客风格', '专业法律博客', '深入浅出、通俗业务化'];
-
-  panel.innerHTML = '<section class="panel-card"><h3>' + (project.scenario === 'daily_brief' ? '确认速听结构' : '确认主题与内容结构') + '</h3><p>当前场景：<b>' + scenario.name + '</b>。加工方式：<b>' + TRANSFORM_NAMES[project.transform_mode] + '</b>；核验策略：<b>' + VERIFICATION_NAMES[project.verification_mode] + '</b>；目标时长：<b>' + project.target_duration + ' 分钟</b>。</p>' +
-    '<div class="plan-settings">' +
-      '<div class="field"><label>源材料</label><select id="plan-document">' + docs.map(doc => '<option value="' + doc.id + '" ' + (plan?.document_id === doc.id ? 'selected' : '') + '>' + escapeHtml(doc.original_name) + '</option>').join('') + '</select></div>' +
-      '<div class="field"><label>目标听众 / 读者</label><input id="plan-audience" value="' + escapeHtml(plan?.audience || scenario.audience) + '" /></div>' +
-      '<div class="field full"><label>风格画像（点击预设快捷填入，也可自主编辑）</label>' +
-        '<div class="style-preset-chips">' + presets.map(p => '<button type="button" class="preset-chip ' + (currentStyle === p ? 'active' : '') + '" data-set-style="' + escapeHtml(p) + '">' + escapeHtml(p) + '</button>').join('') + '</div>' +
-        '<input id="plan-style" value="' + escapeHtml(currentStyle) + '" placeholder="选择上方预设或输入自定义风格，如：面向业务高管汇报，突出处罚风险与整改成本"/>' +
-        '<small class="field-hint">风格画像将指导讲稿的表达节奏、术语解释方式和内容密度。</small>' +
-      '</div>' +
-      (project.audio_enabled ? '<div class="field full"><label class="check-label"><input type="checkbox" id="plan-audio" ' + (plan?.include_audio !== false ? 'checked' : '') + '/> 生成可朗读的音频脚本；讲稿确认后可在“音频与导出”中试听或调用 TTS</label></div>' : '<input type="hidden" id="plan-audio" value="false"/>') +
-    '</div>' +
-    '<div class="plan-actions"><button class="button button-primary" id="create-plan">✨ 生成内容结构</button>' + (plan ? '<button class="button button-outline" id="confirm-plan">确认内容结构</button>' : '') + '</div>' +
-    '<div id="chapter-list" class="chapter-list">' + (plan ? renderChapters(plan.chapters) : '<p class="form-note">系统会按当前场景生成可编辑的主题或节目结构建议。</p>') + '</div>' +
-  '</section>';
-
-  $$('[data-set-style]', panel).forEach(chip => chip.addEventListener('click', () => {
-    $$('.preset-chip', panel).forEach(c => c.classList.remove('active'));
-    chip.classList.add('active');
-    $('#plan-style').value = chip.dataset.setStyle;
-  }));
-
-  $('#create-plan').addEventListener('click', createPlan);
-  if (plan) $('#confirm-plan').addEventListener('click', confirmPlan);
-  bindChapterControls();
-}
 function formatChapterQuestion(chapter) {
-  const q = chapter.question || '';
-  if (!q || q.includes('这一部分对目标读者意味着什么') || q.includes('核心事实如何界定？涉及哪些合规差距')) {
-    const t = chapter.title || '';
-    if (t.includes('AI') || t.includes('伦理') || t.includes('算法')) return '人工智能应用在研发与落地各环节面临哪些伦理合规与治理要求？';
-    if (t.includes('涉外') || t.includes('反制') || t.includes('管辖') || t.includes('出海')) return '涉外法规与域外管辖冲突下，企业跨国经营涉及哪些合规风险点与应对措施？';
-    if (t.includes('数据') || t.includes('安全') || t.includes('跨境')) return '本章涉及哪些数据安全、技术处理或跨境流转义务？哪些事实需要先核实？';
-    if (t.includes('背景') || t.includes('框架') || t.includes('政策')) return '本章梳理了哪些关键监管动向和规则框架？背后的核心监管逻辑是什么？';
-    if (t.includes('总体影响') || t.includes('趋势')) return '从本章规则与执法趋势看，企业未来的经营模式和治理重点会如何变化？';
-    return '围绕本章梳理关键事实与规则表述，重点核查哪些边界条件与落地任务？';
-  }
+  const q = (chapter.question || '').trim();
+  const legacyDefaults = ['这一部分对目标读者意味着什么', '核心事实如何界定？涉及哪些合规差距'];
+  if (!q || legacyDefaults.some(marker => q.includes(marker))) return '围绕本章的关键事实、规则边界与落地要求展开，并标注需先核实的内容。';
   return q;
 }
 function renderChapters(chapters) {
@@ -322,7 +282,7 @@ async function loadPlanHeadings() {
       selector.innerHTML = '<p class="form-note">这份材料没有可识别的正文目录；短材料可直接建立结构，长材料请先整理标题层级。</p>';
       return;
     }
-    selector.innerHTML = '<label for="plan-heading-search">查找目录章节</label><input id="plan-heading-search" type="search" placeholder="输入标题关键词筛选"/><p class="form-note">勾选 1–8 个章节。目录页中没有正文的条目已自动排除；过长章节请选其下级标题。</p><div class="heading-candidate-list">' + headings.map(heading => '<label class="heading-candidate" data-heading-title="' + escapeHtml(heading.text.toLowerCase()) + '"><input type="checkbox" name="plan-heading" value="' + escapeHtml(heading.id) + '"/><span class="heading-candidate-title">' + escapeHtml(heading.text) + '</span><small>' + heading.paragraphCount + ' 段 · 约 ' + heading.charCount.toLocaleString() + ' 字' + (heading.charCount > 18000 ? ' · 建议选下级标题' : '') + '</small></label>').join('') + '</div>';
+    selector.innerHTML = '<label for="plan-heading-search">从目录中勾选要学习的章节（最多 8 个）</label><input id="plan-heading-search" type="search" placeholder="输入标题关键词筛选"/><p class="form-note">没有正文的条目已自动排除；过长章节建议改选其下级标题。</p><div class="heading-candidate-list">' + headings.map(heading => '<label class="heading-candidate" data-heading-title="' + escapeHtml(heading.text.toLowerCase()) + '" style="margin-left:' + Math.min((heading.heading_level - 1) * 18, 54) + 'px"><input type="checkbox" name="plan-heading" value="' + escapeHtml(heading.id) + '"/><span class="heading-candidate-title">' + escapeHtml(heading.text) + '</span><small>' + heading.paragraphCount + ' 段 · 约 ' + heading.charCount.toLocaleString() + ' 字' + (heading.charCount > 18000 ? ' · 建议选下级标题' : '') + '</small></label>').join('') + '</div><div class="plan-actions"><button class="button button-primary button-small" id="create-learning-plan">用所选章节建立结构</button></div>';
     $('#plan-heading-search').addEventListener('input', event => {
       const query = event.target.value.trim().toLowerCase();
       $$('.heading-candidate', selector).forEach(item => { item.hidden = !!query && !item.dataset.headingTitle.includes(query); });
@@ -338,15 +298,16 @@ async function loadPlanHeadings() {
   }
 }
 
-async function createLearningPlan() {
-  const button = $('#create-learning-plan');
+async function createLearningPlan(options = {}) {
+  const auto = !!options.auto;
+  const button = auto ? $('#auto-split-plan') : $('#create-learning-plan');
   try {
     const doc = await ensureDocumentLoaded($('#plan-document').value);
-    const selectedHeadingIds = $$('input[name="plan-heading"]:checked').map(input => input.value);
-    if ((doc.blocks || []).length > 300 && !selectedHeadingIds.length) throw new Error('这份长文档请先勾选要学习的目录章节。');
+    const selectedHeadingIds = auto ? [] : $$('input[name="plan-heading"]:checked').map(input => input.value);
+    if (!auto && !selectedHeadingIds.length) throw new Error('请先勾选要学习的目录章节。');
     const project = appState.selectedProject.project;
     const scenario = SCENARIOS[project.scenario] || SCENARIOS.topic_learning;
-    const body = { source_document_id: doc.id, selected_heading_ids: selectedHeadingIds, audience: $('#narrative-audience').value.trim() || scenario.audience, output_type: project.scenario === 'speaking_note' ? 'client_brief' : 'lexcast', style_name: '深入浅出、适合朗读', include_audio: !!project.audio_enabled };
+    const body = { source_document_id: doc.id, selected_heading_ids: selectedHeadingIds, audience: $('#narrative-audience').value.trim() || scenario.audience, output_type: project.scenario === 'speaking_note' ? 'client_brief' : 'lexcast', style_name: '深入浅出、适合朗读', include_audio: !!project.audio_enabled, auto_split: auto };
     setBusy(button, true);
     const plan = await request('/api/projects/' + project.id + '/plans', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     appState.selectedProject = await request('/api/projects/' + project.id);
@@ -356,9 +317,6 @@ async function createLearningPlan() {
   } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); }
 }
 
-async function createPlan() {
-  const button = $('#create-plan'); try { const scenario = SCENARIOS[appState.selectedProject.project.scenario] || SCENARIOS.topic_learning; setBusy(button, true); const body = { source_document_id: $('#plan-document').value, audience: $('#plan-audience').value.trim() || scenario.audience, output_type: appState.selectedProject.project.scenario === 'speaking_note' ? 'client_brief' : 'lexcast', style_name: $('#plan-style').value.trim() || '深入浅出、适合朗读', include_audio: $('#plan-audio')?.checked || false }; const plan = await request('/api/projects/' + appState.selectedProject.project.id + '/plans', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); appState.selectedProject = await request('/api/projects/' + appState.selectedProject.project.id); appState.activePlan = appState.selectedProject.plans.find(item => item.id === plan.id) || plan; renderProjectDetail(); showMessage('已生成内容结构建议。请编辑、删减后确认。'); } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); }
-}
 function readChaptersFromUi() { return $$('.chapter-row').map(row => ({ id: row.dataset.chapterId, title: $('.chapter-title', row).value.trim() || '未命名章节', source_block_ids: JSON.parse(row.dataset.sourceBlocks), question: $('small', row)?.textContent || '', estimated_length: '800–1200 字', enabled: $('.chapter-enabled', row).checked })); }
 async function confirmPlan() { const button = $('#confirm-plan'); try { const chapters = readChaptersFromUi(); if (!chapters.some(chapter => chapter.enabled)) throw new Error('至少选择一个要生成的章节。'); setBusy(button, true); const result = await request('/api/plans/' + appState.activePlan.id + '/confirm', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chapters }) }); appState.selectedProject = await request('/api/projects/' + appState.selectedProject.project.id); appState.activePlan = appState.selectedProject.plans.find(plan => plan.id === appState.activePlan.id); renderProjectDetail(); showMessage(result.tasks_generated ? '内容结构已确认，核验清单已从所选素材中生成。请先完成关键核验，再生成对外讲稿。' : '内容结构已确认。当前为轻量学习模式，可直接进入讲稿与音频生成。'); } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); } }
 
@@ -582,33 +540,39 @@ function renderStructurePanel() {
   const defaultDocument = docs.find(doc => doc.id === defaultDocId) || docs[0];
   const chapterWordLimit = latestPlan ? Math.min(8000, latestPlan.chapters.filter(chapter => chapter.enabled !== false).length * 2400) : 8000;
   const defaultWords = Math.min(project.target_duration <= 5 ? Math.min(1800, project.target_duration * 240) : 3800, chapterWordLimit || 8000);
-  const lengthOptions = project.target_duration <= 5
-    ? '<option value="short" selected>短篇 · 适合 ' + project.target_duration + ' 分钟收听</option><option value="standard">标准 · 约 3,800 字</option>'
-    : '<option value="short">短篇 · 约 1,800 字</option><option value="standard" selected>标准 · 约 3,800 字</option><option value="deep">深度 · 约 7,000 字</option>';
+  const wordPresets = [
+    ['short', '短篇 · 约 1,800 字', project.target_duration <= 5 ? Math.min(1800, project.target_duration * 240) : 1800],
+    ['standard', '标准 · 约 3,800 字', 3800],
+    ['deep', '深度 · 约 7,000 字', 7000],
+  ];
   const scopeOptions = latestPlan?.document_id === defaultDocId
     ? '<label class="check-label"><input type="radio" name="narrative-scope" value="chapter" checked/> 沿用已确认的章节及素材范围</label><label class="check-label"><input type="radio" name="narrative-scope" value="document"/> 根据整份素材重新规划</label>'
     : '<label class="check-label"><input type="radio" name="narrative-scope" value="document" checked/> 使用整份素材（超出预算时提示拆分）</label>';
-  const supplementOptions = docs.filter(doc => doc.source_url).map(doc => '<label class="check-label"><input type="checkbox" name="narrative-supplement" value="' + doc.id + '" ' + (doc.id === defaultDocId ? 'disabled' : '') + '/><span>' + escapeHtml(doc.original_name) + ' <small>· 已登记公开链接</small></span></label>').join('');
+  const supplementDocs = docs.filter(doc => doc.source_url);
+  const supplementOptions = supplementDocs.map(doc => '<label class="check-label"><input type="checkbox" name="narrative-supplement" value="' + doc.id + '" ' + (doc.id === defaultDocId ? 'disabled' : '') + '/><span>' + escapeHtml(doc.original_name) + ' <small>· 已登记公开链接</small></span></label>').join('');
   const currentPlan = appState.activePlan;
-  const planPanel = '<section class="panel-card"><p class="eyebrow">第一步 · 长文可先选目录范围</p><h3>从材料目录确定学习章节</h3><p>大文档请先选择要学习的目录章节，最多 8 节；确认后的标题、顺序和材料范围会直接进入下方写作大纲。</p><div class="plan-settings"><div class="field"><label>源材料<select id="plan-document">' + docs.map(doc => '<option value="' + doc.id + '" ' + (doc.id === (currentPlan?.document_id || defaultDocId) ? 'selected' : '') + '>' + escapeHtml(doc.original_name) + '</option>').join('') + '</select></label></div></div><div id="plan-heading-selector" class="plan-heading-selector"><p class="form-note">正在读取文档目录…</p></div><div class="plan-actions"><button class="button button-outline" id="create-learning-plan">建立章节结构</button></div>' + (currentPlan ? '<div class="plan-selected-chapters"><h4>' + (currentPlan.status === 'confirmed' ? '已确认的章节' : '待确认的章节') + '</h4><p class="form-note">可修改标题、取消不需要的章节；改动后请重新确认，并在下方重新建立写作大纲。</p><div id="chapter-list" class="chapter-list">' + renderChapters(currentPlan.chapters) + '</div><button class="button button-primary button-small" id="confirm-plan">' + (currentPlan.status === 'confirmed' ? '保存结构调整' : '确认章节结构') + '</button></div>' : '') + '</section>';
+  const planPanel = '<section class="panel-card"><p class="eyebrow">第一步 · 划分学习章节</p><h3>把材料分成适合碎片学习的章节</h3><p>每一章会单独成稿、可单独收听，适合通勤、间隙时间逐章推进。通常按材料目录自动划分即可；目录复杂或只想学部分章节时再手动挑选。</p><div class="plan-settings"><div class="field"><label>源材料<select id="plan-document">' + docs.map(doc => '<option value="' + doc.id + '" ' + (doc.id === (currentPlan?.document_id || defaultDocId) ? 'selected' : '') + '>' + escapeHtml(doc.original_name) + '</option>').join('') + '</select></label></div></div><div class="plan-actions"><button class="button button-primary" id="auto-split-plan">自动划分章节</button><button class="button button-outline" id="toggle-heading-picker">手动挑选目录章节</button></div><div id="plan-heading-selector" class="plan-heading-selector" hidden></div>' + (currentPlan ? '<div class="plan-selected-chapters"><h4>' + (currentPlan.status === 'confirmed' ? '已确认的章节' : '待确认的章节') + '</h4><p class="form-note">可修改标题、取消不需要的章节；改动后请重新确认，并在下方重新建立写作大纲。</p><div id="chapter-list" class="chapter-list">' + renderChapters(currentPlan.chapters) + '</div><button class="button button-primary button-small" id="confirm-plan">' + (currentPlan.status === 'confirmed' ? '保存结构调整' : '确认章节结构') + '</button></div>' : '') + '</section>';
 
-  panel.innerHTML = planPanel + '<section class="panel-card"><p class="eyebrow">第二步 · 确认写作大纲</p><h3>生成写作大纲</h3><p>可沿用上方已确认的章节，也可让模型重新规划。大纲确认后，' + escapeHtml(scenario.narrativeLabel) + '会按这些章节生成。</p>' +
-    '<div class="narrative-form"><div class="field"><label>源素材</label><select id="narrative-document">' + docs.map(doc => '<option value="' + doc.id + '" ' + (doc.id === defaultDocId ? 'selected' : '') + '>' + escapeHtml(doc.original_name) + '</option>').join('') + '</select></div>' +
-    '<div class="field"><label>讲稿标题</label><input id="narrative-title" value="' + escapeHtml(defaultChapter?.title?.replace(/^第\d+章\s*·\s*/, '') || defaultDocument.original_name.replace(/\.[^.]+$/, '')) + '" /></div>' +
+  panel.innerHTML = planPanel + '<section class="panel-card"><p class="eyebrow">第二步 · 确认写作大纲</p><h3>生成写作大纲</h3><p>基于上方选定的素材生成。大纲确认后，' + escapeHtml(scenario.narrativeLabel) + '会按这些章节生成。</p>' +
+    '<div class="narrative-form"><div class="field"><label>讲稿标题</label><input id="narrative-title" value="' + escapeHtml(defaultChapter?.title?.replace(/^第\d+章\s*·\s*/, '') || defaultDocument.original_name.replace(/\.[^.]+$/, '')) + '" /></div>' +
     '<div class="field"><label>目标听众</label><input id="narrative-audience" value="' + escapeHtml(scenario.audience) + '" /></div>' +
-    '<div class="field"><label>内容深度</label><select id="narrative-length">' + lengthOptions + '</select></div>' +
-    '<div class="field"><label>目标成稿字数</label><input id="narrative-target-words" type="number" min="400" max="8000" step="100" value="' + defaultWords + '"/><small class="field-hint" id="narrative-word-hint">用于分配每节篇幅，实际字数可能有偏差；不按字数填充空话。</small></div>' +
-    '<div class="field"><label>加工方式</label><select id="narrative-transform-mode"><option value="condense" ' + (project.transform_mode === 'condense' ? 'selected' : '') + '>提炼重点</option><option value="adapt" ' + (project.transform_mode === 'adapt' ? 'selected' : '') + '>重组并解释</option><option value="enrich" ' + (project.transform_mode === 'enrich' ? 'selected' : '') + '>基于已选资料扩充解释</option></select></div>' +
-    '<div class="field"><label>联网资料</label><select id="narrative-web-mode"><option value="off" ' + (project.web_research_mode === 'off' ? 'selected' : '') + '>不使用</option><option value="discover" ' + (project.web_research_mode === 'discover' ? 'selected' : '') + '>仅发现候选来源</option><option value="augment" ' + (project.web_research_mode === 'augment' ? 'selected' : '') + '>使用下方明确选定的公开来源</option></select></div>' +
+    '<div class="field full"><label>目标成稿字数</label><input id="narrative-target-words" type="number" min="400" max="8000" step="100" value="' + defaultWords + '"/>' +
+      '<div class="style-preset-chips">' + wordPresets.map(([key, label, words]) => '<button type="button" class="preset-chip ' + (defaultWords === Math.min(words, 8000) ? 'active' : '') + '" data-set-words="' + words + '">' + label + '</button>').join('') + '</div>' +
+      '<small class="field-hint" id="narrative-word-hint">用于分配每节篇幅，实际字数可能有偏差；不按字数填充空话。</small></div>' +
     '<div class="field full"><label>写作画像</label><select id="narrative-profile"><option value="">正在加载画像…</option></select><button type="button" class="button button-outline button-small" id="manage-profile">新增 / 编辑画像</button><small class="field-hint">系统只把选定素材块发送给模型；画像影响表达方式，不改变事实来源。</small></div>' +
     '<div class="field full"><label>素材范围</label><div class="narrative-scope">' + scopeOptions + '</div></div>' +
-    '<div class="field full" id="narrative-supplemental" ' + (project.web_research_mode === 'augment' ? '' : 'hidden') + '><label>补充公开资料（需逐份勾选）</label>' + (supplementOptions || '<p class="form-note">尚无已登记公开链接的资料。请先在“素材”中检索并导入。</p>') + '<small class="field-hint">只会读取勾选资料的正文；未勾选的网页不会进入生成请求。</small></div></div>' +
+    (supplementDocs.length ? '<div class="field full"><label class="check-label"><input type="checkbox" id="narrative-web-augment" ' + (project.web_research_mode === 'augment' ? 'checked' : '') + '/> 补充使用已登记公开链接的资料</label></div><div class="field full" id="narrative-supplemental" ' + (project.web_research_mode === 'augment' ? '' : 'hidden') + '><label>补充公开资料（需逐份勾选）</label>' + supplementOptions + '<small class="field-hint">只会读取勾选资料的正文；未勾选的网页不会进入生成请求。</small></div>' : '') + '</div>' +
     '<div class="plan-actions"><button class="button button-primary" id="create-narrative-outline">生成大纲</button></div>' +
     '<div class="narrative-outline-area" id="narrative-outline-area"><h3>大纲</h3><p class="form-note">尚未生成大纲。请确认已在“模型设置”中配置模型服务，并允许发送原始材料。</p><div style="margin-top:10px;"><button class="button button-outline button-small" id="open-settings-narrative">打开模型设置</button></div></div></section>';
 
   $('#create-narrative-outline').addEventListener('click', createNarrativeOutline);
-  $('#create-learning-plan').addEventListener('click', createLearningPlan);
-  $('#plan-document').addEventListener('change', loadPlanHeadings);
+  $('#auto-split-plan').addEventListener('click', () => createLearningPlan({ auto: true }));
+  $('#toggle-heading-picker').addEventListener('click', () => {
+    const selector = $('#plan-heading-selector');
+    selector.hidden = !selector.hidden;
+    if (!selector.hidden && !selector.dataset.loaded) { selector.dataset.loaded = '1'; loadPlanHeadings(); }
+  });
+  $('#plan-document').addEventListener('change', () => { loadPlanHeadings(); updateSupplementState(); });
   $('#confirm-plan')?.addEventListener('click', confirmPlan);
   if (currentPlan) bindChapterControls();
   loadPlanHeadings();
@@ -619,16 +583,23 @@ function renderStructurePanel() {
     if (Number(input.value) > Number(input.max)) input.value = input.max;
     $('#narrative-word-hint').textContent = (limit < 8000 ? '当前章节范围最多 ' + limit.toLocaleString() + ' 字；' : '') + '实际字数可能有偏差，不按字数填充空话。';
   };
-  $$('input[name="narrative-scope"]').forEach(input => input.addEventListener('change', updateWordLimit));
+  const syncWordChips = () => {
+    const words = Number($('#narrative-target-words').value);
+    $$('.preset-chip[data-set-words]', panel).forEach(chip => chip.classList.toggle('active', Number(chip.dataset.setWords) === words));
+  };
+  $$('input[name="narrative-scope"]').forEach(input => input.addEventListener('change', () => { updateWordLimit(); syncWordChips(); }));
+  $$('.preset-chip[data-set-words]', panel).forEach(chip => chip.addEventListener('click', () => {
+    $('#narrative-target-words').value = Math.min(Number(chip.dataset.setWords), Number($('#narrative-target-words').max));
+    syncWordChips();
+  }));
+  $('#narrative-target-words').addEventListener('input', syncWordChips);
+  $('#narrative-web-augment')?.addEventListener('change', event => { $('#narrative-supplemental').hidden = !event.target.checked; });
+  const updateSupplementState = () => {
+    const documentId = $('#plan-document').value;
+    $$('input[name="narrative-supplement"]').forEach(input => { input.disabled = input.value === documentId; if (input.disabled) input.checked = false; });
+  };
   updateWordLimit();
-  $('#narrative-length').addEventListener('change', event => {
-    const preset = { short: project.target_duration <= 5 ? Math.min(1800, project.target_duration * 240) : 1800, standard: 3800, deep: 7000 };
-    $('#narrative-target-words').value = Math.min(preset[event.target.value], Number($('#narrative-target-words').max));
-  });
-  $('#narrative-web-mode').addEventListener('change', event => { $('#narrative-supplemental').hidden = event.target.value !== 'augment'; });
-  $('#narrative-document').addEventListener('change', event => {
-    $$('input[name="narrative-supplement"]').forEach(input => { input.disabled = input.value === event.target.value; if (input.disabled) input.checked = false; });
-  });
+  updateSupplementState();
   $('#open-settings-narrative')?.addEventListener('click', () => $('#open-settings').click());
   if (outlines.length) renderNarrativeOutline(outlines[0]);
   loadProfileOptions();
@@ -662,8 +633,11 @@ function renderNarrativeOutputPanel() {
     return;
   }
 
+  const learningStats = (() => { let total = 0, done = 0; contents.forEach(content => { const reading = readingSections(content.markdown || ''); total += reading.length; const completed = new Set((content.reading_progress || {}).completed_section_ids || []); reading.forEach(section => { if (completed.has(section.id)) done += 1; }); }); return { total, done }; })();
+  const learningSummary = learningStats.total ? '<p class="form-note">碎片学习进度：已学 ' + learningStats.done + ' / ' + learningStats.total + ' 节' + (learningStats.done < learningStats.total ? '，从上次停下的地方继续即可。' : '，全部完成。') + '</p>' : '';
+
   panel.innerHTML = (contents.length ? '' : '<section class="panel-card"><h3>生成' + scenario.narrativeLabel + '</h3><p>大纲已确认。生成后可整篇阅读、逐节重写、人工修改并导出 DOCX。</p><div class="plan-actions"><button class="button button-primary" data-generate-from-outline="' + confirmedOutline.id + '">生成' + escapeHtml(scenario.narrativeLabel) + '</button></div></section>') +
-    '<section class="panel-card"><h3>已生成的' + scenario.narrativeLabel + '</h3><div class="narrative-content-list">' + (contents.length ? contents.map(renderNarrativeContentCard).join('') : '<p class="form-note">尚未生成讲稿。</p>') + '</div></section>' +
+    '<section class="panel-card"><h3>已生成的' + scenario.narrativeLabel + '</h3>' + learningSummary + '<div class="narrative-content-list">' + (contents.length ? contents.map(renderNarrativeContentCard).join('') : '<p class="form-note">尚未生成讲稿。</p>') + '</div></section>' +
     '<details class="panel-card optional-path"><summary>也可以让 ChatGPT 写稿，再粘贴回本地审阅</summary><div class="optional-path-body"><p>无需 OpenAI API Key。LawFlow 只复制当前材料块与写作要求；你在 ChatGPT App 生成 Markdown 后，粘贴回本地即可。</p><div class="handoff-actions"><button class="button button-outline" id="copy-chatgpt-prompt">复制给 ChatGPT</button><button class="button button-primary" id="open-chatgpt-import">粘贴 ChatGPT 成稿</button></div></div></details>';
 
   $('[data-generate-from-outline]')?.addEventListener('click', event => generateNarrative(confirmedOutline.id, event.currentTarget));
@@ -684,7 +658,7 @@ function selectedNarrativeSourceIds(documentId) {
 
 async function getChatGPTHandoff() {
   const scopedPlan = appState.activePlan?.status === 'confirmed' ? appState.activePlan : appState.selectedProject.plans.find(plan => plan.status === 'confirmed');
-  const documentId = $('#narrative-document')?.value || scopedPlan?.document_id || appState.selectedProject.documents[0]?.id;
+  const documentId = $('#plan-document')?.value || scopedPlan?.document_id || appState.selectedProject.documents[0]?.id;
   if (!documentId) throw new Error('请先导入素材。');
   const doc = await ensureDocumentLoaded(documentId);
   const sourceBlockIds = selectedNarrativeSourceIds(documentId).length ? selectedNarrativeSourceIds(documentId) : doc.blocks.filter(block => block.kind === 'paragraph').map(block => block.id);
@@ -692,7 +666,7 @@ async function getChatGPTHandoff() {
   const title = $('#narrative-title')?.value.trim() || appState.selectedProject.narrative_outlines?.[0]?.title || doc.original_name;
   return request('/api/projects/' + appState.selectedProject.project.id + '/chatgpt-handoff', {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({document_id:documentId, title, audience:$('#narrative-audience')?.value.trim() || SCENARIOS[appState.selectedProject.project.scenario]?.audience || '法律从业者', style_profile:$('#narrative-profile')?.value || appState.profiles?.[0]?.id || 'law_podcast_v4', source_block_ids:sourceBlockIds}),
+    body:JSON.stringify({document_id:documentId, title, audience:$('#narrative-audience')?.value.trim() || SCENARIOS[appState.selectedProject.project.scenario]?.audience || '法律从业者', style_profile:$('#narrative-profile')?.value || appState.profiles?.[0]?.id || '', source_block_ids:sourceBlockIds}),
   });
 }
 
@@ -718,7 +692,7 @@ async function openChatGPTImport() {
       event.preventDefault(); const submit = $('button[type="submit"]', dialog);
       try {
         setBusy(submit, true, '导入中…');
-        await request('/api/projects/' + appState.selectedProject.project.id + '/skill-host-contents', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({document_id:handoff.document_id, title:$('#chatgpt-import-title', dialog).value.trim() || handoff.title, markdown:$('#chatgpt-import-markdown', dialog).value.trim(), source_block_ids:handoff.source_block_ids, style_profile:$('#narrative-profile').value || 'law_podcast_v4', review_note:'由 ChatGPT App 生成，待律师审核。'})});
+        await request('/api/projects/' + appState.selectedProject.project.id + '/skill-host-contents', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({document_id:handoff.document_id, title:$('#chatgpt-import-title', dialog).value.trim() || handoff.title, markdown:$('#chatgpt-import-markdown', dialog).value.trim(), source_block_ids:handoff.source_block_ids, style_profile:$('#narrative-profile').value || appState.profiles?.[0]?.id || '', review_note:'由 ChatGPT App 生成，待律师审核。'})});
         dialog.close(); appState.selectedProject = await request('/api/projects/' + appState.selectedProject.project.id); renderProjectDetail(); showMessage('ChatGPT 成稿已导入，现可在本地审阅、生成音频脚本和导出。');
       } catch (error) { showMessage(error.message, true); } finally { setBusy(submit, false); }
     });
@@ -848,7 +822,7 @@ async function createNarrativeOutline() {
   const project = appState.selectedProject.project;
   try {
     setBusy(button, true, '正在整理大纲…');
-    const documentId = $('#narrative-document').value;
+    const documentId = $('#plan-document').value;
     const doc = await ensureDocumentLoaded(documentId);
     const scopedPlan = appState.activePlan?.status === 'confirmed' ? appState.activePlan : appState.selectedProject.plans.find(plan => plan.status === 'confirmed');
     const scope = $('input[name="narrative-scope"]:checked').value;
@@ -861,16 +835,16 @@ async function createNarrativeOutline() {
       sourceBlockIds = doc.blocks.filter(block => block.kind === 'paragraph').map(block => block.id);
     }
     if (!sourceBlockIds.length) throw new Error('当前范围内没有可用于写作的正文材料。');
-    if (!$('#narrative-profile').value) throw new Error('请等待画像加载完成并选择画像。');
+    if (!$('#narrative-profile').value) throw new Error('画像列表未加载完成。请打开“模型设置”检查服务后，重新打开本页重试。');
     const targetWords = Number($('#narrative-target-words').value);
     if (!Number.isInteger(targetWords) || targetWords < 400 || targetWords > 8000) throw new Error('目标成稿字数须在 400–8000 字之间。');
-    const webMode = $('#narrative-web-mode').value;
+    const webMode = $('#narrative-web-augment')?.checked ? 'augment' : (project.web_research_mode === 'discover' ? 'discover' : 'off');
     const supplementalDocumentIds = webMode === 'augment' ? $$('input[name="narrative-supplement"]:checked').map(input => input.value).filter(id => id !== documentId) : [];
     for (const supplementalId of supplementalDocumentIds) {
       const supplemental = await ensureDocumentLoaded(supplementalId);
       sourceBlockIds.push(...supplemental.blocks.filter(block => block.kind === 'paragraph').map(block => block.id));
     }
-    const payload = { document_id: documentId, source_plan_id: scope === 'chapter' ? scopedPlan?.id || '' : '', title: $('#narrative-title').value.trim(), source_block_ids: [...new Set(sourceBlockIds)], supplemental_document_ids: supplementalDocumentIds, audience: $('#narrative-audience').value.trim() || '法律从业者与企业法务', style_profile: $('#narrative-profile').value, target_length: $('#narrative-length').value, target_words: targetWords, transform_mode: $('#narrative-transform-mode').value, minimum_output_mode: project.minimum_output_mode || 'auto', minimum_output_ratio: Number(project.minimum_output_ratio || 0.3), web_research_mode: webMode };
+    const payload = { document_id: documentId, source_plan_id: scope === 'chapter' ? scopedPlan?.id || '' : '', title: $('#narrative-title').value.trim(), source_block_ids: [...new Set(sourceBlockIds)], supplemental_document_ids: supplementalDocumentIds, audience: $('#narrative-audience').value.trim() || '法律从业者与企业法务', style_profile: $('#narrative-profile').value, target_length: lengthOfWords(targetWords), target_words: targetWords, transform_mode: project.transform_mode, minimum_output_mode: project.minimum_output_mode || 'auto', minimum_output_ratio: Number(project.minimum_output_ratio || 0.3), web_research_mode: webMode };
     const outline = await request('/api/projects/' + appState.selectedProject.project.id + '/narrative-outlines', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     appState.selectedProject = await request('/api/projects/' + appState.selectedProject.project.id);
     const record = appState.selectedProject.narrative_outlines.find(item => item.id === outline.id) || outline;
@@ -1277,7 +1251,9 @@ async function loadProfileOptions(selectedId) {
   const profiles = await getNarrativeProfiles();
   if (!select.isConnected) return;
   appState.profiles = profiles;
-  select.innerHTML = profiles.map(profile => '<option value="' + escapeHtml(profile.id) + '">' + escapeHtml(profile.name) + (profile.builtin ? '' : '（自定义）') + '</option>').join('');
+  select.innerHTML = profiles.length
+    ? profiles.map(profile => '<option value="' + escapeHtml(profile.id) + '">' + escapeHtml(profile.name) + (profile.builtin ? '' : '（自定义）') + '</option>').join('')
+    : '<option value="" disabled selected>画像加载失败，请检查模型设置后重试</option>';
   if (selectedId) select.value = selectedId;
 }
 
@@ -1292,10 +1268,16 @@ function openProfileEditor() {
   $('.dialog-header', dialog).after(profileTools);
   document.body.appendChild(dialog);
   const current = (appState.profiles || []).find(item => item.id === $('#narrative-profile').value);
-  $('#profile-name').value = current ? current.name + (current.builtin ? '（自定义）' : '') : '';
+  const isBuiltin = !!current?.builtin;
+  $('#profile-name').value = current ? current.name : '';
   $('#profile-description').value = current?.description || '';
   $('#profile-instruction').value = current?.instruction || '';
-  $('#update-profile').disabled = !current || current.builtin;
+  $('#update-profile').hidden = !current || isBuiltin;
+  if (current) {
+    $('#profile-message').textContent = isBuiltin
+      ? '正在以内置画像「' + current.name + '」为起点。内置画像不可修改，点“保存为新画像”即可创建你的版本。'
+      : '正在编辑自定义画像「' + current.name + '」。';
+  }
   $('#close-profile').onclick = () => dialog.close();
   $('#export-profile').onclick = () => {
     if (!current) { $('#profile-message').textContent = '请先选择一个画像。'; return; }
@@ -1339,6 +1321,8 @@ function openProfileEditor() {
       if (transcript.length < 100 || transcript.length > 30000) throw new Error('请提供 100–30000 字的播客转写文本。');
       setBusy(button, true, '正在分析表达风格…');
       const result = await request('/api/narrative/profile-draft', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({transcript})});
+      const hasDraft = ['profile-name', 'profile-description', 'profile-instruction'].some(id => $('#' + id).value.trim());
+      if (hasDraft && !window.confirm('提取结果会覆盖当前填写的名称、简介和写作指令，继续吗？')) return;
       $('#profile-name').value = result.name; $('#profile-description').value = result.description; $('#profile-instruction').value = result.instruction;
       $('#profile-message').textContent = '画像草稿已填入，尚未保存。请编辑确认后保存为新画像。';
     } catch (error) { $('#profile-message').textContent = error.message; } finally { setBusy(button, false); }
