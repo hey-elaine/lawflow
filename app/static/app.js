@@ -307,13 +307,13 @@ async function createLearningPlan(options = {}) {
     if (!auto && !selectedHeadingIds.length) throw new Error('请先勾选要学习的目录章节。');
     const project = appState.selectedProject.project;
     const scenario = SCENARIOS[project.scenario] || SCENARIOS.topic_learning;
-    const body = { source_document_id: doc.id, selected_heading_ids: selectedHeadingIds, audience: $('#narrative-audience').value.trim() || scenario.audience, output_type: project.scenario === 'speaking_note' ? 'client_brief' : 'lexcast', style_name: '深入浅出、适合朗读', include_audio: !!project.audio_enabled, auto_split: auto };
-    setBusy(button, true);
+    const body = { source_document_id: doc.id, selected_heading_ids: selectedHeadingIds, audience: $('#narrative-audience').value.trim() || scenario.audience, output_type: project.scenario === 'speaking_note' ? 'client_brief' : 'lexcast', style_name: '深入浅出、适合朗读', include_audio: !!project.audio_enabled, auto_split: auto, split_mode: auto ? 'ai' : 'rules' };
+    setBusy(button, true, auto ? 'AI 正在阅读材料、设计章节…' : '建立中…');
     const plan = await request('/api/projects/' + project.id + '/plans', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     appState.selectedProject = await request('/api/projects/' + project.id);
     appState.activePlan = appState.selectedProject.plans.find(item => item.id === plan.id) || plan;
     renderProjectDetail();
-    showMessage('章节结构已建立。可调整标题和顺序，确认后生成写作大纲。');
+    showMessage(plan.split_mode === 'ai' ? 'AI 已按内容逻辑划分章节，并为每章设计了学习问题；可继续调整后确认。' : 'AI 分章不可用，已按目录规则划分章节；可调整标题和顺序，确认后生成写作大纲。');
   } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); }
 }
 

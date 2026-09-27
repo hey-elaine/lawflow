@@ -151,12 +151,13 @@ class WebSourceImport(BaseModel):
 
 class PlanCreate(BaseModel):
     source_document_id: str
-    selected_heading_ids: list[str] = Field(default_factory=list, max_length=8)
+    selected_heading_ids: list[str] = Field(default_factory=list, max_length=12)
     audience: str = "企业法务与业务负责人"
     output_type: Literal["partner_brief", "client_brief", "lexcast"] = "client_brief"
     style_name: str = "专业、克制、结论先行"
     include_audio: bool = False
     auto_split: bool = False
+    split_mode: Literal["rules", "ai"] = "rules"
 
 
 class PlanConfirm(BaseModel):
@@ -906,6 +907,83 @@ def build_chapter_question(heading_text: str, excerpt_text: str = "") -> str:
     return f"围绕“{shorten(cleaned_h or heading_text, 24)}”梳理核心事实与规则，重点核查哪些边界条件与落地任务？"
 
 
+def ai_chapter_proposal(blocks: list[dict]) -> list[tuple[str, str]]:
+    """让模型按学习逻辑划分章节，返回按出现顺序排列的 (heading_id, question) 列表。
+
+    候选集是全部带正文的标题（含各级），模型负责选择切分粒度并为每章设计学习问题；
+    解析或校验失败时抛出 ValueError，由调用方决定是否回退到规则切分。
+    """
+    candidates = []
+    for block in blocks:
+        if block["kind"] != "heading":
+            continue
+        next_same = next((b for b in blocks if b["kind"] == "heading" and b["sequence_no"] > block["sequence_no"] and b["heading_level"] <= block["heading_level"]), None)
+        end = next_same["sequence_no"] if next_same else len(blocks) + 1
+        scoped = [b for b in blocks if block["sequence_no"] <= b["sequence_no"] < end]
+        paras = [b for b in scoped if b["kind"] == "paragraph"]
+        chars = sum(len(b.get("text") or "") for b in scoped)
+        if not paras or chars < 120:
+            continue
+        first_para = clean_text(next((b["text"] for b in paras), ""))
+        candidates.append({
+            "id": block["id"],
+            "sequence": block["sequence_no"],
+            "end": end,
+            "level": block.get("heading_level", 1),
+            "title": clean_text(block["text"]),
+            "chars": chars,
+            "paragraphs": len(paras),
+            "excerpt": shorten(first_para, 60),
+        })
+    if len(candidates) < 2:
+        raise ValueError("材料标题过少，无需 AI 分章")
+    listing = "\n".join(
+        f"- id={c['id']} | 层级{c['level']} | 约{c['chars']}字 | {c['title']} | 开头：{c['excerpt']}"
+        for c in candidates
+    )
+    system = (
+        "你是法律学习内容的设计者，负责把一份材料划分成适合碎片化学习的章节。"
+        "章节划分对应学习节奏：一章是一次 5-15 分钟的完整学习单元。"
+    )
+    user = (
+        "下面是材料全部候选标题（含层级、所属范围字数与开头摘录）。请设计章节划分：\n"
+        "1. 每章围绕一个完整的学习主题，目标 1500–4000 字；整份材料通常切成 4–12 章。\n"
+        "2. 超大主题（超过 6000 字）优先用其下级标题拆开；过碎（不足 800 字）的标题并入相邻主题，不要单独成章。\n"
+        "3. 不要同时选择父子标题；选中的章节按材料顺序排列，尽量覆盖全文。\n"
+        "4. 为每章设计一个具体的学习问题（这一章要弄清楚什么），避免空泛套话。\n\n"
+        "候选标题：\n" + listing + "\n\n"
+        '只输出 JSON，格式：{"chapters":[{"heading_id":"候选中的 id","question":"学习问题"}]}'
+    )
+    content = model_chat([{"role": "system", "content": system}, {"role": "user", "content": user}], temperature=0.2, max_tokens=2400)
+    payload = json.loads(re.sub(r"^```(?:json)?|```$", "", content.strip(), flags=re.MULTILINE).strip())
+    items = payload.get("chapters") if isinstance(payload, dict) else None
+    if not isinstance(items, list) or len(items) < 2:
+        raise ValueError("模型返回的章节划分不可用")
+    by_id = {c["id"]: c for c in candidates}
+    parsed: list[tuple[int, str, str]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        heading_id = str(item.get("heading_id", ""))
+        if heading_id not in by_id:
+            continue
+        question = clean_text(str(item.get("question") or "")) or build_chapter_question(by_id[heading_id]["title"], by_id[heading_id]["excerpt"])
+        parsed.append((by_id[heading_id]["sequence"], heading_id, question))
+    parsed.sort()
+    picked: list[tuple[str, str]] = []
+    last_end = -1
+    for _seq, heading_id, question in parsed:
+        if picked and by_id[heading_id]["sequence"] < last_end:
+            continue  # 与已选章节重叠（父子同选等情况），保留外层、丢弃内层
+        last_end = by_id[heading_id]["end"]
+        picked.append((heading_id, question))
+        if len(picked) >= 12:
+            break
+    if len(picked) < 2:
+        raise ValueError("模型返回的有效章节不足")
+    return picked
+
+
 def create_plan_chapters(blocks: list[dict], output_type: str, selected_heading_ids: list[str] | None = None) -> list[dict]:
     if selected_heading_ids:
         by_id = {block["id"]: block for block in blocks}
@@ -923,8 +1001,8 @@ def create_plan_chapters(blocks: list[dict], output_type: str, selected_heading_
                 raise HTTPException(400, "所选目录章节的正文范围重叠，请保留其中一个。")
             ranges.append((heading["sequence_no"], end, scoped))
         prefix = {"partner_brief": "决策速览：", "client_brief": "法律简报：", "lexcast": "法声解读："}[output_type]
-        return [{"id": f"chapter-{index}", "title": f"{prefix}第{index:02d}章 · {clean_text(heading['text'])}",
-                 "source_heading": heading["text"], "source_block_ids": [block["id"] for block in scoped],
+        return [{"id": f"chapter-{index}", "title": f"第{index:02d}章 · {clean_text(heading['text'])}",
+                 "source_heading": heading["text"], "source_heading_id": heading["id"], "source_block_ids": [block["id"] for block in scoped],
                  "question": build_chapter_question(heading["text"], next((block["text"] for block in scoped if block["kind"] == "paragraph"), "")),
                  "estimated_length": "按成稿目标分配", "enabled": True}
                 for index, (heading, (_, _, scoped)) in enumerate(zip(headings, ranges), start=1)]
@@ -949,7 +1027,6 @@ def create_plan_chapters(blocks: list[dict], output_type: str, selected_heading_
         if not any(block["kind"] == "paragraph" for block in blocks if block["id"] in scoped):
             following = [block["id"] for block in blocks if block["sequence_no"] >= start and block["kind"] == "paragraph"]
             scoped = scoped + following[:12]
-        title_prefix = {"partner_brief": "决策速览：", "client_brief": "法律简报：", "lexcast": "法声解读："}[output_type]
         raw_text = clean_text(heading["text"])
         # 寻找紧随其后的二级标题辅助消歧义
         sub_heading = next((b["text"] for b in blocks if start < b["sequence_no"] < next_start and b["kind"] == "heading" and b.get("heading_level") == 2), "")
@@ -963,7 +1040,7 @@ def create_plan_chapters(blocks: list[dict], output_type: str, selected_heading_
         if seen_titles[clean_name] > 1:
             clean_name = f"{clean_name}（第{seen_titles[clean_name]}部分）"
 
-        display_title = f"{title_prefix}第{index:02d}章 · {clean_name}"
+        display_title = f"第{index:02d}章 · {clean_name}"
         # 取首段文字作为提问依据
         first_para = next((b["text"] for b in blocks if b["id"] in scoped and b["kind"] == "paragraph"), "")
         question = build_chapter_question(clean_name, first_para)
@@ -971,6 +1048,7 @@ def create_plan_chapters(blocks: list[dict], output_type: str, selected_heading_
             "id": f"chapter-{index}",
             "title": display_title,
             "source_heading": heading["text"],
+            "source_heading_id": heading["id"],
             "source_block_ids": scoped,
             "question": question,
             "estimated_length": "800–1200 字",
@@ -2223,7 +2301,24 @@ def create_plan(project_id: str, payload: PlanCreate):
     if len(blocks) > 300 and not payload.selected_heading_ids and not payload.auto_split:
         raise HTTPException(400, "这份长文档请先选择要学习的目录章节，或使用自动分章。")
     output_type = CONTENT_SCENARIOS.get(project.get("scenario"), CONTENT_SCENARIOS["topic_learning"])["output_type"]
-    chapters = create_plan_chapters(blocks, output_type, payload.selected_heading_ids)
+    selected_heading_ids = list(payload.selected_heading_ids)
+    custom_questions: dict[str, str] = {}
+    split_mode_used = "rules"
+    if payload.auto_split and payload.split_mode == "ai" and not selected_heading_ids:
+        try:
+            proposal = ai_chapter_proposal(blocks)
+            selected_heading_ids = [heading_id for heading_id, _ in proposal]
+            custom_questions = dict(proposal)
+            split_mode_used = "ai"
+        except HTTPException:
+            raise  # 模型未配置或服务异常时直接告知用户，不静默降级
+        except (ValueError, json.JSONDecodeError):
+            split_mode_used = "rules"  # 模型输出不可用，回退到目录规则切分
+    chapters = create_plan_chapters(blocks, output_type, selected_heading_ids)
+    for chapter in chapters:
+        ai_question = custom_questions.get(chapter.get("source_heading_id", ""))
+        if ai_question:
+            chapter["question"] = ai_question
     include_audio = bool(project.get("audio_enabled")) and bool(payload.include_audio)
     plan_id = str(uuid.uuid4())
     timestamp = now_iso()
@@ -2233,7 +2328,7 @@ def create_plan(project_id: str, payload: PlanCreate):
     conn.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (timestamp, project_id))
     conn.commit()
     conn.close()
-    return {"id": plan_id, "project_id": project_id, "document_id": payload.source_document_id, "audience": payload.audience, "output_type": output_type, "style_name": payload.style_name, "include_audio": include_audio, "status": "draft", "chapters": chapters}
+    return {"id": plan_id, "project_id": project_id, "document_id": payload.source_document_id, "audience": payload.audience, "output_type": output_type, "style_name": payload.style_name, "include_audio": include_audio, "status": "draft", "chapters": chapters, "split_mode": split_mode_used}
 
 
 @app.put("/api/plans/{plan_id}/confirm")
