@@ -553,7 +553,9 @@ function renderStructurePanel() {
   const currentPlan = appState.activePlan;
   const planPanel = '<section class="panel-card"><p class="eyebrow">第一步 · 划分学习章节</p><h3>把材料分成适合碎片学习的章节</h3><p>每一章会单独成稿、可单独收听，适合通勤、间隙时间逐章推进。通常按材料目录自动划分即可；目录复杂或只想学部分章节时再手动挑选。</p><div class="plan-settings"><div class="field"><label>源材料<select id="plan-document">' + docs.map(doc => '<option value="' + doc.id + '" ' + (doc.id === (currentPlan?.document_id || defaultDocId) ? 'selected' : '') + '>' + escapeHtml(doc.original_name) + '</option>').join('') + '</select></label></div></div><div class="plan-actions"><button class="button button-primary" id="auto-split-plan">自动划分章节</button><button class="button button-outline" id="toggle-heading-picker">手动挑选目录章节</button></div><div id="plan-heading-selector" class="plan-heading-selector" hidden></div>' + (currentPlan ? '<div class="plan-selected-chapters"><h4>' + (currentPlan.status === 'confirmed' ? '已确认的章节' : '待确认的章节') + '</h4><p class="form-note">可修改标题、取消不需要的章节；改动后请重新确认，并在下方重新建立写作大纲。</p><div id="chapter-list" class="chapter-list">' + renderChapters(currentPlan.chapters) + '</div>' + (function(){ const total = currentPlan.chapters.length; const enabled = currentPlan.chapters.filter(c => c.enabled).length; return '<div class="plan-confirm-bar"><div class="plan-confirm-summary"><strong>已选 ' + enabled + ' / ' + total + ' 章</strong><span>' + (enabled === total ? '保持默认即可直接确认' : '已取消的章节不会生成内容') + '</span></div><button class="button button-primary" id="confirm-plan">' + (currentPlan.status === 'confirmed' ? '保存结构调整' : '确认章节结构') + '</button></div>'; })() + '</div>' : '') + '</section>';
 
-  panel.innerHTML = planPanel + '<section class="panel-card"><p class="eyebrow">第二步 · 确认写作大纲</p><h3>生成写作大纲</h3><p>基于上方选定的素材生成。大纲确认后，' + escapeHtml(scenario.narrativeLabel) + '会按这些章节生成。</p>' +
+  panel.innerHTML = planPanel + '<section class="panel-card"><p class="eyebrow">第二步 · 生成写作大纲</p><h3>章节确认后自动生成大纲</h3>' +
+    '<p class="form-note">' + (currentPlan?.status === 'confirmed' ? '已根据你确认的章节自动生成写作大纲，下方可直接检查。' : '确认上方章节后会自动生成写作大纲，通常无需手动操作。') + '</p>' +
+    '<details class="outline-advanced" id="outline-advanced"><summary>生成前调整参数（可选）</summary>' +
     '<div class="narrative-form"><div class="field"><label>讲稿标题</label><input id="narrative-title" value="' + escapeHtml(defaultChapter?.title?.replace(/^第\d+章\s*·\s*/, '') || defaultDocument.original_name.replace(/\.[^.]+$/, '')) + '" /></div>' +
     '<div class="field"><label>目标听众</label><input id="narrative-audience" value="' + escapeHtml(scenario.audience) + '" /></div>' +
     '<div class="field full"><label>目标成稿字数</label><input id="narrative-target-words" type="number" min="400" max="8000" step="100" value="' + defaultWords + '"/>' +
@@ -562,7 +564,8 @@ function renderStructurePanel() {
     '<div class="field full"><label>写作画像</label><select id="narrative-profile"><option value="">正在加载画像…</option></select><button type="button" class="button button-outline button-small" id="manage-profile">新增 / 编辑画像</button><small class="field-hint">系统只把选定素材块发送给模型；画像影响表达方式，不改变事实来源。</small></div>' +
     '<div class="field full"><label>素材范围</label><div class="narrative-scope">' + scopeOptions + '</div></div>' +
     (supplementDocs.length ? '<div class="field full"><label class="check-label"><input type="checkbox" id="narrative-web-augment" ' + (project.web_research_mode === 'augment' ? 'checked' : '') + '/> 补充使用已登记公开链接的资料</label></div><div class="field full" id="narrative-supplemental" ' + (project.web_research_mode === 'augment' ? '' : 'hidden') + '><label>补充公开资料（需逐份勾选）</label>' + supplementOptions + '<small class="field-hint">只会读取勾选资料的正文；未勾选的网页不会进入生成请求。</small></div>' : '') + '</div>' +
-    '<div class="plan-actions"><button class="button button-primary" id="create-narrative-outline">生成大纲</button></div>' +
+    '<div class="plan-actions"><button class="button button-primary" id="create-narrative-outline">用以上参数重新生成大纲</button></div>' +
+    '</details>' +
     '<div class="narrative-outline-area" id="narrative-outline-area"><h3>大纲</h3><p class="form-note">尚未生成大纲。请确认已在“模型设置”中配置模型服务，并允许发送原始材料。</p><div style="margin-top:10px;"><button class="button button-outline button-small" id="open-settings-narrative">打开模型设置</button></div></div></section>';
 
   $('#create-narrative-outline').addEventListener('click', createNarrativeOutline);
@@ -602,6 +605,7 @@ function renderStructurePanel() {
   updateSupplementState();
   $('#open-settings-narrative')?.addEventListener('click', () => $('#open-settings').click());
   if (outlines.length) renderNarrativeOutline(outlines[0]);
+  if (currentPlan?.status === 'confirmed') maybeAutoCreateOutline();
   loadProfileOptions();
   $('#manage-profile').addEventListener('click', openProfileEditor);
 }
@@ -817,11 +821,28 @@ function readNarrativeOutlineFromUi(record) {
   return outline;
 }
 
-async function createNarrativeOutline() {
+let autoOutlineInFlight = false;
+let autoOutlineDoneForPlan = '';
+
+async function maybeAutoCreateOutline() {
+  const plan = appState.activePlan?.status === 'confirmed' ? appState.activePlan : appState.selectedProject.plans.find(item => item.status === 'confirmed');
+  if (!plan) return;
+  if (appState.selectedProject.narrative_outlines?.length) return;
+  if (autoOutlineInFlight || autoOutlineDoneForPlan === plan.id) return;
+  autoOutlineDoneForPlan = plan.id;
+  autoOutlineInFlight = true;
+  try { await createNarrativeOutline({ auto: true }); } finally { autoOutlineInFlight = false; }
+}
+
+async function createNarrativeOutline(options = {}) {
+  const auto = !!options.auto;
   const button = $('#create-narrative-outline');
   const project = appState.selectedProject.project;
   try {
+    if (!$('#narrative-profile')?.value) await loadProfileOptions();
     setBusy(button, true, '正在整理大纲…');
+    const outlineArea = $('#narrative-outline-area');
+    if (outlineArea) { outlineArea.dataset.generating = '1'; outlineArea.innerHTML = '<h3>大纲</h3><p class="form-note">正在根据确认的章节生成写作大纲，一般需要几十秒…</p>'; }
     const documentId = $('#plan-document').value;
     const doc = await ensureDocumentLoaded(documentId);
     const scopedPlan = appState.activePlan?.status === 'confirmed' ? appState.activePlan : appState.selectedProject.plans.find(plan => plan.status === 'confirmed');
@@ -848,9 +869,18 @@ async function createNarrativeOutline() {
     const outline = await request('/api/projects/' + appState.selectedProject.project.id + '/narrative-outlines', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     appState.selectedProject = await request('/api/projects/' + appState.selectedProject.project.id);
     const record = appState.selectedProject.narrative_outlines.find(item => item.id === outline.id) || outline;
+    if (outlineArea) delete outlineArea.dataset.generating;
     renderNarrativeOutline(record);
-    showMessage(scope === 'chapter' ? '已沿用你确认的章节结构。请检查并调整后再确认。' : '写作大纲已生成。请检查章节结构和材料范围。');
-  } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); }
+    showMessage(auto ? '已根据确认的章节自动生成写作大纲，可在下方检查调整。' : (scope === 'chapter' ? '已沿用你确认的章节结构。请检查并调整后再确认。' : '写作大纲已生成。请检查章节结构和材料范围。'));
+  } catch (error) {
+    showMessage(error.message, true);
+    const area = $('#narrative-outline-area');
+    if (area?.dataset.generating) {
+      delete area.dataset.generating;
+      area.innerHTML = '<h3>大纲</h3><p class="form-note">大纲生成失败：' + escapeHtml(error.message) + '</p><div style="margin-top:10px;"><button class="button button-outline button-small" id="retry-outline">重试</button></div>';
+      $('#retry-outline')?.addEventListener('click', () => createNarrativeOutline({ auto }));
+    }
+  } finally { setBusy(button, false); }
 }
 
 async function confirmNarrativeOutline(record) {

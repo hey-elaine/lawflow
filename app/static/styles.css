@@ -372,3 +372,20 @@
 .plan-confirm-bar .button {
   flex-shrink: 0;
 }
+
+/* 第二步：自动生成大纲，参数收进折叠项 */
+.outline-advanced {
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 16px;
+  background: rgba(31, 77, 56, 0.03);
+}
+.outline-advanced summary {
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--muted);
+  user-select: none;
+}
+.outline-advanced summary:hover { color: var(--ink); }
+.outline-advanced[open] { padding-bottom: 18px; }

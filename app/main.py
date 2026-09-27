@@ -1502,7 +1502,10 @@ def synthesize_audio(script: str, title: str, settings: dict) -> tuple[Path, str
     return output_path, model, duration
 
 
-def source_dossier(blocks: list[dict], max_chars_per_block: int = 2600, max_total_chars: int = 28000) -> str:
+SOURCE_BUDGET_CHARS = 60000  # DeepSeek 128K 上下文下安全的一欠性素材预算（支持播客改写 1万→3千 的压缩比）
+
+
+def source_dossier(blocks: list[dict], max_chars_per_block: int = 2600, max_total_chars: int = SOURCE_BUDGET_CHARS) -> str:
     parts, used = [], 0
     for block in blocks:
         if block["kind"] == "heading":
@@ -1633,7 +1636,7 @@ def outline_from_confirmed_plan(request: NarrativeOutlineRequest, chapters: list
         if not primary_ids or any(block_id not in selected or selected[block_id]["document_id"] != request.document_id for block_id in primary_ids):
             raise HTTPException(400, "已确认章节的材料范围与当前选择不一致，请重新确认章节。")
         source_ids = list(dict.fromkeys([*primary_ids, *supplemental_ids]))
-        source_dossier([selected[block_id] for block_id in source_ids], max_total_chars=18000)
+        source_dossier([selected[block_id] for block_id in source_ids], max_total_chars=SOURCE_BUDGET_CHARS)
         heading = re.sub(r"^(?:决策速览：|法律简报：|法声解读：)?第\d+章\s*·\s*", "", chapter.get("title", "")).strip()
         purpose = clean_text(chapter.get("question", ""))
         sections.append({"heading": heading or chapter.get("title", ""), "purpose": purpose,
@@ -1684,7 +1687,7 @@ def generate_narrative_markdown(outline: dict, blocks: list[dict], audience: str
     rendered_sections, section_sources = [], []
     for section_index, section in enumerate(outline["sections"]):
         selected = [block_map[block_id] for block_id in section["source_block_ids"] if block_id in block_map]
-        dossier = source_dossier(selected, max_chars_per_block=2400, max_total_chars=18000)
+        dossier = source_dossier(selected, max_chars_per_block=2400, max_total_chars=SOURCE_BUDGET_CHARS)
         points = "\n".join("- " + point for point in section.get("key_points", [])) or "- 围绕本节材料展开，不添加材料外事实。"
         transform = TRANSFORM_MODES[transform_mode]
         scenario_config = CONTENT_SCENARIOS[scenario]
