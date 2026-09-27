@@ -907,8 +907,8 @@ def build_chapter_question(heading_text: str, excerpt_text: str = "") -> str:
     return f"围绕“{shorten(cleaned_h or heading_text, 24)}”梳理核心事实与规则，重点核查哪些边界条件与落地任务？"
 
 
-def ai_chapter_proposal(blocks: list[dict]) -> list[tuple[str, str]]:
-    """让模型按学习逻辑划分章节，返回按出现顺序排列的 (heading_id, question) 列表。
+def ai_chapter_proposal(blocks: list[dict]) -> tuple[list[tuple[str, str]], dict[str, str]]:
+    """让模型按学习逻辑划分章节，返回 (按出现顺序的 (heading_id, question) 列表, 模型起的章节标题字典)。
 
     候选集是全部带正文的标题（含各级），模型负责选择切分粒度并为每章设计学习问题；
     解析或校验失败时抛出 ValueError，由调用方决定是否回退到规则切分。
@@ -951,9 +951,10 @@ def ai_chapter_proposal(blocks: list[dict]) -> list[tuple[str, str]]:
         "2. 超大主题（超过 6000 字）优先用其下级标题拆开；过碎（不足 800 字）的标题并入相邻主题，不要单独成章。\n"
         "3. 不要同时选择父子标题；选中的章节按材料顺序排列，尽量覆盖全文。\n"
         "4. 为每章设计一个具体的学习问题（这一章要弄清楚什么），避免空泛套话；问题不超过 40 字。\n"
-        "5. 直接输出 JSON，不要任何解释性文字。\n\n"
+        "5. 为每章起一个简洁标题：用 5–20 字概括本章学习主题；不要照抄原文的小节编号（如 一、/（一）/C./1.），也不要带“第X章”字样。\n"
+        "6. 直接输出 JSON，不要任何解释性文字。\n\n"
         "候选标题：\n" + listing + "\n\n"
-        '只输出 JSON，格式：{"chapters":[{"heading_id":"候选中的 id","question":"学习问题"}]}'
+        '只输出 JSON，格式：{"chapters":[{"heading_id":"候选中的 id","title":"章节标题","question":"学习问题"}]}'
     )
     content = model_chat([{"role": "system", "content": system}, {"role": "user", "content": user}], temperature=0.2, max_tokens=6000)
     text = re.sub(r"^```(?:json)?|```$", "", content.strip(), flags=re.MULTILINE).strip()
@@ -975,6 +976,7 @@ def ai_chapter_proposal(blocks: list[dict]) -> list[tuple[str, str]]:
         raise ValueError("模型返回的章节划分不可用")
     by_id = {c["id"]: c for c in candidates}
     parsed: list[tuple[int, str, str]] = []
+    titles: dict[str, str] = {}
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -982,6 +984,10 @@ def ai_chapter_proposal(blocks: list[dict]) -> list[tuple[str, str]]:
         if heading_id not in by_id:
             continue
         question = clean_text(str(item.get("question") or "")) or build_chapter_question(by_id[heading_id]["title"], by_id[heading_id]["excerpt"])
+        title = clean_text(str(item.get("title") or ""))
+        title = re.sub(r"^第[0-9一二三四五六七八九十百]+章\s*[·:：]?\s*", "", title)
+        if title:
+            titles[heading_id] = title[:40]
         parsed.append((by_id[heading_id]["sequence"], heading_id, question))
     parsed.sort()
     picked: list[tuple[str, str]] = []
@@ -995,7 +1001,7 @@ def ai_chapter_proposal(blocks: list[dict]) -> list[tuple[str, str]]:
             break
     if len(picked) < 2:
         raise ValueError("模型返回的有效章节不足")
-    return picked
+    return picked, titles
 
 
 def strip_heading_numbering(text: str) -> str:
@@ -2332,12 +2338,14 @@ def create_plan(project_id: str, payload: PlanCreate):
     output_type = CONTENT_SCENARIOS.get(project.get("scenario"), CONTENT_SCENARIOS["topic_learning"])["output_type"]
     selected_heading_ids = list(payload.selected_heading_ids)
     custom_questions: dict[str, str] = {}
+    custom_titles: dict[str, str] = {}
     split_mode_used = "rules"
     if payload.auto_split and payload.split_mode == "ai" and not selected_heading_ids:
         try:
-            proposal = ai_chapter_proposal(blocks)
+            proposal, ai_titles = ai_chapter_proposal(blocks)
             selected_heading_ids = [heading_id for heading_id, _ in proposal]
             custom_questions = dict(proposal)
+            custom_titles = ai_titles
             split_mode_used = "ai"
         except HTTPException:
             raise  # 模型未配置或服务异常时直接告知用户，不静默降级
@@ -2348,6 +2356,10 @@ def create_plan(project_id: str, payload: PlanCreate):
         ai_question = custom_questions.get(chapter.get("source_heading_id", ""))
         if ai_question:
             chapter["question"] = ai_question
+        ai_title = custom_titles.get(chapter.get("source_heading_id", ""))
+        if ai_title:
+            prefix = re.match(r"^(第\d+章\s*·\s*)(.*)$", chapter["title"])
+            chapter["title"] = (prefix.group(1) + ai_title) if prefix else ai_title
     include_audio = bool(project.get("audio_enabled")) and bool(payload.include_audio)
     plan_id = str(uuid.uuid4())
     timestamp = now_iso()
