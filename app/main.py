@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from html import escape, unescape
 from pathlib import Path
 from typing import Literal
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 from xml.etree import ElementTree as ET
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -2505,6 +2505,28 @@ def strip_html_text(value: str) -> str:
     return clean_text(unescape(value))
 
 
+BROWSER_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Safari/537.36"
+
+
+def html_to_article_text(html: str) -> str:
+    """网页 → 纯文本，保留标题层级（#/##）与段落换行，供 parse_text 识别结构。"""
+    value = re.sub(r"<(script|style|noscript)[^>]*>.*?</\1>", " ", html, flags=re.IGNORECASE | re.DOTALL)
+    value = re.sub(r"<h[12][^>]*>", "\n\n## ", value, flags=re.IGNORECASE)
+    value = re.sub(r"<h[34][^>]*>", "\n\n### ", value, flags=re.IGNORECASE)
+    value = re.sub(r"</h[1-4]>", "\n\n", value, flags=re.IGNORECASE)
+    value = re.sub(r"<(p|div|section|article|blockquote)[^>]*>", "\n\n", value, flags=re.IGNORECASE)
+    value = re.sub(r"<li[^>]*>", "\n- ", value, flags=re.IGNORECASE)
+    value = re.sub(r"<br\s*/?>", "\n", value, flags=re.IGNORECASE)
+    value = re.sub(r"<[^>]+>", " ", value)
+    value = unescape(value)
+    lines = []
+    for raw_line in value.splitlines():
+        line = re.sub(r"\s+", " ", raw_line.replace("\u00a0", " ")).strip()
+        if line or (lines and lines[-1]):
+            lines.append(line)
+    return "\n".join(lines).strip()
+
+
 def valid_public_url(value: str) -> str:
     parsed = urlsplit(value.strip())
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -2523,7 +2545,71 @@ def valid_public_url(value: str) -> str:
 
 def search_terms(query: str) -> list[str]:
     terms = [part.strip() for part in re.split(r"[\s,，、;；]+", query) if len(part.strip()) >= 3]
-    return terms or [query]
+    expanded = []
+    for term in terms or [query]:
+        cjk = re.findall(r"[\u4e00-\u9fff]", term)
+        if len(cjk) >= 4:
+            # 中文长词组整串很难在标题中连续出现，拆成二字词提高命中率
+            expanded.extend(term[i:i + 2] for i in range(len(term) - 1))
+        else:
+            expanded.append(term)
+    return expanded or [query]
+
+
+def _unwrap_ddg_url(url: str) -> str:
+    """DuckDuckGo 结果链接是跳转包装，解出真实地址。"""
+    if "duckduckgo.com/l/" in url:
+        if url.startswith("//"):
+            url = "https:" + url
+        params = parse_qs(urlsplit(url).query)
+        if params.get("uddg"):
+            return params["uddg"][0]
+    return url
+
+
+def _parse_ddg_results(html: str, limit: int) -> list[dict]:
+    titles = re.findall(r'<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>', html, re.IGNORECASE | re.DOTALL)
+    snippets = [re.sub(r"<[^>]+>", "", snip) for snip in re.findall(r'class="result__snippet"[^>]*>(.*?)</a>', html, re.IGNORECASE | re.DOTALL)]
+    results = []
+    for index, (raw_url, raw_title) in enumerate(titles[: limit * 2]):
+        try:
+            url = valid_public_url(_unwrap_ddg_url(raw_url.strip()))
+        except HTTPException:
+            continue
+        title = clean_text(re.sub(r"<[^>]+>", "", raw_title))
+        if not title or not url:
+            continue
+        results.append({"title": title[:240], "url": url, "summary": clean_text(snippets[index])[:600] if index < len(snippets) else ""})
+        if len(results) >= limit:
+            break
+    return results
+
+
+def _search_ddg(query: str, limit: int) -> list[dict]:
+    response = httpx.post("https://html.duckduckgo.com/html/", data={"q": query}, headers={"User-Agent": BROWSER_UA}, follow_redirects=True, timeout=20.0)
+    response.raise_for_status()
+    return _parse_ddg_results(response.text, limit)
+
+
+def _search_bing_rss(query: str, limit: int) -> list[dict]:
+    response = httpx.get("https://www.bing.com/search", params={"q": query, "format": "rss"}, headers={"User-Agent": BROWSER_UA}, follow_redirects=True, timeout=20.0)
+    response.raise_for_status()
+    root = ET.fromstring(response.content)
+    results = []
+    for item in root.findall("./channel/item"):
+        title = clean_text(item.findtext("title") or "")
+        url = clean_text(item.findtext("link") or "")
+        summary = strip_html_text(item.findtext("description") or "")
+        if not title or not url:
+            continue
+        try:
+            valid_public_url(url)
+        except HTTPException:
+            continue
+        results.append({"title": title[:240], "url": url, "summary": summary[:600]})
+        if len(results) >= limit:
+            break
+    return results
 
 
 @app.post("/api/web-search")
@@ -2531,28 +2617,28 @@ def search_web_sources(payload: WebSearchRequest):
     """Search public web pages but leave import decisions entirely to the user."""
     query = clean_text(payload.query)
     terms = search_terms(query)
-    try:
-        response = httpx.get("https://www.bing.com/search", params={"q": query, "format": "rss"}, headers={"User-Agent": "LawFlow/0.1"}, follow_redirects=True, timeout=20.0)
-        response.raise_for_status()
-        root = ET.fromstring(response.content)
-    except (httpx.HTTPError, ET.ParseError) as error:
-        raise HTTPException(502, "联网检索暂时不可用，请稍后重试或手动粘贴公开材料。") from error
+    errors = []
+    raw_results = []
+    for backend in (_search_ddg, _search_bing_rss):
+        try:
+            raw_results = backend(query, payload.max_results * 2)
+        except (httpx.HTTPError, ET.ParseError) as error:
+            errors.append(f"{backend.__name__}: {error}")
+            continue
+        if raw_results:
+            break
+    if not raw_results and errors:
+        raise HTTPException(502, "联网检索暂时不可用，请稍后重试或手动粘贴公开材料。")
     results = []
     seen_urls = set()
-    for item in root.findall("./channel/item"):
-        title = clean_text(item.findtext("title") or "")
-        url = clean_text(item.findtext("link") or "")
-        summary = strip_html_text(item.findtext("description") or "")
-        if not title or not url or url in seen_urls:
+    for item in raw_results:
+        url = item["url"]
+        if url in seen_urls:
             continue
-        if not any(term.lower() in (title + " " + summary).lower() for term in terms):
-            continue
-        try:
-            valid_public_url(url)
-        except HTTPException:
+        if not any(term.lower() in (item["title"] + " " + item["summary"]).lower() for term in terms):
             continue
         seen_urls.add(url)
-        results.append({"title": title[:240], "url": url, "summary": summary[:600]})
+        results.append(item)
         if len(results) >= payload.max_results:
             break
     return {"query": query, "results": results, "notice": "搜索结果仅供发现公开材料；请逐条确认来源后再导入，系统不会自动将结果写入讲稿。未显示与主题词不匹配的结果。"}
@@ -2572,7 +2658,7 @@ def import_web_source(project_id: str, payload: WebSourceImport):
         raise
     except httpx.HTTPError as error:
         raise HTTPException(502, "无法读取该公开网页，请检查链接或改为手动粘贴正文。") from error
-    content = strip_html_text(html)
+    content = html_to_article_text(html)
     if len(content) < 100:
         raise HTTPException(422, "该网页未提取到足够正文，可能需要登录或使用动态加载；请手动粘贴正文。")
     return save_text_source(project_id, payload.title, content[:500000], url)
@@ -2591,6 +2677,32 @@ def get_document(document_id: str):
     document["material_map"] = build_material_map(blocks)
     document["blocks"] = blocks
     return document
+
+
+@app.delete("/api/projects/{project_id}/documents/{document_id}")
+def delete_document(project_id: str, document_id: str):
+    """删除素材（含解析块与源文件）；已被章节方案或讲稿引用时拒绝，避免悄悄破坏已有内容。"""
+    project_or_404(project_id)
+    conn = db()
+    document = conn.execute("SELECT * FROM source_documents WHERE id = ? AND project_id = ?", (document_id, project_id)).fetchone()
+    if document is None:
+        conn.close()
+        raise HTTPException(status_code=404, detail="项目中未找到该素材。")
+    plan_refs = conn.execute("SELECT COUNT(*) AS n FROM content_plans WHERE project_id = ? AND (document_id = ? OR chapters_json LIKE ?)", (project_id, document_id, f"%{document_id}%")).fetchone()["n"]
+    content_refs = conn.execute("SELECT COUNT(*) AS n FROM narrative_contents WHERE project_id = ? AND document_id = ?", (project_id, document_id)).fetchone()["n"]
+    supplement_refs = conn.execute("SELECT COUNT(*) AS n FROM narrative_outlines WHERE project_id = ? AND document_id = ?", (project_id, document_id)).fetchone()["n"]
+    if plan_refs or content_refs or supplement_refs:
+        conn.close()
+        raise HTTPException(409, "该素材已被章节方案或讲稿使用，不能直接删除；请先删除依赖它的讲稿，或改为删除整个项目。")
+    stored_path = Path(document["stored_path"])
+    try:
+        conn.execute("DELETE FROM source_blocks WHERE document_id = ?", (document_id,))
+        conn.execute("DELETE FROM source_documents WHERE id = ?", (document_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    stored_path.unlink(missing_ok=True)
+    return {"deleted": document_id}
 
 
 @app.post("/api/projects/{project_id}/plans", status_code=201)

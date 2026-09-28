@@ -315,7 +315,7 @@ function renderMaterialsPanel() {
     ? '导入一篇行业资讯、报道或公开材料，系统会将其精炼为适合碎片化收听的短讲稿。'
     : '导入已有材料，或按主题检索公开网页后逐条确认导入。生成时可明确选择原始材料和补充公开来源；未选中的检索结果不会进入讲稿。';
   const searchPanel = learning ? '<section class="panel-card web-search-panel"><div><p class="eyebrow">可选步骤</p><h3>按主题检索公开材料</h3><p>仅用于发现公开网页。先查看标题、摘要和链接，再选择要导入的来源；它不等同于外部事实核验。</p></div><div class="web-search-form"><input id="web-search-query" value="' + escapeHtml(appState.selectedProject.project.client_name || appState.selectedProject.project.name) + '" placeholder="例如：生成式人工智能 数据合规 监管动态"/><button class="button button-outline button-small" id="search-web-sources">检索公开材料</button></div><div id="web-search-results" class="web-search-results"></div></section>' : '';
-  panel.innerHTML = '<section class="panel-card"><h3>输入素材</h3><p>' + intro + '</p><div class="source-input-grid"><label class="upload-zone paper-drop" id="paper-drop"><input type="file" id="document-upload" accept=".docx,.txt,.md,.pdf" /><div class="paper-drop-inner"><b>放下一篇你想带走的文字</b><span>DOCX · PDF · TXT · Markdown</span><small>点选文件，或直接拖进来</small></div></label><div class="paste-source"><b>粘贴文章或公开材料</b><input id="text-source-title" placeholder="素材标题，例如：某监管动态解读"/><input id="text-source-url" placeholder="来源链接（可选）"/><textarea id="text-source-content" placeholder="粘贴公众号正文、新闻报道、公开判决摘要或你的实务笔记…"></textarea><button class="button button-outline button-small" id="create-text-source">保存为素材</button></div></div><div class="doc-list">' + (docs.length ? docs.map(doc => '<div class="doc-row"><div><b>' + escapeHtml(doc.original_name) + '</b><small>' + doc.paragraph_count + ' 个段落 · ' + doc.block_count + ' 个素材块' + (doc.source_url ? ' · 已记录来源' : '') + '</small></div><button class="button button-outline button-small" data-view-document="' + doc.id + '">查看主题地图</button></div>').join('') : '<p class="form-note">尚未导入素材。你可以先导入一篇资讯或一份实务笔记开始。</p>') + '</div></section>' + searchPanel + '<section class="panel-card" id="material-map-panel"><h3>主题地图</h3><p>选择一份已导入素材后，查看结构、主题信号、规范名称和可展开的内容方向。</p></section>';
+  panel.innerHTML = '<section class="panel-card"><h3>输入素材</h3><p>' + intro + '</p><div class="source-input-grid"><label class="upload-zone paper-drop" id="paper-drop"><input type="file" id="document-upload" accept=".docx,.txt,.md,.pdf" /><div class="paper-drop-inner"><b>放下一篇你想带走的文字</b><span>DOCX · PDF · TXT · Markdown</span><small>点选文件，或直接拖进来</small></div></label><div class="paste-source"><b>粘贴文章或公开材料</b><input id="text-source-title" placeholder="素材标题，例如：某监管动态解读"/><input id="text-source-url" placeholder="来源链接（可选）"/><textarea id="text-source-content" placeholder="粘贴公众号正文、新闻报道、公开判决摘要或你的实务笔记…"></textarea><button class="button button-outline button-small" id="create-text-source">保存为素材</button></div></div><div class="doc-list">' + (docs.length ? docs.map(doc => '<div class="doc-row"><div><b>' + escapeHtml(doc.original_name) + '</b><small>' + doc.paragraph_count + ' 个段落 · ' + doc.block_count + ' 个素材块' + (doc.source_url ? ' · 已记录来源' : '') + '</small></div><div class="doc-row-actions"><button class="button button-outline button-small" data-view-document="' + doc.id + '">查看主题地图</button><button class="button button-outline button-small" data-view-doc-text="' + doc.id + '">查看解析原文</button><button class="button button-danger button-small" data-delete-document="' + doc.id + '">删除</button></div></div>').join('') : '<p class="form-note">尚未导入素材。你可以先导入一篇资讯或一份实务笔记开始。</p>') + '</div></section>' + searchPanel + '<section class="panel-card" id="material-map-panel"><h3>主题地图</h3><p>选择一份已导入素材后，查看结构、主题信号、规范名称和可展开的内容方向。</p></section>';
   $('#document-upload').addEventListener('change', event => uploadDocument(event.target.files[0]));
   const paperDrop = $('#paper-drop');
   if (paperDrop) {
@@ -326,6 +326,8 @@ function renderMaterialsPanel() {
   $('#create-text-source').addEventListener('click', createTextSource);
   $('#search-web-sources')?.addEventListener('click', searchWebSources);
   $$('[data-view-document]', panel).forEach(button => button.addEventListener('click', () => viewDocumentMap(button.dataset.viewDocument)));
+  $$('[data-view-doc-text]', panel).forEach(button => button.addEventListener('click', () => viewDocumentText(button.dataset.viewDocText)));
+  $$('[data-delete-document]', panel).forEach(button => button.addEventListener('click', () => deleteDocument(button.dataset.deleteDocument, button)));
   const doc = currentDocument(); if (doc) viewDocumentMap(doc.id);
 }
 
@@ -369,13 +371,37 @@ async function viewDocumentMap(documentId) {
   try {
     box.innerHTML = '<h3>材料地图</h3><p>正在读取材料结构…</p>'; const doc = await ensureDocumentLoaded(documentId); const map = doc.material_map;
     const outline = map.outline.slice(0,14).map(item => '<button class="outline-item level-' + item.level + '" data-block-id="' + item.id + '">' + escapeHtml(item.title) + '</button>').join('');
+    const outlineNote = map.outline.length <= 1 ? '<p class="form-note">这篇材料没有小标题结构（网页正文或平铺文本常见），已按段落平铺解析；可点「查看解析原文」核对。</p>' : '';
     const risks = map.risk_candidates.slice(0,4).map(item => '<button class="risk-candidate" data-block-id="' + item.block_id + '"><small>' + escapeHtml(item.locator) + '</small>' + escapeHtml(item.excerpt) + '</button>').join('') || '<p class="form-note">当前未找到明显需要核实的表述；仍建议通读全文后自行判断。</p>';
     const topics = map.topics.length ? map.topics.map(item => '<span class="signal">' + escapeHtml(item.name) + ' · ' + item.mentions + '</span>').join('') : '';
     const regs = map.regulations.length ? map.regulations.slice(0,6).map(item => '<span class="signal">' + escapeHtml(item) + '</span>').join('') : '';
-    box.innerHTML = '<h3>材料地图：' + escapeHtml(doc.original_name) + '</h3><p>' + escapeHtml(map.summary) + '</p><details class="material-map-details" open><summary>查看结构导航、主题信号与核验候选</summary><div class="map-grid"><div><h4>结构导航</h4><div class="outline-list">' + outline + '</div></div><div>' + (topics ? '<h4>关注信号</h4><div class="signal-list">' + topics + '</div>' : '') + (regs ? '<h4>识别到的规范名称</h4><div class="signal-list">' + regs + '</div>' : '') + (!topics && !regs ? '<h4>关注信号</h4><p class="form-note">这篇材料没有明显的专名或高频主题词。</p>' : '') + '</div></div><h4>待核验候选项</h4><div>' + risks + '</div></details>';
+    box.innerHTML = '<h3>材料地图：' + escapeHtml(doc.original_name) + '</h3><p>' + escapeHtml(map.summary) + '</p><details class="material-map-details" open><summary>查看结构导航、主题信号与核验候选</summary><div class="map-grid"><div><h4>结构导航</h4>' + outlineNote + '<div class="outline-list">' + outline + '</div></div><div>' + (topics ? '<h4>关注信号</h4><div class="signal-list">' + topics + '</div>' : '') + (regs ? '<h4>识别到的规范名称</h4><div class="signal-list">' + regs + '</div>' : '') + (!topics && !regs ? '<h4>关注信号</h4><p class="form-note">这篇材料没有明显的专名或高频主题词。</p>' : '') + '</div></div><h4>待核验候选项</h4><div>' + risks + '</div></details>';
     $$('[data-block-id]', box).forEach(button => button.addEventListener('click', () => showSourceBlock(doc.id, button.dataset.blockId)));
     box.scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (error) { box.innerHTML = '<h3>材料地图</h3><p class="message error">' + escapeHtml(error.message) + '</p>'; }
+}
+
+async function viewDocumentText(documentId) {
+  try {
+    const doc = await ensureDocumentLoaded(documentId);
+    const blocks = doc.blocks || [];
+    if (!blocks.length) { showMessage('这份素材还没有解析出内容。', true); return; }
+    const html = blocks.map(block => '<h4>' + escapeHtml(block.source_locator) + (block.kind === 'heading' ? ' · 标题' : '') + '</h4><pre>' + escapeHtml(block.text) + '</pre>').join('');
+    showSourceOverlay('解析原文（共 ' + blocks.length + ' 个素材块）', html);
+  } catch (error) { showMessage(error.message, true); }
+}
+
+async function deleteDocument(documentId, button) {
+  if (!window.confirm('确定删除这份素材吗？解析结果会一并删除，此操作无法撤销。')) return;
+  try {
+    setBusy(button, true, '删除中…');
+    await request('/api/projects/' + appState.selectedProject.project.id + '/documents/' + documentId, { method: 'DELETE' });
+    if (appState.selectedDocument && appState.selectedDocument.id === documentId) appState.selectedDocument = null;
+    appState.selectedProject = await request('/api/projects/' + appState.selectedProject.project.id);
+    await loadProjects();
+    renderProjectDetail();
+    showMessage('素材已删除。');
+  } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); }
 }
 
 async function showSourceBlock(documentId, blockId) { try { const block = await request('/api/documents/' + documentId + '/blocks/' + blockId); showSourceOverlay('材料块依据', '<h4>' + escapeHtml(block.source_locator) + '</h4><pre>' + escapeHtml(block.text) + '</pre>'); } catch (error) { showMessage(error.message, true); } }

@@ -587,7 +587,8 @@ class ImprovementsTest(unittest.TestCase):
             content='''<rss><channel><item><title>人工智能治理公开监管动态</title><link>https://example.com/news</link><description>&lt;b&gt;人工智能治理公开摘要&lt;/b&gt;</description></item></channel></rss>'''.encode('utf-8'),
             request=httpx.Request('GET', 'https://www.bing.com/search'),
         )
-        with patch.object(self.main.httpx, 'get', return_value=search_response):
+        with patch.object(self.main.httpx, 'get', return_value=search_response), \
+             patch.object(self.main.httpx, 'post', side_effect=httpx.ConnectError('offline')):
             search = self.client.post('/api/web-search', json={'query': '人工智能治理'})
         self.assertEqual(search.status_code, 200)
         self.assertEqual(len(search.json()['results']), 1)
@@ -743,6 +744,51 @@ class ImprovementsTest(unittest.TestCase):
         script = self.main.build_audio_script('# 标题\n\n正文第一段。', '测试讲稿', 'topic_learning', 5)
         self.assertNotIn('以上内容仅按已确认材料整理', script)
         self.assertIn('正文第一段。', script)
+
+    def test_parse_ddg_results_and_unwrap(self):
+        html = ('<a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fa">'
+                '美国国会<b>光模块</b>法案</a>'
+                '<a class="result__snippet" href="#">法案要点摘要</a>'
+                '<a rel="nofollow" class="result__a" href="javascript:void(0)">坏链接</a>')
+        results = self.main._parse_ddg_results(html, 5)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]['url'], 'https://example.com/a')
+        self.assertIn('光模块', results[0]['title'])
+        self.assertEqual(results[0]['summary'], '法案要点摘要')
+
+    def test_html_to_article_text_keeps_headings(self):
+        html = '<html><script>var x=1;</script><body><h1>光模块法案</h1><p>第一段正文，足够长的一段话。</p><h2>背景</h2><p>第二段正文，说明法案出台的背景。</p><br/></body></html>'
+        text = self.main.html_to_article_text(html)
+        self.assertIn('## 光模块法案', text)
+        self.assertIn('## 背景', text)
+        self.assertIn('第一段正文', text)
+        self.assertNotIn('var x=1', text)
+        # 直接验证 parse_text 能识别出标题块
+        import tempfile
+        with tempfile.NamedTemporaryFile('w', suffix='.md', delete=False, encoding='utf-8') as handle:
+            handle.write('标题\n\n' + text + '\n')
+            path = Path(handle.name)
+        blocks, _ = self.main.parse_text(path)
+        headings = [b for b in blocks if b['kind'] == 'heading']
+        self.assertGreaterEqual(len(headings), 2)
+
+    def test_delete_document_blocks_when_referenced(self):
+        project = self.client.post('/api/projects', json={'name': '删除素材项目', 'verification_mode': 'source_only'}).json()
+        project_id = project['id']
+        source = self.client.post(f"/api/projects/{project_id}/text-sources", json={'title': '引用素材', 'content': '这是一段足够长的正文内容，用来通过最小长度校验。'}).json()
+        document = self.client.get(f"/api/documents/{source['id']}").json()
+        ids = [b['id'] for b in document['blocks'] if b['kind'] == 'paragraph']
+        markdown = '# 讲稿\n\n## 第一节 开端\n\n引用素材生成的讲稿内容。'
+        self.client.post(f"/api/projects/{project_id}/skill-host-contents", json={'document_id': source['id'], 'title': '章节讲稿', 'markdown': markdown, 'source_block_ids': ids})
+        # 已有讲稿引用该素材，删除应被拦截
+        blocked = self.client.delete(f"/api/projects/{project_id}/documents/{source['id']}")
+        self.assertEqual(blocked.status_code, 409)
+        # 未被引用的素材可以直接删除
+        other = self.client.post(f"/api/projects/{project_id}/text-sources", json={'title': '待删素材', 'content': '这是另一段足够长的正文内容，用来通过最小长度校验。'}).json()
+        deleted = self.client.delete(f"/api/projects/{project_id}/documents/{other['id']}")
+        self.assertEqual(deleted.status_code, 200)
+        missing = self.client.get(f"/api/documents/{other['id']}")
+        self.assertEqual(missing.status_code, 404)
 
     def test_reveal_endpoint_rejects_outside_paths(self):
         response = self.client.post('/api/reveal-in-finder', json={'path': '/etc/hosts'})
