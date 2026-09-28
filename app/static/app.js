@@ -1117,7 +1117,7 @@ function renderTasksPanel() {
   const openCount = tasks.filter(task => task.status === 'open' || task.status === 'in_progress').length;
   const intro = external
     ? '对外培训、Speak Note 和公开播客发布前，逐条确认以下表述的事实与来源，全部处理完才能生成正式讲稿。'
-    : '讲稿由 AI 依据材料转译，以下是转译前建议你亲自过目的表述（逐条对照原文确认即可，不影响讲稿生成）。';
+    : '讲稿由 AI 依据材料转译，以下是转译前建议你亲自过目的表述。你的选择会实际影响生成：标记「存疑」的表述，讲稿中会保持谨慎措辞并标注（此点待核实）；标记「忽略」的表述，讲稿不再引用。';
   const statusLabel = { open: '待确认', in_progress: '存疑', done: '已确认', dismissed: '忽略' };
   const cards = tasks.map(task => {
     const pills = Object.entries(statusLabel).map(([value, label]) => '<button type="button" class="status-pill' + (task.status === value ? ' active' : '') + '" data-task-status="' + value + '">' + label + '</button>').join('');

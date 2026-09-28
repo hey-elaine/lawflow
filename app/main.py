@@ -1691,7 +1691,26 @@ def reading_section_ids(markdown: str) -> list[str]:
     return [f"section-{index}" for index in range(1, max(1, len(headings)) + 1)]
 
 
-def generate_narrative_markdown(outline: dict, blocks: list[dict], audience: str, style_profile: str, transform_mode: str = "adapt", scenario: str = "topic_learning", target_duration: int = 10, web_research_mode: str = "discover", progress_key: str = "") -> tuple[str, list[dict], dict]:
+def build_reviewer_guidance(project_id: str) -> str:
+    """把“表述核对”里的选择转化为讲稿生成的实际约束：存疑→谨慎措辞+标注待核实；忽略→不引用。"""
+    conn = db()
+    rows = conn.execute("SELECT status, detail FROM tasks WHERE project_id = ?", (project_id,)).fetchall()
+    conn.close()
+    doubted = [row["detail"] for row in rows if row["status"] == "in_progress"]
+    ignored = [row["detail"] for row in rows if row["status"] == "dismissed"]
+    if not doubted and not ignored:
+        return ""
+    parts = []
+    if doubted:
+        listed = "\n".join("- " + item for item in doubted[:6])
+        parts.append("用户对以下表述存疑：如写进正文，保持谨慎措辞并在对应内容后以括号标注（此点待核实），不得写成确定结论：\n" + listed)
+    if ignored:
+        listed = "\n".join("- " + item for item in ignored[:6])
+        parts.append("用户已确认以下表述与本主题无关：不要在正文中引用或展开：\n" + listed)
+    return "\n\n".join(parts)
+
+
+def generate_narrative_markdown(outline: dict, blocks: list[dict], audience: str, style_profile: str, transform_mode: str = "adapt", scenario: str = "topic_learning", target_duration: int = 10, web_research_mode: str = "discover", progress_key: str = "", reviewer_guidance: str = "") -> tuple[str, list[dict], dict]:
     profile = get_style_profiles().get(style_profile)
     if profile is None:
         raise HTTPException(status_code=400, detail="未知的写作风格画像。")
@@ -1736,6 +1755,8 @@ def generate_narrative_markdown(outline: dict, blocks: list[dict], audience: str
 本节材料：
 {dossier}""".format(scenario=scenario_config["name"], title=outline["title"], heading=section["heading"], purpose=section.get("purpose", ""), audience=audience, duration=target_duration, words=section["target_words"], transform_name=transform["name"], transform_description=transform["description"], style=profile["instruction"], quality_rules=scenario_quality_rules(scenario), research_instruction=research_instruction, points=points, dossier=dossier)
         prompt += "\n全文结构：" + " → ".join(item["heading"] for item in outline["sections"])
+        if reviewer_guidance:
+            prompt += "\n\n用户核对意见（必须遵守）：" + reviewer_guidance
         if section_index == 0:
             prompt += "\n请将以下开场思路写成实际口播正文，不照抄写作指令：" + outline.get("opening_angle", "")
         if section_index == len(outline["sections"]) - 1:
@@ -2781,7 +2802,7 @@ def generate_narrative_content(outline_id: str):
     project = project_or_404(row["project_id"])
     preferences = project_preferences(project)
     outline.update({"minimum_output_mode": preferences["minimum_output_mode"], "minimum_output_ratio": preferences["minimum_output_ratio"]})
-    markdown, section_sources, model_metadata = generate_narrative_markdown(outline, blocks, row["audience"], row["style_profile"], outline.get("transform_mode", preferences["transform_mode"]), preferences["scenario"], max(1, round(outline.get("target_total_words", 2400) / 240)), outline.get("web_research_mode", preferences["web_research_mode"]), progress_key=outline_id)
+    markdown, section_sources, model_metadata = generate_narrative_markdown(outline, blocks, row["audience"], row["style_profile"], outline.get("transform_mode", preferences["transform_mode"]), preferences["scenario"], max(1, round(outline.get("target_total_words", 2400) / 240)), outline.get("web_research_mode", preferences["web_research_mode"]), progress_key=outline_id, reviewer_guidance=build_reviewer_guidance(row["project_id"]))
     content_id = str(uuid.uuid4())
     timestamp = now_iso()
     conn = db()
@@ -2816,7 +2837,7 @@ def regenerate_narrative_section(content_id: str, section_id: str):
         raise HTTPException(400, "章节没有可用的材料块。")
     preferences = project_preferences(project)
     single_outline = {**outline, "sections": [section], "title": outline.get("title", row["title"])}
-    markdown, sources, metadata = generate_narrative_markdown(single_outline, blocks, outline_row["audience"], outline_row["style_profile"], outline.get("transform_mode", preferences["transform_mode"]), preferences["scenario"], max(1, round(section.get("target_words", 800) / 240)), outline.get("web_research_mode", preferences["web_research_mode"]), progress_key=row["outline_id"])
+    markdown, sources, metadata = generate_narrative_markdown(single_outline, blocks, outline_row["audience"], outline_row["style_profile"], outline.get("transform_mode", preferences["transform_mode"]), preferences["scenario"], max(1, round(section.get("target_words", 800) / 240)), outline.get("web_research_mode", preferences["web_research_mode"]), progress_key=row["outline_id"], reviewer_guidance=build_reviewer_guidance(row["project_id"]))
     generated = re.sub(r"^(?:#{1,6}[ \t]+[^\n]*\r?\n+)+", "", markdown.strip()).strip()
     current = collapse_duplicate_headings(row["markdown"])
     heading = "## " + section["heading"]

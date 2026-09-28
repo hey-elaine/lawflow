@@ -205,6 +205,38 @@ class LawFlowApiTest(unittest.TestCase):
         self.assertEqual(len(project_state["narrative_contents"]), 1)
         self.assertEqual(project_state["narrative_contents"][0]["model"]["mode"], "host_model")
 
+    def test_reviewer_guidance_maps_statuses_to_constraints(self):
+        project_id = self.client.post("/api/projects", json={"name": "核对约束测试"}).json()["id"]
+        upload = self.client.post(f"/api/projects/{project_id}/documents", files={"file": ("测试材料.docx", self.make_docx(), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")})
+        document_id = upload.json()["id"]
+        conn = self.main.db()
+        try:
+            for index, (status, detail) in enumerate([
+                ("in_progress", "处理期限为六个月的表述"),
+                ("dismissed", "与本主题无关的行业动态"),
+                ("done", "已确认无误的条款"),
+            ]):
+                conn.execute(
+                    """INSERT INTO tasks (id, project_id, document_id, title, detail, risk_level, evidence_block_ids, status, owner, due_date, created_at, updated_at)
+                    VALUES (?, ?, ?, '核验', ?, 'medium', '[]', ?, '', '', ?, ?)""",
+                    (f"task-{index}", project_id, document_id, detail, status, "2026-01-01T00:00:00+08:00", "2026-01-01T00:00:00+08:00"),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+        guidance = self.main.build_reviewer_guidance(project_id)
+        self.assertIn("存疑", guidance)
+        self.assertIn("处理期限为六个月的表述", guidance)
+        self.assertIn("（此点待核实）", guidance)
+        self.assertIn("与本主题无关的行业动态", guidance)
+        self.assertNotIn("已确认无误的条款", guidance)
+        # 全部为 done 时不产生约束
+        conn = self.main.db()
+        conn.execute("UPDATE tasks SET status = 'done' WHERE project_id = ?", (project_id,))
+        conn.commit()
+        conn.close()
+        self.assertEqual(self.main.build_reviewer_guidance(project_id), "")
+
 
 if __name__ == "__main__":
     unittest.main()
