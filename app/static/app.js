@@ -315,7 +315,7 @@ function renderMaterialsPanel() {
     ? '导入一篇行业资讯、报道或公开材料，系统会将其精炼为适合碎片化收听的短讲稿。'
     : '导入已有材料，或按主题检索公开网页后逐条确认导入。生成时可明确选择原始材料和补充公开来源；未选中的检索结果不会进入讲稿。';
   const searchPanel = learning ? '<section class="panel-card web-search-panel"><div><p class="eyebrow">可选步骤</p><h3>按主题检索公开材料</h3><p>仅用于发现公开网页。先查看标题、摘要和链接，再选择要导入的来源；它不等同于外部事实核验。</p></div><div class="web-search-form"><input id="web-search-query" value="' + escapeHtml(appState.selectedProject.project.client_name || appState.selectedProject.project.name) + '" placeholder="例如：生成式人工智能 数据合规 监管动态"/><button class="button button-outline button-small" id="search-web-sources">检索公开材料</button></div><div id="web-search-results" class="web-search-results"></div></section>' : '';
-  panel.innerHTML = '<section class="panel-card"><h3>输入素材</h3><p>' + intro + '</p><div class="source-input-grid"><label class="upload-zone paper-drop" id="paper-drop"><input type="file" id="document-upload" accept=".docx,.txt,.md,.pdf" /><div class="paper-drop-inner"><b>放下一篇你想带走的文字</b><span>DOCX · PDF · TXT · Markdown</span><small>点选文件，或直接拖进来</small></div></label><div class="paste-source"><b>粘贴文章或公开材料</b><input id="text-source-title" placeholder="素材标题，例如：某监管动态解读"/><input id="text-source-url" placeholder="来源链接（可选）"/><textarea id="text-source-content" placeholder="粘贴公众号正文、新闻报道、公开判决摘要或你的实务笔记…"></textarea><button class="button button-outline button-small" id="create-text-source">保存为素材</button></div></div><div class="doc-list">' + (docs.length ? docs.map(doc => '<div class="doc-row"><div><b>' + escapeHtml(doc.original_name) + '</b><small>' + doc.paragraph_count + ' 个段落 · ' + doc.block_count + ' 个素材块' + (doc.source_url ? ' · 已记录来源' : '') + '</small></div><div class="doc-row-actions"><button class="button button-outline button-small" data-view-document="' + doc.id + '">查看主题地图</button><button class="button button-outline button-small" data-view-doc-text="' + doc.id + '">查看解析原文</button><button class="button button-danger button-small" data-delete-document="' + doc.id + '">删除</button></div></div>').join('') : '<p class="form-note">尚未导入素材。你可以先导入一篇资讯或一份实务笔记开始。</p>') + '</div></section>' + searchPanel + '<section class="panel-card" id="material-map-panel"><h3>主题地图</h3><p>选择一份已导入素材后，查看结构、主题信号、规范名称和可展开的内容方向。</p></section>';
+  panel.innerHTML = '<section class="panel-card"><h3>输入素材</h3><p>' + intro + '</p><div class="source-input-grid"><label class="upload-zone paper-drop" id="paper-drop"><input type="file" id="document-upload" accept=".docx,.txt,.md,.pdf" /><div class="paper-drop-inner"><b>放下一篇你想带走的文字</b><span>DOCX · PDF · TXT · Markdown</span><small>点选文件，或直接拖进来</small></div></label><div class="paste-source"><b>粘贴文章或公开材料</b><input id="text-source-title" placeholder="素材标题，例如：某监管动态解读"/><input id="text-source-url" placeholder="来源链接（可选）"/><textarea id="text-source-content" placeholder="粘贴公众号正文、新闻报道、公开判决摘要或你的实务笔记…"></textarea><button class="button button-outline button-small" id="create-text-source">保存为素材</button></div></div><div class="doc-list">' + (docs.length ? docs.map(doc => '<div class="doc-row"><div><b>' + escapeHtml(doc.original_name) + '</b><small>' + doc.paragraph_count + ' 个段落 · ' + doc.block_count + ' 个素材块' + (doc.source_url ? ' · 已记录来源' : '') + '</small></div><div class="doc-row-actions"><button class="button button-outline button-small" data-view-document="' + doc.id + '">查看主题地图</button><button class="button button-outline button-small" data-view-doc-text="' + doc.id + '">查看解析原文</button><button class="button button-outline button-small" data-direct-audio="' + doc.id + '">原文转音频</button><button class="button button-danger button-small" data-delete-document="' + doc.id + '">删除</button></div></div>').join('') : '<p class="form-note">尚未导入素材。你可以先导入一篇资讯或一份实务笔记开始。</p>') + '</div></section>' + searchPanel + '<section class="panel-card" id="material-map-panel"><h3>主题地图</h3><p>选择一份已导入素材后，查看结构、主题信号、规范名称和可展开的内容方向。</p></section>';
   $('#document-upload').addEventListener('change', event => uploadDocument(event.target.files[0]));
   const paperDrop = $('#paper-drop');
   if (paperDrop) {
@@ -327,6 +327,7 @@ function renderMaterialsPanel() {
   $('#search-web-sources')?.addEventListener('click', searchWebSources);
   $$('[data-view-document]', panel).forEach(button => button.addEventListener('click', () => viewDocumentMap(button.dataset.viewDocument)));
   $$('[data-view-doc-text]', panel).forEach(button => button.addEventListener('click', () => viewDocumentText(button.dataset.viewDocText)));
+  $$('[data-direct-audio]', panel).forEach(button => button.addEventListener('click', () => directDocumentAudio(button.dataset.directAudio, button)));
   $$('[data-delete-document]', panel).forEach(button => button.addEventListener('click', () => deleteDocument(button.dataset.deleteDocument, button)));
   const doc = currentDocument(); if (doc) viewDocumentMap(doc.id);
 }
@@ -398,6 +399,18 @@ async function viewDocumentText(documentId) {
     }).join('');
     showSourceOverlay('解析原文（共 ' + blocks.length + ' 个素材块）', html);
   } catch (error) { showMessage(error.message, true); }
+}
+
+async function directDocumentAudio(documentId, button) {
+  try {
+    setBusy(button, true, '转音频中…');
+    const created = await request('/api/projects/' + appState.selectedProject.project.id + '/documents/' + documentId + '/direct-audio', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({}) });
+    await request('/api/audio-outputs/' + created.id + '/synthesize', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({}) });
+    appState.activeTab = 'audio';
+    appState.selectedProject = await request('/api/projects/' + appState.selectedProject.project.id);
+    renderProjectDetail();
+    showMessage('原文音频已生成，可直接播放或导出。');
+  } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); }
 }
 
 async function deleteDocument(documentId, button) {
@@ -1249,8 +1262,8 @@ function renderAudioSourceRow(content) {
 function renderAudioOutput(output) {
   const player = '<audio controls data-output-player="' + output.id + '" ' + (output.audio_available ? 'src="/api/audio-outputs/' + output.id + '/stream?v=' + encodeURIComponent(output.updated_at) + '"' : 'data-no-audio="1"') + '></audio>';
   const source = (appState.selectedProject.narrative_contents || []).find(content => content.id === output.narrative_content_id);
-  const readyForMp3 = source?.status === 'confirmed';
-  const mp3Hint = readyForMp3 ? '' : '<small class="audio-gate-hint">确认对应讲稿后可生成完整 MP3</small>';
+  const readyForMp3 = !output.narrative_content_id || source?.status === 'confirmed';
+  const mp3Hint = readyForMp3 || !output.narrative_content_id ? '' : '<small class="audio-gate-hint">确认对应讲稿后可生成完整 MP3</small>';
   const statusLabel = output.status === 'source_changed' ? '源讲稿已更新，请重新整理脚本' : output.status === 'ready' ? 'MP3 已生成 · ' + output.duration_seconds + ' 秒' : '脚本待校对';
   const script = output.script || '';
   const mediaMinutes = script.length ? Math.max(1, Math.round(script.length / 240)) : 0;

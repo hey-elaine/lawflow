@@ -2723,6 +2723,51 @@ def delete_document(project_id: str, document_id: str):
     return {"deleted": document_id}
 
 
+@app.post("/api/projects/{project_id}/documents/{document_id}/direct-audio")
+def create_direct_audio_from_document(project_id: str, document_id: str):
+    """原文直读：素材本身已经写得很好（如公众号文章），跳过改写，直接把解析原文转成口播脚本。"""
+    project_or_404(project_id)
+    conn = db()
+    document = conn.execute("SELECT * FROM source_documents WHERE id = ? AND project_id = ?", (document_id, project_id)).fetchone()
+    if document is None:
+        conn.close()
+        raise HTTPException(status_code=404, detail="项目中未找到该素材。")
+    blocks = read_blocks(document_id)
+    lines = []
+    for block in blocks:
+        text = clean_text(block["text"])
+        if not text:
+            continue
+        lines.append(text)
+    conn.close()
+    script = "\n\n".join(lines).strip()
+    if len(script) < 100:
+        raise HTTPException(400, "这份素材解析出的正文太短，还不适合直接转音频。")
+    if len(script) > 30000:
+        raise HTTPException(400, "这份素材太长（超过 3 万字），原文直读一次合成耗时过久；建议用讲稿改写压缩后再转音频。")
+    title = clean_text(document["original_name"]) or "原文直读"
+    timestamp = now_iso()
+    conn = db()
+    existing = conn.execute(
+        "SELECT id FROM audio_outputs WHERE project_id = ? AND narrative_content_id IS NULL AND title = ?",
+        (project_id, title),
+    ).fetchone()
+    if existing:
+        audio_id = existing["id"]
+        conn.execute("UPDATE audio_outputs SET script=?, audio_path='', duration_seconds=0, status='script_ready', updated_at=? WHERE id=?", (script, timestamp, audio_id))
+    else:
+        audio_id = str(uuid.uuid4())
+        conn.execute(
+            """INSERT INTO audio_outputs (id, project_id, narrative_content_id, title, script, provider, voice, audio_path, duration_seconds, status, created_at, updated_at)
+            VALUES (?, ?, NULL, ?, ?, 'script_only', '', '', 0, 'script_ready', ?, ?)""",
+            (audio_id, project_id, title, script, timestamp, timestamp),
+        )
+    conn.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (timestamp, project_id))
+    conn.commit()
+    conn.close()
+    return {"id": audio_id, "title": title, "script_chars": len(script), "status": "script_ready", "reused": bool(existing)}
+
+
 @app.post("/api/projects/{project_id}/plans", status_code=201)
 def create_plan(project_id: str, payload: PlanCreate):
     project = project_or_404(project_id)
@@ -3620,7 +3665,7 @@ def synthesize_audio_output(audio_id: str, payload: AudioSynthesisRequest):
     if output is None:
         conn.close()
         raise HTTPException(status_code=404, detail="音频脚本不存在。")
-    if not payload.preview:
+    if not payload.preview and output["narrative_content_id"]:
         content = conn.execute("SELECT status FROM narrative_contents WHERE id = ?", (output["narrative_content_id"],)).fetchone()
         if content is None or content["status"] != "confirmed":
             conn.close()

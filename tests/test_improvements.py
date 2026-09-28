@@ -811,6 +811,33 @@ class ImprovementsTest(unittest.TestCase):
         missing = self.client.get(f"/api/documents/{other['id']}")
         self.assertEqual(missing.status_code, 404)
 
+    def test_direct_audio_skips_rewrite_and_synthesizes(self):
+        import httpx
+        project = self.client.post('/api/projects', json={'name': '原文直读项目', 'verification_mode': 'source_only'}).json()
+        source = self.client.post(f"/api/projects/{project['id']}/text-sources", json={'title': '公众号好文', 'content': '这是第一段原文内容，写得已经很好，不需要改写。' * 3 + '这是第二段原文内容，保持原样直接朗读即可。' * 3}).json()
+        created = self.client.post(f"/api/projects/{project['id']}/documents/{source['id']}/direct-audio")
+        self.assertEqual(created.status_code, 200)
+        data = created.json()
+        self.assertEqual(data['status'], 'script_ready')
+        # 不经过任何改写：脚本与原文逐字一致
+        output = self.client.get(f"/api/audio-outputs/{data['id']}").json()
+        self.assertIn('不需要改写', output['script'])
+        doc = self.client.get(f"/api/documents/{source['id']}").json()
+        original = '\n\n'.join(b['text'] for b in doc['blocks'] if b['text'].strip())
+        self.assertEqual(output['script'], original)
+        # 无讲稿来源的直读输出不受"讲稿已确认"门禁限制，可直接合成 MP3
+        fixture = self.main.DATA_DIR / 'fixture.mp3'
+        if not fixture.is_file():
+            subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-y', str(fixture)], check=True)
+        with patch.object(self.main, 'speech_chunk', return_value=(fixture.read_bytes(), 'fixture')):
+            synthesized = self.client.post(f"/api/audio-outputs/{data['id']}/synthesize", json={})
+        self.assertEqual(synthesized.status_code, 200)
+        self.assertEqual(synthesized.json()['status'], 'ready')
+        # 幂等：再次点击复用同一条音频脚本，不产生重复卡片
+        again = self.client.post(f"/api/projects/{project['id']}/documents/{source['id']}/direct-audio").json()
+        self.assertEqual(again['id'], data['id'])
+        self.assertTrue(again['reused'])
+
     def test_reveal_endpoint_rejects_outside_paths(self):
         response = self.client.post('/api/reveal-in-finder', json={'path': '/etc/hosts'})
         self.assertEqual(response.status_code, 403)
