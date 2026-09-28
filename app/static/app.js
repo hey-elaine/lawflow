@@ -13,7 +13,7 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
 async function request(url, options = {}) {
   if (window.location.protocol === 'file:') {
-    throw new Error('当前打开的是源码页面，不能直接使用。请打开已安装的 LawFlow.app。');
+    throw new Error('当前打开的是源码页面，不能直接使用。请打开已安装的知了 app。');
   }
   const response = await fetch(url, options);
   if (!response.ok) {
@@ -88,7 +88,7 @@ function renderProjectList() {
     $('#start-first-project').addEventListener('click', () => $('#new-project').click());
     return;
   }
-  list.innerHTML = appState.projects.map(project => { const scenario = SCENARIOS[project.scenario] || SCENARIOS.topic_learning; return '<button class="project-card" data-project-id="' + project.id + '"><div class="project-card-top"><span class="tag">' + escapeHtml(scenario.name) + '</span><small>' + formatDate(project.updated_at) + '</small></div><h3>' + escapeHtml(project.name) + '</h3><p>' + escapeHtml(project.description || project.client_name || scenario.name) + '</p><div class="meta"><span>' + project.document_count + ' 份素材</span><span>' + (project.verification_mode === 'source_only' ? '无需核验' : project.task_count + ' 项核验') + '</span><span>' + project.target_duration + ' 分钟</span></div></button>'; }).join('');
+  list.innerHTML = appState.projects.map(project => { const scenario = SCENARIOS[project.scenario] || SCENARIOS.topic_learning; const progress = project.learning_progress || { done: 0, total: 0 }; const percent = progress.total ? Math.round(progress.done / progress.total * 100) : 0; const progressHtml = progress.total ? '<div class="card-progress"><div class="card-progress-bar"><i style="width:' + percent + '%"></i></div><span>已学 ' + progress.done + ' / ' + progress.total + ' 节</span></div>' : ''; return '<button class="project-card" data-project-id="' + project.id + '"><div class="project-card-top"><span class="tag">' + escapeHtml(scenario.name) + '</span><small>' + formatDate(project.updated_at) + '</small></div><h3>' + escapeHtml(project.name) + '</h3><p>' + escapeHtml(project.description || project.client_name || scenario.name) + '</p>' + progressHtml + '<div class="meta"><span>' + project.document_count + ' 份素材</span><span>' + (project.verification_mode === 'source_only' ? '无需核验' : project.task_count + ' 项核验') + '</span><span>' + project.target_duration + ' 分钟</span></div></button>'; }).join('');
   $$('.project-card', list).forEach(card => card.addEventListener('click', () => openProject(card.dataset.projectId)));
 }
 async function loadDemoProject(event) {
@@ -650,7 +650,7 @@ function renderNarrativeOutputPanel() {
   }
   if (!confirmedOutline) {
     panel.innerHTML = '<section class="panel-card workflow-gate"><p class="eyebrow">写作前置条件</p><h3>先确认大纲</h3><p>大纲决定章节顺序、材料范围和每节要回答的问题。确认后这里会显示“生成' + escapeHtml(scenario.narrativeLabel) + '”按钮。</p><div class="plan-actions"><button class="button button-primary" data-open-tab="structure">去确认大纲</button></div></section>' +
-      '<details class="panel-card optional-path"><summary>也可以让 ChatGPT 写稿，再粘贴回本地审阅</summary><div class="optional-path-body"><p>无需 OpenAI API Key。LawFlow 只复制当前材料块与写作要求；你在 ChatGPT App 生成 Markdown 后，粘贴回本地即可。</p><div class="handoff-actions"><button class="button button-outline" id="copy-chatgpt-prompt">复制给 ChatGPT</button><button class="button button-primary" id="open-chatgpt-import">粘贴 ChatGPT 成稿</button></div></div></details>';
+      '<details class="panel-card optional-path"><summary>也可以让 ChatGPT 写稿，再粘贴回本地审阅</summary><div class="optional-path-body"><p>无需 OpenAI API Key。知了只复制当前材料块与写作要求；你在 ChatGPT App 生成 Markdown 后，粘贴回本地即可。</p><div class="handoff-actions"><button class="button button-outline" id="copy-chatgpt-prompt">复制给 ChatGPT</button><button class="button button-primary" id="open-chatgpt-import">粘贴 ChatGPT 成稿</button></div></div></details>';
     $('[data-open-tab="structure"]', panel).addEventListener('click', () => { appState.activeTab = 'structure'; renderProjectDetail(); });
     $('#copy-chatgpt-prompt').addEventListener('click', copyChatGPTPrompt);
     $('#open-chatgpt-import').addEventListener('click', openChatGPTImport);
@@ -662,7 +662,7 @@ function renderNarrativeOutputPanel() {
 
   panel.innerHTML = (contents.length ? '' : '<section class="panel-card"><h3>生成' + scenario.narrativeLabel + '</h3><p>大纲已确认。生成后可整篇阅读、逐节重写、人工修改并导出 DOCX。</p><p class="form-note" id="generation-status">点击下方按钮开始逐节写作；写作过程中这里会显示当前进度。</p><div class="plan-actions"><button class="button button-primary" data-generate-from-outline="' + confirmedOutline.id + '">逐节生成' + escapeHtml(scenario.narrativeLabel) + '</button></div></section>') +
     '<section class="panel-card"><h3>已生成的' + scenario.narrativeLabel + '</h3>' + learningSummary + '<div class="narrative-content-list">' + (contents.length ? contents.map(renderNarrativeContentCard).join('') : '<p class="form-note">尚未生成讲稿。</p>') + '</div></section>' +
-    '<details class="panel-card optional-path"><summary>也可以让 ChatGPT 写稿，再粘贴回本地审阅</summary><div class="optional-path-body"><p>无需 OpenAI API Key。LawFlow 只复制当前材料块与写作要求；你在 ChatGPT App 生成 Markdown 后，粘贴回本地即可。</p><div class="handoff-actions"><button class="button button-outline" id="copy-chatgpt-prompt">复制给 ChatGPT</button><button class="button button-primary" id="open-chatgpt-import">粘贴 ChatGPT 成稿</button></div></div></details>';
+    '<details class="panel-card optional-path"><summary>也可以让 ChatGPT 写稿，再粘贴回本地审阅</summary><div class="optional-path-body"><p>无需 OpenAI API Key。知了只复制当前材料块与写作要求；你在 ChatGPT App 生成 Markdown 后，粘贴回本地即可。</p><div class="handoff-actions"><button class="button button-outline" id="copy-chatgpt-prompt">复制给 ChatGPT</button><button class="button button-primary" id="open-chatgpt-import">粘贴 ChatGPT 成稿</button></div></div></details>';
 
   $('[data-generate-from-outline]')?.addEventListener('click', event => generateNarrative(confirmedOutline.id, event.currentTarget));
   $('#copy-chatgpt-prompt').addEventListener('click', copyChatGPTPrompt);
@@ -1183,12 +1183,18 @@ function bindDialogs() {
       const body = Object.fromEntries(form);
       body.audio_enabled = formEl.elements.audio_enabled.checked;
       body.target_duration = Number(body.target_duration || 10);
+      const sourceUrl = (body.source_url || '').trim();
+      delete body.source_url;
       const project = await request('/api/projects', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+      if (sourceUrl) {
+        setBusy(submit, true, '正在抓取文章…');
+        await request('/api/projects/' + project.id + '/link-sources', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ url: sourceUrl, title: body.name }) });
+      }
       $('#project-dialog').close();
       formEl.reset();
       await loadProjects();
       await openProject(project.id);
-      showMessage('项目已创建。现在可以导入材料。');
+      showMessage(sourceUrl ? '链接已导入并拆成材料，可以确认大纲了。' : '项目已创建。现在可以导入材料。');
     } catch(error) {
       showMessage(error.message, true);
     } finally {
@@ -1312,7 +1318,7 @@ async function initHomeSkillSection() {
     tag.textContent = '本地服务未连接';
   }
   const copy = $('#copy-skill-invoke');
-  if (copy) copy.addEventListener('click', async () => { const example = '请读取并按此 Skill 执行：https://github.com/hey-elaine/lawflow/tree/main/skills/lawflow\n\n$lawflow 使用 LawFlow 处理本地项目中的材料：先读取受控上下文，给出可确认的大纲，再将成稿回写并导出 DOCX。'; try { await navigator.clipboard.writeText(example); showMessage('已复制 GitHub Skill 链接与调用示例。'); } catch (_) { showMessage('浏览器未授权剪贴板，请手动复制。', true); } });
+  if (copy) copy.addEventListener('click', async () => { const example = '请读取并按此 Skill 执行：https://github.com/hey-elaine/lawflow/tree/main/skills/lawflow\n\n$lawflow 使用知了处理本地项目中的材料：先读取受控上下文，给出可确认的大纲，再将成稿回写并导出 DOCX。'; try { await navigator.clipboard.writeText(example); showMessage('已复制 GitHub Skill 链接与调用示例。'); } catch (_) { showMessage('浏览器未授权剪贴板，请手动复制。', true); } });
 }
 async function checkForUpdates(manual = false) {
   const notice = $('#update-notice');
@@ -1329,7 +1335,7 @@ async function checkForUpdates(manual = false) {
     if (!notice) return;
     notice.classList.add('hidden');
     if (!status.update_available || !status.release_url) return;
-    notice.innerHTML = '<div class="shell"><span>LawFlow ' + escapeHtml(status.latest_version) + ' 已发布。</span><a class="button button-outline button-small" target="_blank" rel="noreferrer" href="' + escapeHtml(status.release_url) + '">前往 GitHub 下载</a><button class="icon-button" aria-label="关闭更新提示">×</button></div>';
+    notice.innerHTML = '<div class="shell"><span>知了 ' + escapeHtml(status.latest_version) + ' 已发布。</span><a class="button button-outline button-small" target="_blank" rel="noreferrer" href="' + escapeHtml(status.release_url) + '">前往 GitHub 下载</a><button class="icon-button" aria-label="关闭更新提示">×</button></div>';
     notice.classList.remove('hidden');
     $('.icon-button', notice)?.addEventListener('click', () => notice.classList.add('hidden'));
   } catch (_) {
@@ -1342,7 +1348,7 @@ async function boot() {
   new MutationObserver(() => { enhanceSelects(); $$('.select-box select').forEach(syncSelectBox); }).observe(document.body, { childList: true, subtree: true });
   $('#hero-load-demo')?.addEventListener('click', loadDemoProject);
   if (window.location.protocol === 'file:') {
-    showMessage('你正在打开源码页面。请打开 LawFlow.app 使用完整功能。', true);
+    showMessage('你正在打开源码页面。请打开已安装的知了 app 使用完整功能。', true);
     return;
   }
   initHomeSkillSection();

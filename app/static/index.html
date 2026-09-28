@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>律析 LawFlow｜法律内容学习与表达工作台</title>
-  <link rel="stylesheet" href="/styles.css?v=20260928-11" />
+  <title>知了｜把稍后读，真的读完</title>
+  <link rel="stylesheet" href="/styles.css?v=20260928-13" />
 </head>
 <body>
   <header class="nav shell">
-    <a class="brand" href="#top" aria-label="律析 LawFlow 首页"><span class="brand-mark">律</span><span>律析 <strong>LawFlow</strong></span></a>
+    <a class="brand" href="#top" aria-label="知了首页"><span class="brand-mark">知</span><span>知了 <strong>Zhiliao</strong></span></a>
     <nav><a href="#workspace">开始整理</a><a href="#workflow">使用方式</a><a href="#trust">审阅依据</a><a href="#skill">AI 协作</a></nav>
     <button class="button button-quiet" id="open-settings">设置</button>
   </header>
@@ -17,14 +17,14 @@
     <div id="update-notice" class="update-notice hidden" role="status"></div>
     <section class="hero shell">
       <div class="hero-copy">
-        <p class="eyebrow">律析 · 法律内容工作台</p>
-        <h1>从材料到讲稿，<br/><em>每一步都可审阅。</em></h1>
-        <p class="hero-description">导入法规、判决或实务笔记，确认大纲后生成可编辑讲稿。审阅完成，再导出 Word 或制作音频。</p>
-        <div class="hero-actions"><a href="#workspace" class="button button-primary">开始整理材料</a><button type="button" class="button button-outline" id="hero-load-demo">查看完整示例</button></div>
+        <p class="eyebrow">知了 · 把稍后读，真的读完</p>
+        <h1>好文章不该在收藏夹里过夜，<br/><em>该被读成一章一章。</em></h1>
+        <p class="hero-description">看到一篇好东西，太长，没时间，先 mark。然后呢？没有然后了。把链接丢进来，它把长文拆成一节一节的小课，记好你读到哪儿。地铁上，睡前，一篇一篇，读完它。</p>
+        <div class="hero-actions"><a href="#workspace" class="button button-primary">丢一篇文章进来</a><button type="button" class="button button-outline" id="hero-load-demo">看看拆好的样子</button></div>
       </div>
-      <div class="hero-visual" aria-label="律析工作成果示意">
+      <div class="hero-visual" aria-label="知了学习成果示意">
         <div class="visual-layout">
-          <div class="visual-card visual-source"><span class="mini-label">素材输入</span><b>资讯、判决与实务笔记</b><small>DOCX · TXT · Markdown</small></div>
+          <div class="visual-card visual-source"><span class="mini-label">你丢进来的</span><b>链接、PDF、长文</b><small>公众号 · 网页 · PDF · DOCX · TXT</small></div>
           <svg class="workflow-arrows" viewBox="0 0 72 312" aria-hidden="true" preserveAspectRatio="none">
             <defs>
               <marker id="workflow-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
@@ -35,29 +35,28 @@
             <path d="M 1 156 C 25 156, 40 78, 71 78" marker-end="url(#workflow-arrow)"></path>
             <path d="M 1 156 C 25 156, 40 234, 71 234" marker-end="url(#workflow-arrow)"></path>
           </svg>
-          <div class="visual-card visual-output"><span class="flow-step">✨ 内容成果</span><span class="mini-label">学习与表达</span><b>速听稿、培训讲稿与播客稿</b><p>材料精炼 · 专业转译<br/>讲稿编辑与 DOCX 导出</p><span class="verified">● 可学习、可讲述、可交付</span></div>
-          <div class="visual-card visual-task"><span class="flow-step">✨ 审阅依据</span><span class="mini-label">按需确认</span><b>材料定位与核验事项</b><small>仅按原文整理 · 材料一致性检查 · 发布前核验清单</small></div>
+          <div class="visual-card visual-output"><span class="flow-step">✨ 它还你的</span><span class="mini-label">系列化小课</span><b>一节一节，读完打勾</b><p>拆章节 · 有进度 · 能听<br/>读到哪，它都记着</p><span class="verified">● 不编造，每个说法能回到原文</span></div>
+          <div class="visual-card visual-task"><span class="flow-step">✨ 碎片时间</span><span class="mini-label">地铁 · 睡前 · 等人</span><b>读一篇，或听一节</b><small>两三分钟能读完 · 读完的标个勾 · 进度它替你记着</small></div>
         </div>
       </div>
     </section>
 
     <section id="workflow" class="section shell">
-      <div class="section-heading"><p class="eyebrow">使用方式</p><h2>从材料到成果，<br/>按法律工作的节奏推进。</h2></div>
+      <div class="section-heading"><p class="eyebrow">使用方式</p><h2>三步，把「改天再看」<br/>变成「今天读完」。</h2></div>
       <div class="workflow-grid">
-        <article><span>01</span><h3>明确用途</h3><p>先决定这份内容用于学习、培训、对外发言还是播客，系统带出合适的篇幅与审阅要求。</p></article>
-        <article><span>02</span><h3>整理材料</h3><p>导入一份法规、资讯、判决或实务笔记，确认需要使用的材料范围与内容主线。</p></article>
-        <article><span>03</span><h3>确认事实边界</h3><p>个人学习可以仅按原文整理；对外使用则先处理材料核对或发布前核验清单。</p></article>
-        <article><span>04</span><h3>审阅并交付</h3><p>形成可编辑讲稿、口播脚本和 DOCX；讲稿确认后，再生成正式音频。</p></article>
+        <article><span>01</span><h3>丢进来</h3><p>公众号链接、网页、PDF、Word，或者一堆复制来的文字，都行。不用整理，丢进来就好。</p></article>
+        <article><span>02</span><h3>拆成小课</h3><p>AI 把长文拆成一节一节，每节一个主题，两三分钟能读完。拆得不合适？章节可以改。</p></article>
+        <article><span>03</span><h3>碎片里学完</h3><p>读，或者戴上耳机听。读完的打个勾，读到哪一节，它替你记着，下次接着来。</p></article>
       </div>
     </section>
 
-    <section id="trust" class="trust-section"><div class="shell trust-grid"><div><p class="eyebrow light">审阅依据</p><h2>每篇内容都有材料范围，<br/>每个判断都保留确认空间。</h2></div><div class="trust-points"><div><b>限定材料范围</b><p>讲稿只使用选定材料能够支持的事实、规则和观点，不把材料外信息混入正文。</p></div><div><b>保留原文定位</b><p>审阅时可回看材料块、标题路径和来源链接，快速确认这段内容从哪里来。</p></div><div><b>把待确认内容留在核验清单</b><p>材料不足以支撑的判断不会伪装成结论；需要对外使用时，由律师完成发布前确认。</p></div></div></div></section>
+    <section id="trust" class="trust-section"><div class="shell trust-grid"><div><p class="eyebrow light">为什么可信</p><h2>它不编，<br/>你学的不是二手转述。</h2></div><div class="trust-points"><div><b>它不编</b><p>每个说法都能回到原文那一段；材料里没有的，它不会悄悄补上自己的想象。</p></div><div><b>它记得</b><p>存疑的地方标得清清楚楚，你标记过「存疑」的表述，转译时会特意谨慎处理。</p></div><div><b>它在你电脑里</b><p>材料、进度和学习记录都存在本地，不上传，不共享。</p></div></div></div></section>
 
     <section id="workspace" class="workspace shell">
-      <div class="workspace-top"><div><p class="eyebrow">内容工作台</p><h2>开始整理一份材料</h2><p>选择学习或表达用途，再导入法规、资讯、判决或实务笔记。支持 DOCX、TXT 和 Markdown。</p></div><div class="workspace-actions"><button class="button button-outline" id="open-daily-brief">设置每日速听</button><button class="button button-primary" id="new-project">开始整理材料</button></div></div>
+      <div class="workspace-top"><div><p class="eyebrow">我的书架</p><h2>收藏夹里的好文章，该读完的。</h2><p>把链接、PDF 或长文丢进来，拆成一节一节的小课。支持公众号链接、网页、PDF、DOCX、TXT 和 Markdown。</p></div><div class="workspace-actions"><button class="button button-outline" id="open-daily-brief">设置每日速听</button><button class="button button-primary" id="new-project">丢一篇进来</button></div></div>
       <div id="workspace-message" class="message hidden"></div>
       <div id="daily-brief-list" class="daily-brief-list"></div>
-      <div id="project-list" class="project-grid"><div class="empty-state"><b>还没有项目</b><p>创建一个项目，开始处理法律材料。</p></div></div>
+      <div id="project-list" class="project-grid"><div class="empty-state"><b>还没有项目</b><p>收藏夹里第一篇没读完的，丢进来。</p></div></div>
       <div id="project-detail" class="project-detail hidden"></div>
     </section>
 
@@ -65,20 +64,21 @@
       <div class="section-heading"><div><p class="eyebrow">AI 协作</p><h2>选择适合你的 AI 方式，<br/>成果始终回到本地审阅。</h2></div><span class="tag" id="home-skill-status">检测本地服务中</span></div>
       <div class="skill-home-grid">
         <article><span class="skill-index">A</span><h3>使用自己的模型</h3><p>连接 DeepSeek、OpenAI 或企业网关，在本地完成大纲、讲稿与 DOCX 导出。</p><small>适合需要批量处理或团队统一模型策略的场景。</small></article>
-        <article><span class="skill-index">B</span><h3>使用本机 Agent</h3><p>通过 Codex 或 CatPaw 读取受控材料块、生成内容并回写 LawFlow，继续审阅和导出。</p><small>无需在 LawFlow 中再配置额外模型 Key。</small></article>
-        <article><span class="skill-index">C</span><h3>使用 ChatGPT Plus</h3><p>复制当前材料包到 ChatGPT App 生成 Markdown，再粘贴回 LawFlow 审阅。</p><small>适合个人按需生成；不需要 OpenAI API 余额。</small></article>
+        <article><span class="skill-index">B</span><h3>使用本机 Agent</h3><p>通过 Codex 或 CatPaw 读取受控材料块、生成内容并回写 知了，继续审阅和导出。</p><small>无需在知了中再配置额外模型 Key。</small></article>
+        <article><span class="skill-index">C</span><h3>使用 ChatGPT Plus</h3><p>复制当前材料包到 ChatGPT App 生成 Markdown，再粘贴回知了审阅。</p><small>适合个人按需生成；不需要 OpenAI API 余额。</small></article>
         <article class="skill-invoke"><p class="eyebrow">安装与调用</p><code>$lawflow</code><p>先将本仓库的独立 Skill 安装到任意支持 Codex Skill 的 Agent，再在对话中输入 <code>$lawflow</code> 加你的任务。</p><a class="button button-outline button-small" href="https://github.com/hey-elaine/lawflow/tree/main/skills/lawflow" target="_blank" rel="noreferrer">打开 GitHub Skill</a><button class="button button-outline button-small" id="copy-skill-invoke">复制调用示例</button></article>
       </div>
     </section>
   </main>
 
-  <footer class="footer shell"><span>律析 LawFlow · 法律材料转译与专业表达工作台</span><span id="app-version">材料整理 · 讲稿审阅 · 按需核验</span></footer>
+  <footer class="footer shell"><span>知了 Zhiliao · 收藏夹会忘，我们不会</span><span id="app-version">丢进来 · 拆成小课 · 碎片里学完</span></footer>
 
   <dialog id="project-dialog" class="dialog"><form id="project-form">
-    <div class="dialog-header"><h2>新建内容任务</h2><button type="button" aria-label="关闭" class="icon-button" data-close-dialog="project-dialog">×</button></div>
-    <label>任务名称<input required name="name" maxlength="120" placeholder="例如：本周数据合规晨间速听" /></label>
-    <label>客户 / 主题（可选）<input name="client_name" maxlength="120" placeholder="例如：跨境数据合规" /></label>
-    <fieldset><legend>选择应用场景</legend><div class="scenario-options"><label><input type="radio" name="scenario" value="daily_brief" />晨间 / 晚间法律速听<small>单篇资讯，短时精炼收听</small></label><label><input type="radio" name="scenario" value="topic_learning" checked />专题学习与表达<small>围绕选定材料形成分章节学习内容</small></label><label><input type="radio" name="scenario" value="speaking_note" />客户培训 / Speak Note<small>准备培训、发言和对外交流讲稿</small></label><label><input type="radio" name="scenario" value="legal_podcast" />法律科普播客<small>实务热点与经验积累的对外表达</small></label></div></fieldset>
+    <div class="dialog-header"><h2>丢一篇文章进来</h2><button type="button" aria-label="关闭" class="icon-button" data-close-dialog="project-dialog">×</button></div>
+    <label>文章链接（可选，支持公众号 / 网页）<input name="source_url" type="url" placeholder="https://mp.weixin.qq.com/s/..." /></label>
+    <label>任务名称<input required name="name" maxlength="120" placeholder="例如：这篇讲 AI 治理的长文" /></label>
+    <label>主题备注（可选）<input name="client_name" maxlength="120" placeholder="例如：AI 治理 / 出海合规" /></label>
+    <fieldset><legend>选择应用场景</legend><div class="scenario-options"><label><input type="radio" name="scenario" value="daily_brief" />晨间 / 晚间速听<small>单篇资讯，短时精炼收听</small></label><label><input type="radio" name="scenario" value="topic_learning" checked />专题学习<small>围绕选定材料形成分章节学习内容</small></label><label><input type="radio" name="scenario" value="speaking_note" />分享 / 发言准备<small>准备培训、发言和对外交流讲稿</small></label><label><input type="radio" name="scenario" value="legal_podcast" />播客 / 对外表达<small>把读过的东西讲给别人听</small></label></div></fieldset>
     <label>项目说明（可选）<textarea name="description" maxlength="1000" placeholder="记录学习主题、培训对象或表达目的"></textarea></label>
     <fieldset><legend>内容偏好</legend>
       <label>内容处理方式</label>
@@ -101,6 +101,6 @@
 
   <dialog id="daily-brief-dialog" class="dialog"><form id="daily-brief-form"><div class="dialog-header"><h2>每日法律速听</h2><button type="button" aria-label="关闭" class="icon-button" data-close-dialog="daily-brief-dialog">×</button></div><p class="form-note">订阅公开 RSS 或 Atom 源。系统每天只收集新文章并建立待审速听任务；不会自动发布，也不会自动生成最终 MP3。</p><label>订阅名称<input required name="name" maxlength="120" placeholder="例如：数据合规资讯" /></label><label>RSS / Atom 地址<input required name="feed_url" type="url" placeholder="https://example.com/feed.xml" /></label><div class="plan-settings"><div class="field"><label>每日运行时间<input name="daily_time" type="time" value="08:00" /></label></div><div class="field"><label>每次最多收集<input name="max_items" type="number" min="1" max="10" value="3" /> 篇</label></div></div><label class="check-label"><input type="checkbox" name="auto_generate" /> 允许自动生成待审速听稿与音频脚本（仅在模型已配置且允许发送素材时）</label><div class="dialog-actions"><button type="button" class="button button-outline" data-close-dialog="daily-brief-dialog">取消</button><button type="submit" class="button button-primary">保存订阅</button></div></form></dialog>
 
-  <script src="/app.js?v=20260928-11"></script>
+  <script src="/app.js?v=20260928-13"></script>
 </body>
 </html>

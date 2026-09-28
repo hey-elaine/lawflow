@@ -28,6 +28,7 @@ from fastapi import Request
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from docx import Document
+import pypdf
 from docx.shared import Inches, Pt, RGBColor
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -793,12 +794,35 @@ def parse_text(path: Path) -> tuple[list[dict], dict]:
     return blocks, {"parser": "plain-text-v1", "paragraph_count": len(blocks), "heading_count": sum(1 for b in blocks if b["kind"] == "heading"), "headings": []}
 
 
+def parse_pdf(path: Path) -> tuple[list[dict], dict]:
+    """提取 PDF 文本后复用 Markdown/纯文本的结构解析。扫描件无文本层时给出明确提示。"""
+    reader = pypdf.PdfReader(str(path))
+    pages = []
+    for page in reader.pages:
+        try:
+            pages.append(page.extract_text() or "")
+        except Exception:
+            pages.append("")
+    text = "\n\n".join(page.strip() for page in pages if page.strip())
+    if len(clean_text(text)) < 40:
+        raise HTTPException(status_code=400, detail="这份 PDF 没有可提取的文字（可能是扫描件或图片版），请换文字版。")
+    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as handle:
+        handle.write(text)
+        temp_path = Path(handle.name)
+    try:
+        return parse_text(temp_path)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
 def extract_document(path: Path, suffix: str) -> tuple[list[dict], dict]:
     if suffix.lower() == ".docx":
         return parse_docx(path)
     if suffix.lower() in {".txt", ".md"}:
         return parse_text(path)
-    raise HTTPException(status_code=400, detail="当前首版支持 DOCX、TXT 和 Markdown。PDF 解析将在下一迭代接入。")
+    if suffix.lower() == ".pdf":
+        return parse_pdf(path)
+    raise HTTPException(status_code=400, detail="支持 DOCX、TXT、Markdown 和 PDF。网页内容请用「粘贴链接」。")
 
 
 def build_material_map(blocks: list[dict]) -> dict:
@@ -1999,9 +2023,22 @@ def app_version():
 @app.get("/api/projects")
 def list_projects():
     conn = db()
-    rows = conn.execute("SELECT * FROM projects ORDER BY updated_at DESC").fetchall()
+    rows = [serialise_project(row) for row in conn.execute("SELECT * FROM projects ORDER BY updated_at DESC").fetchall()]
+    # 聚合每个项目的学习进度：总节数来自讲稿的 H2 拆分，已完成数来自学习进度表
+    progress: dict[str, dict[str, int]] = {}
+    for row in conn.execute(
+        """SELECT nc.project_id AS project_id, nc.markdown AS markdown, lp.completed_section_ids_json AS completed_json
+           FROM narrative_contents AS nc LEFT JOIN learning_progress AS lp ON lp.content_id = nc.id"""
+    ).fetchall():
+        total = len(reading_section_ids(row["markdown"] or ""))
+        done = len({section_id for section_id in parse_json(row["completed_json"], [])})
+        agg = progress.setdefault(row["project_id"], {"done": 0, "total": 0})
+        agg["total"] += total
+        agg["done"] += min(done, total)
     conn.close()
-    return [serialise_project(row) for row in rows]
+    for item in rows:
+        item["learning_progress"] = progress.get(item["id"], {"done": 0, "total": 0})
+    return rows
 
 
 @app.get("/api/daily-brief-subscriptions")
@@ -2197,13 +2234,64 @@ def get_project(project_id: str):
     return {"project": project, "documents": docs, "plans": plans, "contents": contents, "narrative_outlines": narrative_outlines, "narrative_contents": narrative_contents, "audio_outputs": audio_outputs, "tasks": tasks}
 
 
+def fetch_article(url: str) -> tuple[str, str]:
+    """抓取网页正文，返回 (标题, 纯文本正文)。公众号文章走 js_content，普通网页优先 <article>。"""
+    headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15"}
+    try:
+        response = httpx.get(url, headers=headers, timeout=15.0, follow_redirects=True)
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"链接抓取失败：{exc}")
+    html = response.text
+    title_match = re.search(r'property="og:title"[^>]*content="([^"]*)"', html) or re.search(r'<title[^>]*>(.*?)</title>', html, re.S | re.I)
+    title = clean_text(unescape(title_match.group(1))) if title_match else ""
+    # 去掉脚本、样式与导航等非正文区块
+    cleaned = re.sub(r"<(script|style|noscript|svg|iframe|form|nav|footer|aside|header)\b.*?</\1>", "", html, flags=re.S | re.I)
+    body = ""
+    js_content = re.search(r'<div[^>]*id="js_content"[^>]*>(.*)', cleaned, re.S | re.I)
+    article = re.search(r"<article\b.*?</article>", cleaned, re.S | re.I)
+    if js_content:
+        body = js_content.group(1)
+    elif article:
+        body = article.group(0)
+    else:
+        body = re.sub(r".*?<body[^>]*>", "", cleaned, flags=re.S | re.I)
+    body = re.sub(r"</(p|div|h[1-6]|li|tr|section|blockquote|figcaption)>", "\n", body, flags=re.I)
+    body = re.sub(r"<br\s*/?>", "\n", body, flags=re.I)
+    body = re.sub(r"<[^>]+>", "", body)
+    text = unescape(body)
+    paragraphs = []
+    for line in text.splitlines():
+        line = re.sub(r"\s+", " ", line).strip()
+        if line:
+            paragraphs.append(line)
+    return title[:120], "\n\n".join(paragraphs)
+
+
+class LinkSourceCreate(BaseModel):
+    url: str
+    title: str = ""
+
+
+@app.post("/api/projects/{project_id}/link-sources", status_code=201)
+def create_link_source(project_id: str, payload: LinkSourceCreate):
+    project_or_404(project_id)
+    url = payload.url.strip()
+    if not url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="请粘贴 http(s) 开头的链接。")
+    fetched_title, text = fetch_article(url)
+    if len(clean_text(text)) < 200:
+        raise HTTPException(status_code=422, detail="这个链接没抓到足够的正文。可能是图片/设计排版的文章（正文是图片），需要会员，或链接已失效。可以打开文章全选复制，用「粘贴文本」导入。")
+    return save_text_source(project_id, payload.title.strip() or fetched_title or "网页文章", text, url)
+
+
 @app.post("/api/projects/{project_id}/documents", status_code=201)
 async def upload_document(project_id: str, file: UploadFile = File(...)):
     project_or_404(project_id)
     original_name = file.filename or "未命名材料"
     suffix = Path(original_name).suffix.lower()
-    if suffix not in {".docx", ".txt", ".md"}:
-        raise HTTPException(status_code=400, detail="当前首版支持 DOCX、TXT 和 Markdown。")
+    if suffix not in {".docx", ".txt", ".md", ".pdf"}:
+        raise HTTPException(status_code=400, detail="支持 DOCX、TXT、Markdown 和 PDF。网页内容请用「粘贴链接」。")
     document_id = str(uuid.uuid4())
     source_dir = PROJECTS_DIR / project_id / "sources"
     source_dir.mkdir(parents=True, exist_ok=True)

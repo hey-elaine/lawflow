@@ -505,3 +505,9 @@ body.in-project .detail-header { position: sticky; top: 0; z-index: 40; backgrou
 .status-pill { padding: 5px 13px; border-radius: 999px; border: 1px solid #e0dacf; background: #fff; font-size: 12.5px; color: #4a544c; cursor: pointer; transition: all 0.15s ease; }
 .status-pill:hover { border-color: #2f5d43; color: #2f5d43; }
 .status-pill.active { background: #2f5d43; border-color: #2f5d43; color: #fff; font-weight: 600; }
+
+/* 项目卡片学习进度条 */
+.card-progress { display: flex; align-items: center; gap: 10px; margin: 10px 0 4px; }
+.card-progress-bar { flex: 1; height: 6px; border-radius: 999px; background: rgba(47, 93, 67, 0.12); overflow: hidden; }
+.card-progress-bar i { display: block; height: 100%; border-radius: 999px; background: #2f5d43; transition: width 0.3s ease; }
+.card-progress span { font-size: 11.5px; color: #5b6657; white-space: nowrap; }
