@@ -401,6 +401,24 @@ async function viewDocumentText(documentId) {
   } catch (error) { showMessage(error.message, true); }
 }
 
+async function fillProjectNameFromUrl() {
+  const form = $('#project-form');
+  const url = form.elements.source_url.value.trim();
+  const nameInput = form.elements.name;
+  if (!url || nameInput.value.trim() || nameInput.dataset.autoFilling) return;
+  nameInput.dataset.autoFilling = '1';
+  const originalPlaceholder = nameInput.placeholder;
+  nameInput.placeholder = '正在读取网页标题…';
+  try {
+    const data = await request('/api/web-page-title?url=' + encodeURIComponent(url));
+    if (data.title && !nameInput.value.trim()) nameInput.value = data.title;
+  } catch (error) { /* 读取失败则保持手填，不打断创建流程 */ }
+  finally {
+    delete nameInput.dataset.autoFilling;
+    nameInput.placeholder = originalPlaceholder;
+  }
+}
+
 async function directDocumentAudio(documentId, button) {
   try {
     setBusy(button, true, '转音频中…');
@@ -1527,6 +1545,9 @@ function bindDialogs() {
     $('#project-dialog').showModal();
   });
   $('#open-daily-brief').addEventListener('click', () => $('#daily-brief-dialog').showModal());
+  const sourceUrlInput = $('#project-form').elements.source_url;
+  sourceUrlInput.addEventListener('blur', fillProjectNameFromUrl);
+  sourceUrlInput.addEventListener('change', fillProjectNameFromUrl);
   $$('input[name="scenario"]').forEach(input => input.addEventListener('change', () => {
     const config = SCENARIOS[input.value];
     const form = $('#project-form');

@@ -2630,6 +2630,24 @@ def _search_bing_rss(query: str, limit: int) -> list[dict]:
     return results
 
 
+@app.get("/api/web-page-title")
+def get_web_page_title(url: str):
+    """根据链接抓取网页标题，用于自动填写任务名称。"""
+    address = valid_public_url(url)
+    try:
+        response = httpx.get(address, headers={"User-Agent": BROWSER_UA}, follow_redirects=True, timeout=15.0)
+        response.raise_for_status()
+    except httpx.HTTPError as error:
+        raise HTTPException(502, "无法读取该网页标题，请手动填写任务名称。") from error
+    match = re.search(r'<meta[^>]+property=["\']og:title["\'][^>]*content=["\']([^"\']+)["\']', response.text, re.IGNORECASE)
+    if not match:
+        match = re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]*property=["\']og:title["\']', response.text, re.IGNORECASE)
+    if not match:
+        match = re.search(r"<title[^>]*>(.*?)</title>", response.text, re.IGNORECASE | re.DOTALL)
+    title = re.sub(r"\s+", " ", unescape(match.group(1)).strip()) if match else ""
+    return {"title": title[:120]}
+
+
 @app.post("/api/web-search")
 def search_web_sources(payload: WebSearchRequest):
     """Search public web pages but leave import decisions entirely to the user."""

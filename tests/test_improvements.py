@@ -579,6 +579,33 @@ class ImprovementsTest(unittest.TestCase):
         self.assertEqual(response.content, b'preview-mp3')
         self.assertEqual(response.headers['content-type'], 'audio/mpeg')
 
+    def test_web_page_title_extracts_og_title(self):
+        import httpx
+        project = self.client.post('/api/projects', json={'name': '标题抓取', 'verification_mode': 'source_only'}).json()
+        page = httpx.Response(
+            200,
+            headers={'content-type': 'text/html; charset=utf-8'},
+            text='<html><head><meta property="og:title" content="这篇讲 AI 治理的长文"/><title>微信 fallback 标题</title></head><body>正文</body></html>',
+            request=httpx.Request('GET', 'https://mp.weixin.qq.com/s/abc'),
+        )
+        with patch.object(self.main.httpx, 'get', return_value=page):
+            result = self.client.get('/api/web-page-title', params={'url': 'https://mp.weixin.qq.com/s/abc'})
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.json()['title'], '这篇讲 AI 治理的长文')
+        # 无 og:title 时回落到 <title>
+        page2 = httpx.Response(
+            200,
+            headers={'content-type': 'text/html; charset=utf-8'},
+            text='<html><head><title>  只有 title 的页面 </title></head><body></body></html>',
+            request=httpx.Request('GET', 'https://example.com/b'),
+        )
+        with patch.object(self.main.httpx, 'get', return_value=page2):
+            result2 = self.client.get('/api/web-page-title', params={'url': 'https://example.com/b'})
+        self.assertEqual(result2.json()['title'], '只有 title 的页面')
+        # 非公开地址直接拒绝
+        blocked = self.client.get('/api/web-page-title', params={'url': 'http://127.0.0.1:8080/'})
+        self.assertEqual(blocked.status_code, 400)
+
     def test_web_search_requires_explicit_import_and_preserves_source(self):
         import httpx
         project = self.client.post('/api/projects', json={'name': '人工智能治理', 'scenario': 'topic_learning'}).json()
