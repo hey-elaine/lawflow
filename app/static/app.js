@@ -1,4 +1,4 @@
-const appState = { projects: [], selectedProjectId: null, selectedProject: null, selectedDocument: null, activeTab: 'materials', activePlan: null, editingContentId: null };
+const appState = { projects: [], selectedProjectId: null, selectedProject: null, selectedDocument: null, activeTab: 'materials', activePlan: null, editingContentId: null, collectionFilter: '' };
 const SCENARIOS = {
   daily_brief: { name: '晨间 / 晚间法律速听', description: '单篇资讯的短时精炼收听', transform: 'condense', verification: 'source_only', duration: 5, audio: true, audience: '个人学习', narrativeLabel: '速听讲稿' },
   topic_learning: { name: '专题学习与表达', description: '围绕选定材料形成分章节学习内容', transform: 'adapt', verification: 'material_check', duration: 10, audio: true, audience: '法律从业者与企业法务', narrativeLabel: '主题讲稿' },
@@ -80,15 +80,40 @@ async function deleteDailyBriefSubscription(id) {
   if (!window.confirm('删除这个每日速听订阅？已收集的项目和导出成果不会删除。')) return;
   try { await request('/api/daily-brief-subscriptions/' + id, {method:'DELETE'}); await loadDailyBriefSubscriptions(); showMessage('每日速听订阅已删除。'); } catch (error) { showMessage(error.message, true); }
 }
+function renderCollectionBar() {
+  const bar = $('#collection-bar');
+  if (!bar) return;
+  const counts = {};
+  let untagged = 0;
+  for (const project of appState.projects) {
+    const key = (project.collection || '').trim();
+    if (key) counts[key] = (counts[key] || 0) + 1; else untagged += 1;
+  }
+  const chips = ['<button type="button" class="collection-chip' + (appState.collectionFilter === '' ? ' active' : '') + '" data-collection="">全部<span class="count">' + appState.projects.length + '</span></button>'];
+  for (const [name, count] of Object.entries(counts)) chips.push('<button type="button" class="collection-chip' + (appState.collectionFilter === name ? ' active' : '') + '" data-collection="' + escapeHtml(name) + '">' + escapeHtml(name) + '<span class="count">' + count + '</span></button>');
+  if (untagged) chips.push('<button type="button" class="collection-chip' + (appState.collectionFilter === '__untagged__' ? ' active' : '') + '" data-collection="__untagged__">未归类<span class="count">' + untagged + '</span></button>');
+  bar.innerHTML = chips.join('');
+  $$('.collection-chip', bar).forEach(chip => chip.addEventListener('click', () => { appState.collectionFilter = chip.dataset.collection; renderProjectList(); }));
+}
+
 function renderProjectList() {
   const list = $('#project-list');
+  if (!document.body.classList.contains('in-shelf')) return;
+  renderCollectionBar();
   if (!appState.projects.length) {
     list.innerHTML = '<section class="empty-state onboarding"><p class="eyebrow">首次使用</p><h3>从一篇材料到可审阅讲稿，只需三步</h3><div class="onboarding-steps"><div><b>1</b><span>导入法规、新闻或实务笔记</span></div><div><b>2</b><span>确认结构；对外内容先完成核验</span></div><div><b>3</b><span>用 ChatGPT 或 API 生成，回到本地审阅与导出</span></div></div><div class="onboarding-actions"><button class="button button-primary" id="load-demo-project">加载完整示例</button><button class="button button-outline" id="start-first-project">新建我的任务</button></div><small>示例不调用任何外部模型，也可以随时删除。</small></section>';
     $('#load-demo-project').addEventListener('click', loadDemoProject);
     $('#start-first-project').addEventListener('click', () => $('#new-project').click());
     return;
   }
-  list.innerHTML = appState.projects.map(project => { const scenario = SCENARIOS[project.scenario] || SCENARIOS.topic_learning; const progress = project.learning_progress || { done: 0, total: 0 }; const percent = progress.total ? Math.round(progress.done / progress.total * 100) : 0; const progressHtml = progress.total ? '<div class="card-progress"><div class="card-progress-bar"><i style="width:' + percent + '%"></i></div><span>已学 ' + progress.done + ' / ' + progress.total + ' 节</span></div>' : ''; return '<button class="project-card" data-project-id="' + project.id + '"><div class="project-card-top"><span class="tag">' + escapeHtml(scenario.name) + '</span><small>' + formatDate(project.updated_at) + '</small></div><h3>' + escapeHtml(project.name) + '</h3><p>' + escapeHtml(project.description || project.client_name || scenario.name) + '</p>' + progressHtml + '<div class="meta"><span>' + project.document_count + ' 份素材</span><span>' + (project.verification_mode === 'source_only' ? '无需核验' : project.task_count + ' 项核验') + '</span><span>' + project.target_duration + ' 分钟</span></div></button>'; }).join('');
+  const filter = appState.collectionFilter;
+  const visible = appState.projects.filter(project => {
+    const tag = (project.collection || '').trim();
+    if (filter === '__untagged__') return !tag;
+    return !filter || tag === filter;
+  });
+  if (!visible.length) { list.innerHTML = '<div class="empty-state"><b>这个收藏夹还是空的</b><p>换一个标签看看，或在项目详情里把它归到这。</p></div>'; return; }
+  list.innerHTML = visible.map(project => { const scenario = SCENARIOS[project.scenario] || SCENARIOS.topic_learning; const progress = project.learning_progress || { done: 0, total: 0 }; const percent = progress.total ? Math.round(progress.done / progress.total * 100) : 0; const progressHtml = progress.total ? '<div class="card-progress"><div class="card-progress-bar"><i style="width:' + percent + '%"></i></div><span>已学 ' + progress.done + ' / ' + progress.total + ' 节</span></div>' : ''; const tagHtml = (project.collection || '').trim() ? '<span class="card-tag">' + escapeHtml(project.collection.trim()) + '</span>' : ''; return '<button class="project-card" data-project-id="' + project.id + '"><div class="project-card-top"><span class="tag">' + escapeHtml(scenario.name) + '</span><small>' + formatDate(project.updated_at) + '</small></div><h3>' + escapeHtml(project.name) + '</h3><p>' + escapeHtml(project.description || project.client_name || scenario.name) + '</p>' + progressHtml + '<div class="meta">' + tagHtml + '<span>' + project.document_count + ' 份素材</span><span>' + (project.verification_mode === 'source_only' ? '无需核验' : project.task_count + ' 项核验') + '</span><span>' + project.target_duration + ' 分钟</span></div></button>'; }).join('');
   $$('.project-card', list).forEach(card => card.addEventListener('click', () => openProject(card.dataset.projectId)));
 }
 async function loadDemoProject(event) {
@@ -191,11 +216,27 @@ function renderProjectDetail() {
     '<button data-tab="' + key + '" class="' + (appState.activeTab === key ? 'active ' : '') + (status || '') + '"' + (status === 'current' ? ' aria-current="step"' : '') + '>' +
     '<span class="step-mark">' + (status === 'done' ? '✓' : status === 'current' ? '●' : '○') + '</span>' + label + '</button>'
   ).join('');
-  detail.innerHTML = '<div class="detail-header"><div><p class="eyebrow">' + escapeHtml(scenario.name) + '</p><h2>' + escapeHtml(data.project.name) + '</h2><p>' + escapeHtml(data.project.client_name || data.project.description || scenario.description) + '</p><div class="task-preferences"><span>' + TRANSFORM_NAMES[data.project.transform_mode] + '</span><span>' + VERIFICATION_NAMES[data.project.verification_mode] + '</span><span>' + data.project.target_duration + ' 分钟目标时长</span></div></div><div class="detail-actions"><button class="button button-outline button-small" id="back-to-projects">← 全部项目</button><button class="button button-outline button-small" id="export-project">导出至本机目录</button><button class="button button-outline button-small" id="reload-project">刷新任务</button><button class="button button-danger button-small" id="delete-project">删除任务</button></div></div>' + '<div class="tabbar">' + tabHtml + '</div>' + renderWorkflowHint(data, state) + '<div id="detail-panel" class="detail-panel"></div>';
+  detail.innerHTML = '<div class="detail-header"><div><p class="eyebrow">' + escapeHtml(scenario.name) + '</p><h2>' + escapeHtml(data.project.name) + '</h2><p>' + escapeHtml(data.project.client_name || data.project.description || scenario.description) + '</p><div class="task-preferences"><button type="button" class="tag-edit-btn" id="edit-collection" title="归类到某个收藏夹">🏷 ' + ((data.project.collection || '').trim() ? escapeHtml(data.project.collection.trim()) : '未归类 · 点此归类') + '</button><span>' + TRANSFORM_NAMES[data.project.transform_mode] + '</span><span>' + VERIFICATION_NAMES[data.project.verification_mode] + '</span><span>' + data.project.target_duration + ' 分钟目标时长</span></div></div><div class="detail-actions"><button class="button button-outline button-small" id="back-to-projects">← 全部项目</button><button class="button button-outline button-small" id="export-project">导出至本机目录</button><button class="button button-outline button-small" id="reload-project">刷新任务</button><button class="button button-danger button-small" id="delete-project">删除任务</button></div></div>' + '<div class="tabbar">' + tabHtml + '</div>' + renderWorkflowHint(data, state) + '<div id="detail-panel" class="detail-panel"></div>';
+  $('#edit-collection')?.addEventListener('click', () => updateProjectCollection(data.project.id));
   $$('.tabbar button', detail).forEach(button => button.addEventListener('click', () => { appState.activeTab = button.dataset.tab; renderProjectDetail(); }));
   $$('[data-workflow-next]', detail).forEach(button => button.addEventListener('click', () => { appState.activeTab = button.dataset.workflowNext; renderProjectDetail(); $('#detail-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }));
   $('#reload-project').addEventListener('click', () => openProject(data.project.id)); $('#back-to-projects').addEventListener('click', closeProject); $('#export-project').addEventListener('click', exportProject); $('#delete-project').addEventListener('click', deleteProject); renderActivePanel();
 }
+async function updateProjectCollection(projectId) {
+  const current = (appState.selectedProject?.project?.collection || '').trim();
+  const existing = appState.projects.map(project => (project.collection || '').trim()).filter(Boolean);
+  const hint = existing.length ? '\n已有收藏夹：' + [...new Set(existing)].join('、') : '';
+  const value = window.prompt('归到哪个收藏夹？（留空表示不归类，输入新名字即新建）' + hint, current);
+  if (value === null) return;
+  try {
+    const updated = await request('/api/projects/' + projectId + '/collection', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ collection: value.trim() }) });
+    if (appState.selectedProject?.project?.id === projectId) appState.selectedProject.project = updated;
+    await loadProjects();
+    renderProjectDetail();
+    showMessage(value.trim() ? '已归入「' + value.trim() + '」。' : '已从收藏夹移出。');
+  } catch (error) { showMessage(error.message, true); }
+}
+
 function renderActivePanel() { if (appState.activeTab === 'materials') return renderMaterialsPanel(); if (appState.activeTab === 'structure') return renderStructurePanel(); if (appState.activeTab === 'review') return renderReviewPanel(); if (appState.activeTab === 'narrative') return renderNarrativeOutputPanel(); if (appState.activeTab === 'audio') return renderAudioPanel(); return renderTasksPanel(); }
 function currentDocument() { const docs = appState.selectedProject.documents; return appState.selectedDocument || docs[0] || null; }
 async function ensureDocumentLoaded(documentId) { if (appState.selectedDocument?.id === documentId && appState.selectedDocument.blocks) return appState.selectedDocument; appState.selectedDocument = await request('/api/documents/' + documentId); return appState.selectedDocument; }
@@ -1177,7 +1218,7 @@ function bindDialogs() {
       try { await checkForUpdates(true); } finally { setBusy(button, false); }
     });
   }
-  $('#new-project').addEventListener('click', () => $('#project-dialog').showModal());
+  $('#new-project').addEventListener('click', () => { $('#collection-options').innerHTML = [...new Set(appState.projects.map(project => (project.collection || '').trim()).filter(Boolean))].map(name => '<option value="' + escapeHtml(name) + '"></option>').join(''); $('#project-dialog').showModal(); });
   $('#open-daily-brief').addEventListener('click', () => $('#daily-brief-dialog').showModal());
   $$('input[name="scenario"]').forEach(input => input.addEventListener('change', () => {
     const config = SCENARIOS[input.value];
@@ -1365,6 +1406,7 @@ async function boot() {
   enhanceSelects();
   new MutationObserver(() => { enhanceSelects(); $$('.select-box select').forEach(syncSelectBox); }).observe(document.body, { childList: true, subtree: true });
   $('#nav-shelf')?.addEventListener('click', event => { event.preventDefault(); showShelf(); });
+  $('#back-home')?.addEventListener('click', goHome);
   $('#hero-open-shelf')?.addEventListener('click', event => { event.preventDefault(); showShelf(true); });
   $('.brand')?.addEventListener('click', event => { event.preventDefault(); goHome(); });
   if (window.location.protocol === 'file:') {
@@ -1416,6 +1458,14 @@ function renderListenPlayer(projectName) {
   $('#listen-meta').textContent = '共 ' + listenState.tracks.length + ' 段 · ' + projectName;
   listenState.audio = new Audio('/api/audio-outputs/' + listenState.tracks[0].id + '/stream');
   const audio = listenState.audio;
+  audio.playbackRate = getListenRate();
+  syncListenRateButtons();
+  $$('#listen-rate .listen-rate-btn').forEach(button => button.addEventListener('click', () => {
+    const rate = Number(button.dataset.rate);
+    localStorage.setItem('shengxi-listen-rate', String(rate));
+    audio.playbackRate = rate;
+    syncListenRateButtons();
+  }));
   audio.addEventListener('loadedmetadata', () => { $('#listen-total').textContent = formatListenTime(audio.duration); });
   audio.addEventListener('timeupdate', () => {
     const ratio = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
@@ -1434,6 +1484,16 @@ function renderListenPlayer(projectName) {
 function setListenToggle(playing) {
   const button = $('#listen-toggle');
   if (button) button.textContent = playing ? '❚❚' : '▶';
+}
+
+function getListenRate() {
+  const saved = Number(localStorage.getItem('shengxi-listen-rate'));
+  return [1, 1.25, 1.5, 2].includes(saved) ? saved : 1;
+}
+
+function syncListenRateButtons() {
+  const rate = getListenRate();
+  $$('#listen-rate .listen-rate-btn').forEach(button => button.classList.toggle('active', Number(button.dataset.rate) === rate));
 }
 
 function playListenTrack(index) {

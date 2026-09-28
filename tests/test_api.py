@@ -205,6 +205,19 @@ class LawFlowApiTest(unittest.TestCase):
         self.assertEqual(len(project_state["narrative_contents"]), 1)
         self.assertEqual(project_state["narrative_contents"][0]["model"]["mode"], "host_model")
 
+    def test_project_collection_field_and_endpoint(self):
+        created = self.client.post("/api/projects", json={"name": "收藏夹测试", "collection": "通勤路上"}).json()
+        self.assertEqual(created["collection"], "通勤路上")
+        listed = self.client.get("/api/projects").json()
+        self.assertTrue(any(item["id"] == created["id"] and item["collection"] == "通勤路上" for item in listed))
+        updated = self.client.put(f"/api/projects/{created['id']}/collection", json={"collection": "行业追踪"})
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(updated.json()["collection"], "行业追踪")
+        cleared = self.client.put(f"/api/projects/{created['id']}/collection", json={"collection": "  "})
+        self.assertEqual(cleared.json()["collection"], "")
+        missing = self.client.put("/api/projects/does-not-exist/collection", json={"collection": "x"})
+        self.assertEqual(missing.status_code, 404)
+
     def test_reviewer_guidance_maps_statuses_to_constraints(self):
         project_id = self.client.post("/api/projects", json={"name": "核对约束测试"}).json()["id"]
         upload = self.client.post(f"/api/projects/{project_id}/documents", files={"file": ("测试材料.docx", self.make_docx(), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")})

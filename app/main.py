@@ -132,6 +132,11 @@ class ProjectCreate(BaseModel):
     minimum_output_mode: Literal["auto", "none", "custom"] = "auto"
     minimum_output_ratio: float = Field(default=0.3, ge=0.1, le=1.0)
     web_research_mode: Literal["off", "discover", "augment"] = "discover"
+    collection: str = Field(default="", max_length=60)
+
+
+class ProjectCollectionUpdate(BaseModel):
+    collection: str = Field(default="", max_length=60)
 
 
 class TextSourceCreate(BaseModel):
@@ -655,6 +660,7 @@ def init_db() -> None:
         "minimum_output_mode": "TEXT NOT NULL DEFAULT 'auto'",
         "minimum_output_ratio": "REAL NOT NULL DEFAULT 0.3",
         "web_research_mode": "TEXT NOT NULL DEFAULT 'discover'",
+        "collection": "TEXT NOT NULL DEFAULT ''",
     }
     for column, definition in migrations.items():
         if column not in existing_columns:
@@ -2084,15 +2090,29 @@ def create_project(payload: ProjectCreate):
     timestamp = now_iso()
     conn = db()
     conn.execute(
-        """INSERT INTO projects (id, name, client_name, description, scenario, transform_mode, verification_mode, target_duration, audio_enabled, minimum_output_mode, minimum_output_ratio, web_research_mode, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (project_id, payload.name.strip(), payload.client_name.strip(), payload.description.strip(), payload.scenario, payload.transform_mode, payload.verification_mode, payload.target_duration, int(payload.audio_enabled), payload.minimum_output_mode, payload.minimum_output_ratio, payload.web_research_mode, timestamp, timestamp),
+        """INSERT INTO projects (id, name, client_name, description, scenario, transform_mode, verification_mode, target_duration, audio_enabled, minimum_output_mode, minimum_output_ratio, web_research_mode, collection, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (project_id, payload.name.strip(), payload.client_name.strip(), payload.description.strip(), payload.scenario, payload.transform_mode, payload.verification_mode, payload.target_duration, int(payload.audio_enabled), payload.minimum_output_mode, payload.minimum_output_ratio, payload.web_research_mode, payload.collection.strip(), timestamp, timestamp),
     )
     conn.commit()
     row = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
     conn.close()
     (PROJECTS_DIR / project_id / "sources").mkdir(parents=True, exist_ok=True)
     return serialise_project(row)
+
+
+@app.put("/api/projects/{project_id}/collection")
+def update_project_collection(project_id: str, payload: ProjectCollectionUpdate):
+    conn = db()
+    row = conn.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone()
+    if row is None:
+        conn.close()
+        raise HTTPException(status_code=404, detail="项目不存在。")
+    conn.execute("UPDATE projects SET collection = ?, updated_at = ? WHERE id = ?", (payload.collection.strip(), now_iso(), project_id))
+    conn.commit()
+    updated = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+    conn.close()
+    return serialise_project(updated)
 
 
 @app.post("/api/demo-project", status_code=201)

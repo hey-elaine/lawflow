@@ -4,11 +4,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>声息｜把没有时间读完的东西，带到路上</title>
-  <link rel="stylesheet" href="/styles.css?v=20260928-17" />
+  <link rel="stylesheet" href="/styles.css?v=20260928-18" />
 </head>
 <body>
   <header class="nav shell">
-    <a class="brand" href="#top" aria-label="声息首页"><span class="brand-stacked"><span class="brand-char">声</span><span class="brand-char">息</span><span class="brand-sub">Shengxi</span></span></a>
+    <a class="brand" href="#top" aria-label="声息首页"><span class="brand-row"><span class="brand-name">声息</span><span class="brand-sub">Shengxi</span></span></a>
     <nav><a href="#listen">试听</a><a href="#workflow">如何使用</a><a href="#trust">为什么可信</a><a href="#top" id="nav-shelf">我的书架</a></nav>
     <button class="button button-quiet" id="open-settings">设置</button>
   </header>
@@ -59,6 +59,7 @@
             <span class="listen-meta" id="listen-meta"></span>
             <div class="listen-progress"><div class="listen-bar"><i id="listen-bar"></i></div><span class="listen-time"><span id="listen-current">0:00</span> / <span id="listen-total">0:00</span></span></div>
             <div class="listen-controls"><button type="button" class="listen-ctrl" id="listen-prev" aria-label="上一章">⏮</button><button type="button" class="listen-toggle" id="listen-toggle" aria-label="播放 / 暂停">▶</button><button type="button" class="listen-ctrl" id="listen-next" aria-label="下一章">⏭</button></div>
+            <div class="listen-rate" id="listen-rate" title="播放倍速"><button type="button" class="listen-rate-btn" data-rate="1">1.0×</button><button type="button" class="listen-rate-btn" data-rate="1.25">1.25×</button><button type="button" class="listen-rate-btn" data-rate="1.5">1.5×</button><button type="button" class="listen-rate-btn" data-rate="2">2.0×</button></div>
             <p class="listen-caption" id="listen-caption">下一段，刚好适合回家的路。</p>
           </div>
           <ol class="listen-chapters" id="listen-chapters"></ol>
@@ -79,7 +80,8 @@
     <section id="trust" class="trust-section"><div class="shell trust-grid"><div><p class="eyebrow light">为什么可信</p><h2>它不替你读书，<br/>只给阅读换一种发生的方式。</h2></div><div class="trust-points"><div><b>它不编</b><p>每个说法都能回到原文那一段；材料里没有的，它不会悄悄补上自己的想象。</p></div><div><b>它记得</b><p>存疑的地方标得清清楚楚，你标记过「存疑」的表述，转译时会特意谨慎处理。</p></div><div><b>它在你电脑里</b><p>材料、进度和学习记录都存在本地，不上传，不共享。</p></div></div></div></section>
 
     <section id="workspace" class="workspace shell">
-      <div class="workspace-top"><div><p class="eyebrow">我的书架</p><h2>收藏夹里的好文章，该读完的。</h2><p>把链接、PDF 或长文丢进来，拆成一节一节的小课。支持公众号链接、网页、PDF、DOCX、TXT 和 Markdown。</p></div><div class="workspace-actions"><button class="button button-outline" id="open-daily-brief">设置每日速听</button><button class="button button-primary" id="new-project">丢一篇进来</button></div></div>
+      <div class="workspace-top"><div><button type="button" class="back-home" id="back-home">← 回主页</button><p class="eyebrow">我的书架</p><h2>收藏夹里的好文章，该读完的。</h2><p>把链接、PDF 或长文丢进来，拆成一节一节的小课。支持公众号链接、网页、PDF、DOCX、TXT 和 Markdown。</p></div><div class="workspace-actions"><button class="button button-outline" id="open-daily-brief">设置每日速听</button><button class="button button-primary" id="new-project">丢一篇进来</button></div></div>
+      <div id="collection-bar" class="collection-bar"></div>
       <div id="workspace-message" class="message hidden"></div>
       <div id="daily-brief-list" class="daily-brief-list"></div>
       <div id="project-list" class="project-grid"><div class="empty-state"><b>还没有项目</b><p>收藏夹里第一篇没读完的，丢进来。</p></div></div>
@@ -104,6 +106,7 @@
     <label>文章链接（可选，支持公众号 / 网页）<input name="source_url" type="url" placeholder="https://mp.weixin.qq.com/s/..." /></label>
     <label>任务名称<input required name="name" maxlength="120" placeholder="例如：这篇讲 AI 治理的长文" /></label>
     <label>主题备注（可选）<input name="client_name" maxlength="120" placeholder="例如：AI 治理 / 出海合规" /></label>
+    <label>收藏夹（可选，用于书架归类）<input name="collection" maxlength="60" list="collection-options" placeholder="例如：通勤路上 / 行业追踪" /><datalist id="collection-options"></datalist></label>
     <fieldset><legend>选择应用场景</legend><div class="scenario-options"><label><input type="radio" name="scenario" value="daily_brief" />晨间 / 晚间速听<small>单篇资讯，短时精炼收听</small></label><label><input type="radio" name="scenario" value="topic_learning" checked />专题学习<small>围绕选定材料形成分章节学习内容</small></label><label><input type="radio" name="scenario" value="speaking_note" />分享 / 发言准备<small>准备培训、发言和对外交流讲稿</small></label><label><input type="radio" name="scenario" value="legal_podcast" />播客 / 对外表达<small>把读过的东西讲给别人听</small></label></div></fieldset>
     <label>项目说明（可选）<textarea name="description" maxlength="1000" placeholder="记录学习主题、培训对象或表达目的"></textarea></label>
     <fieldset><legend>内容偏好</legend>
@@ -127,6 +130,6 @@
 
   <dialog id="daily-brief-dialog" class="dialog"><form id="daily-brief-form"><div class="dialog-header"><h2>每日法律速听</h2><button type="button" aria-label="关闭" class="icon-button" data-close-dialog="daily-brief-dialog">×</button></div><p class="form-note">订阅公开 RSS 或 Atom 源。系统每天只收集新文章并建立待审速听任务；不会自动发布，也不会自动生成最终 MP3。</p><label>订阅名称<input required name="name" maxlength="120" placeholder="例如：数据合规资讯" /></label><label>RSS / Atom 地址<input required name="feed_url" type="url" placeholder="https://example.com/feed.xml" /></label><div class="plan-settings"><div class="field"><label>每日运行时间<input name="daily_time" type="time" value="08:00" /></label></div><div class="field"><label>每次最多收集<input name="max_items" type="number" min="1" max="10" value="3" /> 篇</label></div></div><label class="check-label"><input type="checkbox" name="auto_generate" /> 允许自动生成待审速听稿与音频脚本（仅在模型已配置且允许发送素材时）</label><div class="dialog-actions"><button type="button" class="button button-outline" data-close-dialog="daily-brief-dialog">取消</button><button type="submit" class="button button-primary">保存订阅</button></div></form></dialog>
 
-  <script src="/app.js?v=20260928-17"></script>
+  <script src="/app.js?v=20260928-18"></script>
 </body>
 </html>
