@@ -630,6 +630,13 @@ body { background-color: var(--linen); background-image: url("data:image/svg+xml
 .collection-chip.active { background: var(--moss); border-color: var(--moss); color: #fff; }
 .collection-chip .count { font: 500 11px "DM Mono", monospace; opacity: 0.75; margin-left: 4px; }
 .card-tag { display: inline-flex; align-items: center; margin-right: auto; padding: 3px 10px; border-radius: 999px; background: #ece5d2; color: #6d6249; font-size: 11.5px; letter-spacing: 0.05em; }
+.project-card { cursor: pointer; font: inherit; color: inherit; }
+.project-card:focus-visible { outline: 2px solid var(--moss); outline-offset: 2px; }
+.card-tag-btn { display: inline-flex; align-items: center; margin-right: auto; padding: 3px 12px; border: 1px solid transparent; border-radius: 999px; background: #ece5d2; color: #6d6249; font-size: 11.5px; letter-spacing: 0.05em; }
+.card-tag-btn:hover { border-color: var(--moss); color: var(--moss-dark); background: #f1ecdd; }
+.card-tag-btn.untagged { border: 1px dashed #c9bfa6; background: transparent; color: #a2957a; }
+.collection-chip-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 16px; }
+.collection-chip-list:empty { display: none; }
 .tag-edit-btn { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border: 1px solid #ddd5c2; border-radius: 999px; background: transparent; color: #6d6249; font-size: 12px; letter-spacing: 0.05em; }
 .tag-edit-btn:hover { border-color: var(--moss); color: var(--moss-dark); }
 .listen-chapters { list-style: none; margin: 0; padding: 0 0 0 30px; border-left: 1px solid #e0d9c6; display: grid; gap: 6px; align-content: center; max-height: 300px; overflow-y: auto; }

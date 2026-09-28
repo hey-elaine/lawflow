@@ -112,9 +112,13 @@ function renderProjectList() {
     if (filter === '__untagged__') return !tag;
     return !filter || tag === filter;
   });
-  if (!visible.length) { list.innerHTML = '<div class="empty-state"><b>这个收藏夹还是空的</b><p>换一个标签看看，或在项目详情里把它归到这。</p></div>'; return; }
-  list.innerHTML = visible.map(project => { const scenario = SCENARIOS[project.scenario] || SCENARIOS.topic_learning; const progress = project.learning_progress || { done: 0, total: 0 }; const percent = progress.total ? Math.round(progress.done / progress.total * 100) : 0; const progressHtml = progress.total ? '<div class="card-progress"><div class="card-progress-bar"><i style="width:' + percent + '%"></i></div><span>已学 ' + progress.done + ' / ' + progress.total + ' 节</span></div>' : ''; const tagHtml = (project.collection || '').trim() ? '<span class="card-tag">' + escapeHtml(project.collection.trim()) + '</span>' : ''; return '<button class="project-card" data-project-id="' + project.id + '"><div class="project-card-top"><span class="tag">' + escapeHtml(scenario.name) + '</span><small>' + formatDate(project.updated_at) + '</small></div><h3>' + escapeHtml(project.name) + '</h3><p>' + escapeHtml(project.description || project.client_name || scenario.name) + '</p>' + progressHtml + '<div class="meta">' + tagHtml + '<span>' + project.document_count + ' 份素材</span><span>' + (project.verification_mode === 'source_only' ? '无需核验' : project.task_count + ' 项核验') + '</span><span>' + project.target_duration + ' 分钟</span></div></button>'; }).join('');
-  $$('.project-card', list).forEach(card => card.addEventListener('click', () => openProject(card.dataset.projectId)));
+  if (!visible.length) { list.innerHTML = '<div class="empty-state"><b>这个收藏夹还是空的</b><p>换一个标签看看，或点卡片上的「＋ 收藏夹」把它归到这。</p></div>'; return; }
+  list.innerHTML = visible.map(project => { const scenario = SCENARIOS[project.scenario] || SCENARIOS.topic_learning; const progress = project.learning_progress || { done: 0, total: 0 }; const percent = progress.total ? Math.round(progress.done / progress.total * 100) : 0; const progressHtml = progress.total ? '<div class="card-progress"><div class="card-progress-bar"><i style="width:' + percent + '%"></i></div><span>已学 ' + progress.done + ' / ' + progress.total + ' 节</span></div>' : ''; const tag = (project.collection || '').trim(); const tagBtn = '<button type="button" class="card-tag-btn' + (tag ? '' : ' untagged') + '" data-tag-project="' + project.id + '">' + (tag ? escapeHtml(tag) : '＋ 收藏夹') + '</button>'; return '<div class="project-card" role="button" tabindex="0" data-project-id="' + project.id + '"><div class="project-card-top"><span class="tag">' + escapeHtml(scenario.name) + '</span><small>' + formatDate(project.updated_at) + '</small></div><h3>' + escapeHtml(project.name) + '</h3><p>' + escapeHtml(project.description || project.client_name || scenario.name) + '</p>' + progressHtml + '<div class="meta">' + tagBtn + '<span>' + project.document_count + ' 份素材</span><span>' + (project.verification_mode === 'source_only' ? '无需核验' : project.task_count + ' 项核验') + '</span><span>' + project.target_duration + ' 分钟</span></div></div>'; }).join('');
+  $$('.project-card', list).forEach(card => {
+    card.addEventListener('click', () => openProject(card.dataset.projectId));
+    card.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openProject(card.dataset.projectId); } });
+  });
+  $$('.card-tag-btn', list).forEach(button => button.addEventListener('click', event => { event.stopPropagation(); openCollectionDialog(button.dataset.tagProject); }));
 }
 async function loadDemoProject(event) {
   const button = event.currentTarget;
@@ -217,23 +221,42 @@ function renderProjectDetail() {
     '<span class="step-mark">' + (status === 'done' ? '✓' : status === 'current' ? '●' : '○') + '</span>' + label + '</button>'
   ).join('');
   detail.innerHTML = '<div class="detail-header"><div><p class="eyebrow">' + escapeHtml(scenario.name) + '</p><h2>' + escapeHtml(data.project.name) + '</h2><p>' + escapeHtml(data.project.client_name || data.project.description || scenario.description) + '</p><div class="task-preferences"><button type="button" class="tag-edit-btn" id="edit-collection" title="归类到某个收藏夹">🏷 ' + ((data.project.collection || '').trim() ? escapeHtml(data.project.collection.trim()) : '未归类 · 点此归类') + '</button><span>' + TRANSFORM_NAMES[data.project.transform_mode] + '</span><span>' + VERIFICATION_NAMES[data.project.verification_mode] + '</span><span>' + data.project.target_duration + ' 分钟目标时长</span></div></div><div class="detail-actions"><button class="button button-outline button-small" id="back-to-projects">← 全部项目</button><button class="button button-outline button-small" id="export-project">导出至本机目录</button><button class="button button-outline button-small" id="reload-project">刷新任务</button><button class="button button-danger button-small" id="delete-project">删除任务</button></div></div>' + '<div class="tabbar">' + tabHtml + '</div>' + renderWorkflowHint(data, state) + '<div id="detail-panel" class="detail-panel"></div>';
-  $('#edit-collection')?.addEventListener('click', () => updateProjectCollection(data.project.id));
+  $('#edit-collection')?.addEventListener('click', () => openCollectionDialog(data.project.id));
   $$('.tabbar button', detail).forEach(button => button.addEventListener('click', () => { appState.activeTab = button.dataset.tab; renderProjectDetail(); }));
   $$('[data-workflow-next]', detail).forEach(button => button.addEventListener('click', () => { appState.activeTab = button.dataset.workflowNext; renderProjectDetail(); $('#detail-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }));
   $('#reload-project').addEventListener('click', () => openProject(data.project.id)); $('#back-to-projects').addEventListener('click', closeProject); $('#export-project').addEventListener('click', exportProject); $('#delete-project').addEventListener('click', deleteProject); renderActivePanel();
 }
-async function updateProjectCollection(projectId) {
-  const current = (appState.selectedProject?.project?.collection || '').trim();
-  const existing = appState.projects.map(project => (project.collection || '').trim()).filter(Boolean);
-  const hint = existing.length ? '\n已有收藏夹：' + [...new Set(existing)].join('、') : '';
-  const value = window.prompt('归到哪个收藏夹？（留空表示不归类，输入新名字即新建）' + hint, current);
-  if (value === null) return;
+let collectionDialogProjectId = null;
+
+function openCollectionDialog(projectId) {
+  const project = appState.projects.find(item => item.id === projectId) || (appState.selectedProject?.project?.id === projectId ? appState.selectedProject.project : null);
+  if (project === null) return;
+  collectionDialogProjectId = projectId;
+  const current = (project.collection || '').trim();
+  const existing = [...new Set(appState.projects.map(item => (item.collection || '').trim()).filter(Boolean))];
+  $('#collection-dialog-target').textContent = '「' + project.name + '」' + (current ? '当前在「' + current + '」' : '还没有归类');
+  const list = $('#collection-chip-list');
+  list.innerHTML = existing.length ? existing.map((name, index) => '<button type="button" class="collection-chip' + (name === current ? ' active' : '') + '" data-collection-index="' + index + '">' + escapeHtml(name) + '</button>').join('') : '<p class="form-note">还没有任何收藏夹，直接在下面输入一个名字。</p>';
+  const form = $('#collection-form');
+  $$('.collection-chip', list).forEach(chip => chip.addEventListener('click', () => {
+    const name = existing[Number(chip.dataset.collectionIndex)];
+    form.elements.collection.value = form.elements.collection.value.trim() === name ? '' : name;
+    $$('.collection-chip', list).forEach(item => item.classList.toggle('active', item === chip && form.elements.collection.value.trim() === name));
+  }));
+  $('#collection-options').innerHTML = existing.map(name => '<option value="' + escapeHtml(name) + '"></option>').join('');
+  form.elements.collection.value = current;
+  $('#collection-remove').hidden = !current;
+  $('#collection-dialog').showModal();
+}
+
+async function saveProjectCollection(projectId, value) {
   try {
-    const updated = await request('/api/projects/' + projectId + '/collection', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ collection: value.trim() }) });
+    const updated = await request('/api/projects/' + projectId + '/collection', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ collection: value }) });
+    $('#collection-dialog').close();
     if (appState.selectedProject?.project?.id === projectId) appState.selectedProject.project = updated;
     await loadProjects();
-    renderProjectDetail();
-    showMessage(value.trim() ? '已归入「' + value.trim() + '」。' : '已从收藏夹移出。');
+    if (appState.selectedProject?.project?.id === projectId) renderProjectDetail();
+    showMessage(value ? '已归入「' + value + '」。' : '已从收藏夹移出。');
   } catch (error) { showMessage(error.message, true); }
 }
 
@@ -1218,6 +1241,8 @@ function bindDialogs() {
       try { await checkForUpdates(true); } finally { setBusy(button, false); }
     });
   }
+  $('#collection-form').addEventListener('submit', event => { event.preventDefault(); saveProjectCollection(collectionDialogProjectId, event.currentTarget.elements.collection.value.trim()); });
+  $('#collection-remove').addEventListener('click', () => saveProjectCollection(collectionDialogProjectId, ''));
   $('#new-project').addEventListener('click', () => { $('#collection-options').innerHTML = [...new Set(appState.projects.map(project => (project.collection || '').trim()).filter(Boolean))].map(name => '<option value="' + escapeHtml(name) + '"></option>').join(''); $('#project-dialog').showModal(); });
   $('#open-daily-brief').addEventListener('click', () => $('#daily-brief-dialog').showModal());
   $$('input[name="scenario"]').forEach(input => input.addEventListener('change', () => {
