@@ -2508,6 +2508,22 @@ def strip_html_text(value: str) -> str:
 BROWSER_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Safari/537.36"
 
 
+UI_NOISE_RE = re.compile(
+    r"^(预览时|修改于|编辑于|发表于|不喜欢|点赞|点踩|回复|举报|分享|收藏|关注|已关注|登录|注册|退出"
+    r"|打开App|打开APP|扫码|下载|评论区|写评论|查看更多|点击查看|展开|收起|下一篇|上一篇|返回"
+    r"|相关推荐|继续阅读|阅读全文|全文完|广告|赞助|首页|导航|搜索|订阅|免责声明：以上)"
+)
+
+
+def _is_ui_noise(line: str) -> bool:
+    """网页正文里混入的界面文字：过短且不成句，或命中常见 UI 词。"""
+    if line.startswith("#") or line.startswith("- "):
+        return False
+    if len(line) < 10 and not re.search(r"[。！？…：;；\"』」）)]", line):
+        return True
+    return bool(UI_NOISE_RE.match(line) and len(line) < 20)
+
+
 def html_to_article_text(html: str) -> str:
     """网页 → 纯文本，保留标题层级（#/##）与段落换行，供 parse_text 识别结构。"""
     value = re.sub(r"<(script|style|noscript)[^>]*>.*?</\1>", " ", html, flags=re.IGNORECASE | re.DOTALL)
@@ -2522,6 +2538,8 @@ def html_to_article_text(html: str) -> str:
     lines = []
     for raw_line in value.splitlines():
         line = re.sub(r"\s+", " ", raw_line.replace("\u00a0", " ")).strip()
+        if line and _is_ui_noise(line):
+            continue
         if line or (lines and lines[-1]):
             lines.append(line)
     return "\n".join(lines).strip()

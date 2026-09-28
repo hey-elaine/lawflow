@@ -386,7 +386,16 @@ async function viewDocumentText(documentId) {
     const doc = await ensureDocumentLoaded(documentId);
     const blocks = doc.blocks || [];
     if (!blocks.length) { showMessage('这份素材还没有解析出内容。', true); return; }
-    const html = blocks.map(block => '<h4>' + escapeHtml(block.source_locator) + (block.kind === 'heading' ? ' · 标题' : '') + '</h4><pre>' + escapeHtml(block.text) + '</pre>').join('');
+    const docTitle = doc.title || doc.original_name || '';
+    const html = blocks.map(block => {
+      let label = block.source_locator || '';
+      if (docTitle) {
+        label = label.split(' · ' + docTitle).join('').split(docTitle + ' · ').join('').split(docTitle + ' / ').join('');
+        if (label === docTitle) label = '';
+      }
+      if (!label) return '';
+      return '<h4>' + escapeHtml(label) + (block.kind === 'heading' ? ' · 标题' : '') + '</h4><pre>' + escapeHtml(block.text) + '</pre>';
+    }).join('');
     showSourceOverlay('解析原文（共 ' + blocks.length + ' 个素材块）', html);
   } catch (error) { showMessage(error.message, true); }
 }

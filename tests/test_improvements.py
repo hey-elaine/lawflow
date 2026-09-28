@@ -772,6 +772,27 @@ class ImprovementsTest(unittest.TestCase):
         headings = [b for b in blocks if b['kind'] == 'heading']
         self.assertGreaterEqual(len(headings), 2)
 
+    def test_html_to_article_text_filters_ui_noise(self):
+        html = ('<body><h1>法案解读</h1>'
+                '<p>这是第一段正文内容，长度足够不会被过滤。</p>'
+                '<p>预览时标签不可点</p>'
+                '<p>修改于</p>'
+                '<p>不喜欢</p>'
+                '<p>相关推荐</p>'
+                '<p>这是一句很短的评论。</p>'
+                '<p>打开App阅读更多精彩内容</p>'
+                '<p>这是结尾一段正文，同样长度足够保留下来。</p></body>')
+        text = self.main.html_to_article_text(html)
+        self.assertNotIn('预览时标签不可点', text)
+        self.assertNotIn('修改于', text)
+        self.assertNotIn('不喜欢', text)
+        self.assertNotIn('相关推荐', text)
+        self.assertNotIn('打开App', text)
+        self.assertIn('这是第一段正文内容', text)
+        self.assertIn('这是一句很短的评论。', text)
+        self.assertIn('这是结尾一段正文', text)
+        self.assertIn('## 法案解读', text)
+
     def test_delete_document_blocks_when_referenced(self):
         project = self.client.post('/api/projects', json={'name': '删除素材项目', 'verification_mode': 'source_only'}).json()
         project_id = project['id']
