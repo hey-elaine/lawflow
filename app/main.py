@@ -1639,8 +1639,12 @@ def outline_from_confirmed_plan(request: NarrativeOutlineRequest, chapters: list
         source_dossier([selected[block_id] for block_id in source_ids], max_total_chars=SOURCE_BUDGET_CHARS)
         heading = re.sub(r"^(?:决策速览：|法律简报：|法声解读：)?第\d+章\s*·\s*", "", chapter.get("title", "")).strip()
         purpose = clean_text(chapter.get("question", ""))
+        # 关键点用章内小节标题，不重复问题本身
+        block_by_id = {block["id"]: block for block in blocks}
+        subheads = [clean_text(selected[block_id]["text"]) for block_id in primary_ids
+                    if block_id in selected and selected[block_id]["kind"] == "heading" and selected[block_id]["text"] != chapter.get("title", "")]
         sections.append({"heading": heading or chapter.get("title", ""), "purpose": purpose,
-                         "key_points": [purpose] if purpose else [], "source_block_ids": source_ids})
+                         "key_points": subheads[:5], "source_block_ids": source_ids})
     if not sections:
         raise HTTPException(400, "请先在内容结构中启用至少一个章节。")
     return normalize_narrative_outline({"title": request.title, "sections": sections}, request, blocks)
@@ -2367,6 +2371,8 @@ def create_plan(project_id: str, payload: PlanCreate):
     plan_id = str(uuid.uuid4())
     timestamp = now_iso()
     conn = db()
+    # 新划分生效后，旧的 draft 方案不再有意义，避免用户误以为是最新结构
+    conn.execute("DELETE FROM content_plans WHERE project_id = ? AND status = 'draft'", (project_id,))
     conn.execute("""INSERT INTO content_plans (id, project_id, document_id, audience, output_type, style_name, include_audio, status, chapters_json, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)""", (plan_id, project_id, payload.source_document_id, payload.audience, output_type, payload.style_name, int(include_audio), json.dumps(chapters, ensure_ascii=False), timestamp, timestamp))
     conn.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (timestamp, project_id))
@@ -2391,6 +2397,8 @@ def confirm_plan(plan_id: str, payload: PlanConfirm):
         raise HTTPException(400, "请至少启用一个包含有效材料块的章节。")
     timestamp = now_iso()
     conn.execute("UPDATE content_plans SET chapters_json = ?, status = 'confirmed', updated_at = ? WHERE id = ?", (json.dumps(payload.chapters, ensure_ascii=False), timestamp, plan_id))
+    # 旧大纲是基于旧章节结构生成的派生品，确认新结构后作废，让第二步自动重建
+    conn.execute("DELETE FROM narrative_outlines WHERE project_id = ? AND (source_plan_id IS NULL OR source_plan_id != ?)", (plan["project_id"], plan_id))
     # 待核验事项属于材料审阅与项目执行层，应在章节范围确认后立即生成。
     # 这使律师可以先分配/关闭事项，再决定是否将已确认事实转译为对外长文。
     project_row = conn.execute("SELECT * FROM projects WHERE id = ?", (plan["project_id"],)).fetchone()
