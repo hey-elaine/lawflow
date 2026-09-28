@@ -1734,7 +1734,7 @@ def generate_narrative_markdown(outline: dict, blocks: list[dict], audience: str
         rendered_sections.append("## {}\n\n{}".format(section["heading"], section_text))
         section_sources.append({"section_id": section["id"], "heading": section["heading"], "source_block_ids": section["source_block_ids"]})
     GENERATION_PROGRESS[progress_key] = {"status": "done", "total": len(outline["sections"]), "current": len(outline["sections"]), "heading": ""}
-    markdown = "# {}\n".format(outline["title"])
+    markdown = ("# {}\n\n".format(outline["title"]) if outline["title"] != outline["sections"][0]["heading"] else "")
     markdown += "\n\n".join(rendered_sections)
     settings = get_internal_provider_settings()
     source_chars = sum(len(block.get("text", "")) for block in blocks)
@@ -2810,7 +2810,12 @@ def regenerate_narrative_section(content_id: str, section_id: str):
     heading = "## " + section["heading"]
     start = current.find(heading)
     if start < 0:
-        raise HTTPException(409, "原稿中未找到该章节，请重新生成整篇讲稿。")
+        # 标题可能与文首大标题重号被合并（# vs ##），按任意级别匹配；再找不到才报错
+        level_agnostic = re.compile(r"^#{1,6}\s*" + re.escape(section["heading"]) + r"\s*$", re.MULTILINE)
+        loose = level_agnostic.search(current)
+        if loose is None:
+            raise HTTPException(409, "原稿中未找到该章节，请重新生成整篇讲稿。")
+        start, heading = loose.start(), loose.group(0)
     next_start = re.search(r"\n##\s+", current[start + len(heading):])
     end = start + len(heading) + (next_start.start() if next_start else len(current) - start - len(heading))
     replacement = heading + "\n\n" + generated
