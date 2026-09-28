@@ -105,9 +105,8 @@ function renderProjectList() {
   if (!document.body.classList.contains('in-shelf')) return;
   renderCollectionBar();
   if (!appState.projects.length) {
-    list.innerHTML = '<section class="empty-state onboarding"><p class="eyebrow">首次使用</p><h3>从一篇材料到可审阅讲稿，只需三步</h3><div class="onboarding-steps"><div><b>1</b><span>导入法规、新闻或实务笔记</span></div><div><b>2</b><span>确认结构；对外内容先完成核验</span></div><div><b>3</b><span>用 ChatGPT 或 API 生成，回到本地审阅与导出</span></div></div><div class="onboarding-actions"><button class="button button-primary" id="load-demo-project">加载完整示例</button><button class="button button-outline" id="start-first-project">新建我的任务</button></div><small>示例不调用任何外部模型，也可以随时删除。</small></section>';
-    $('#load-demo-project').addEventListener('click', loadDemoProject);
-    $('#start-first-project').addEventListener('click', () => $('#new-project').click());
+    list.innerHTML = '<section class="empty-state onboarding start-page"><div class="start-hero"><h3>从一篇文字，到一段路上的声音。</h3><p>上传文章、报告、笔记或收藏内容。声息会先帮你看见它的结构，再把它拆成适合收听的小段。</p></div><div class="start-body"><label class="upload-zone paper-drop start-drop" id="shelf-drop"><input type="file" id="shelf-upload" accept=".docx,.txt,.md,.pdf" /><div class="paper-drop-inner"><b>放下一篇你想带走的文字</b><span>DOCX · PDF · TXT · Markdown</span><small>点选文件，或直接拖进来；也可以在下面贴链接</small></div></label><ol class="start-timeline"><li><i>01</i><div><b>来处</b><span>看见这篇文字的起点</span></div></li><li><i>02</i><div><b>要点</b><span>提炼值得记住的内容</span></div></li><li><i>03</i><div><b>留给路上</b><span>拆成适合收听的小段</span></div></li></ol></div><div class="start-link"><input id="start-link-input" type="url" placeholder="贴一篇文章链接（公众号 / 网页），一键开始" /><button class="button button-primary" id="start-link-go">开始整理 →</button></div><small class="start-note">材料与学习记录都只存在这台电脑里。</small></section>';
+    bindStartPage();
     return;
   }
   const filter = appState.collectionFilter;
@@ -123,6 +122,46 @@ function renderProjectList() {
     card.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openProject(card.dataset.projectId); } });
   });
   $$('.card-tag-btn', list).forEach(button => button.addEventListener('click', event => { event.stopPropagation(); openCollectionDialog(button.dataset.tagProject); }));
+}
+
+function bindStartPage() {
+  const drop = $('#shelf-drop'), upload = $('#shelf-upload');
+  upload?.addEventListener('change', () => { const file = upload.files?.[0]; if (file) startFromFile(file); });
+  if (drop) {
+    ['dragenter', 'dragover'].forEach(type => drop.addEventListener(type, event => { event.preventDefault(); drop.classList.add('dragover'); }));
+    drop.addEventListener('dragleave', () => drop.classList.remove('dragover'));
+    drop.addEventListener('drop', event => { event.preventDefault(); drop.classList.remove('dragover'); const file = event.dataTransfer?.files?.[0]; if (file) startFromFile(file); });
+  }
+  $('#start-link-go')?.addEventListener('click', startFromLink);
+  $('#start-link-input')?.addEventListener('keydown', event => { if (event.key === 'Enter') startFromLink(); });
+}
+
+async function startFromFile(file) {
+  showMessage('正在创建并解析「' + file.name + '」…');
+  try {
+    const name = (file.name.replace(/\.[^.]+$/, '') || '路上新读').slice(0, 120);
+    const project = await request('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+    try {
+      const form = new FormData(); form.append('file', file);
+      await request('/api/projects/' + project.id + '/documents', { method: 'POST', body: form });
+      await loadProjects(); openProject(project.id); showMessage('已完成解析，从这里开始。');
+    } catch (error) { await loadProjects(); openProject(project.id); showMessage(error.message, true); }
+  } catch (error) { showMessage(error.message, true); }
+}
+
+async function startFromLink() {
+  const url = $('#start-link-input')?.value.trim();
+  if (url === '') { showMessage('先贴一个文章链接。', true); return; }
+  showMessage('正在抓取文章内容…');
+  try {
+    const project = await request('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: '路上新读' }) });
+    try {
+      const source = await request('/api/projects/' + project.id + '/link-sources', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) });
+      const title = (source?.original_name || '').trim();
+      if (title) { try { await request('/api/projects/' + project.id + '/name', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: title.slice(0, 120) }) }); } catch (_) {} }
+      await loadProjects(); openProject(project.id); showMessage('文章已导入并完成解析。');
+    } catch (error) { await loadProjects(); openProject(project.id); showMessage(error.message, true); }
+  } catch (error) { showMessage(error.message, true); }
 }
 async function loadDemoProject(event) {
   const button = event.currentTarget;

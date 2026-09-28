@@ -139,6 +139,10 @@ class ProjectCollectionUpdate(BaseModel):
     collection: str = Field(default="", max_length=60)
 
 
+class ProjectRename(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+
 class TextSourceCreate(BaseModel):
     title: str = Field(min_length=1, max_length=240)
     content: str = Field(min_length=20, max_length=500000)
@@ -2109,6 +2113,20 @@ def update_project_collection(project_id: str, payload: ProjectCollectionUpdate)
         conn.close()
         raise HTTPException(status_code=404, detail="项目不存在。")
     conn.execute("UPDATE projects SET collection = ?, updated_at = ? WHERE id = ?", (payload.collection.strip(), now_iso(), project_id))
+    conn.commit()
+    updated = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+    conn.close()
+    return serialise_project(updated)
+
+
+@app.put("/api/projects/{project_id}/name")
+def rename_project(project_id: str, payload: ProjectRename):
+    conn = db()
+    row = conn.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone()
+    if row is None:
+        conn.close()
+        raise HTTPException(status_code=404, detail="项目不存在。")
+    conn.execute("UPDATE projects SET name = ?, updated_at = ? WHERE id = ?", (payload.name.strip(), now_iso(), project_id))
     conn.commit()
     updated = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
     conn.close()
