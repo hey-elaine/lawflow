@@ -725,3 +725,25 @@ class ImprovementsTest(unittest.TestCase):
             chapters = json.loads(probe.stdout)['chapters']
             self.assertEqual(len(chapters), 2)
             self.assertIn('开端', chapters[0]['tags']['title'])
+
+    def test_material_map_extracts_generic_topic_signals(self):
+        text = '收藏夹里的长文章越积越多。长文章需要整块时间，而碎片时间只能读短内容。' \
+               '其实读完长文章的关键是换个方式遇见它：把长文章拆成小节，用碎片时间逐节消化。' \
+               '长文章不该是负担，碎片时间也能读完长文章。'
+        signals = self.main.extract_topic_signals(text)
+        self.assertTrue(signals)
+        names = [item['name'] for item in signals]
+        self.assertTrue(any('长文章' in name or '文章' in name for name in names))
+        blocks = [{'id': 'b1', 'kind': 'heading', 'heading_level': 1, 'text': '标题', 'sequence_no': 1, 'heading_path': '', 'source_locator': '段落 1'},
+                  {'id': 'b2', 'kind': 'paragraph', 'text': text, 'sequence_no': 2, 'heading_path': '', 'source_locator': '段落 2'}]
+        material_map = self.main.build_material_map(blocks)
+        self.assertTrue(material_map['topics'])
+
+    def test_audio_script_has_no_legal_outro(self):
+        script = self.main.build_audio_script('# 标题\n\n正文第一段。', '测试讲稿', 'topic_learning', 5)
+        self.assertNotIn('以上内容仅按已确认材料整理', script)
+        self.assertIn('正文第一段。', script)
+
+    def test_reveal_endpoint_rejects_outside_paths(self):
+        response = self.client.post('/api/reveal-in-finder', json={'path': '/etc/hosts'})
+        self.assertEqual(response.status_code, 403)

@@ -836,6 +836,34 @@ def extract_document(path: Path, suffix: str) -> tuple[list[dict], dict]:
     raise HTTPException(status_code=400, detail="支持 DOCX、TXT、Markdown 和 PDF。网页内容请用「粘贴链接」。")
 
 
+STOP_TOPIC_GRAMS = {
+    "我们", "他们", "自己", "一个", "这个", "那个", "什么", "为什么", "可以", "因为", "所以",
+    "但是", "如果", "就是", "还是", "不是", "没有", "的话", "时候", "现在", "已经", "需要",
+    "应该", "这些", "那些", "而且", "其实", "只是", "比如", "一种", "一下", "有些", "可能",
+    "这样", "那样", "起来", "过去", "出来", "时候", "东西", "事情", "问题", "方法", "方式",
+}
+
+
+def extract_topic_signals(text: str, limit: int = 6) -> list[dict]:
+    """通用主题信号：对非合规类文章，用高频中文二元/三元词组兜底提取。"""
+    cleaned = re.sub(r"[^\u4e00-\u9fff]+", " ", text)
+    counter: Counter = Counter()
+    for segment in cleaned.split():
+        for size in (2, 3):
+            for i in range(len(segment) - size + 1):
+                gram = segment[i:i + size]
+                if gram not in STOP_TOPIC_GRAMS:
+                    counter[gram] += 1
+    picked: list[str] = []
+    for gram, count in sorted(counter.items(), key=lambda item: (item[1], len(item[0])), reverse=True):
+        if count < 3 or any(gram in chosen or chosen in gram for chosen in picked):
+            continue
+        picked.append(gram)
+        if len(picked) >= limit:
+            break
+    return [{"name": gram, "mentions": counter[gram]} for gram in picked]
+
+
 def build_material_map(blocks: list[dict]) -> dict:
     all_headings = [b for b in blocks if b["kind"] == "heading" and b["heading_level"] in {1, 2}]
     # 过滤静态目录(TOC)：若标题与后续标题之间无实质段落，属于前置目次，不应计入正文大纲
@@ -862,6 +890,9 @@ def build_material_map(blocks: list[dict]) -> dict:
     years = Counter(year + "年" for year in re.findall(r"20[0-9]{2}", text)).most_common(12)
     keywords = ["数据", "跨境", "出口管制", "人工智能", "网络安全", "供应链", "合规", "监管", "个人信息", "技术"]
     topics = [{"name": word, "mentions": text.count(word)} for word in keywords if text.count(word)]
+    if not topics:
+        # 非合规类文章（如生活、科普、随笔）：按词频兜底提取主题信号，避免地图一片空白。
+        topics = extract_topic_signals(text)
     candidates = []
     risk_markers = ["风险", "建议", "应当", "需要", "禁止", "评估", "审查", "核验", "合规"]
     for block in blocks:
@@ -2305,6 +2336,11 @@ def get_project(project_id: str):
     conn.close()
     for document in docs:
         document["structure"] = parse_json(document.pop("structure_json"), {})
+        # 正文字符数（不含标题），供前端按原文比例折算目标成稿字数。
+        try:
+            document["source_chars"] = sum(len(clean_text(b["text"])) for b in read_blocks(document["id"]) if b["kind"] == "paragraph")
+        except (OSError, ValueError):
+            document["source_chars"] = 0
     for plan in plans:
         chapters = parse_json(plan.pop("chapters_json"), [])
         for ch in chapters:
@@ -3220,8 +3256,7 @@ def build_audio_script(markdown: str, title: str, scenario: str, target_duration
         intro = f"接下来是《{title}》中的一节：{section_heading}。"
     else:
         intro = intro_map.get(scenario, intro_map["topic_learning"])
-    outro = "以上内容仅按已确认材料整理。涉及具体业务或规则适用时，请结合最新事实和专业判断进一步确认。"
-    return "\n\n".join([intro, *clean_lines, outro])
+    return "\n\n".join([intro, *clean_lines])
 
 
 @app.post("/api/projects/{project_id}/audio-scripts", status_code=201)
@@ -3402,6 +3437,23 @@ def export_project_audiobook(project_id: str):
     except (subprocess.SubprocessError, OSError) as error:
         raise HTTPException(502, f"有声书合并失败：{error}") from error
     return {"audiobook_path": str(output_path), "chapters": len(chapter_files), "title": project["name"]}
+
+
+class RevealPathRequest(BaseModel):
+    path: str
+
+
+@app.post("/api/reveal-in-finder")
+def reveal_in_finder(payload: RevealPathRequest):
+    """在访达中定位导出的文件，让「导出到哪了」有明确答案。"""
+    path = Path(payload.path).expanduser()
+    allowed_roots = [get_configured_export_directory(), DATA_DIR]
+    if not any(path.is_file() and path.resolve().is_relative_to(root.resolve()) for root in allowed_roots if root.exists()):
+        raise HTTPException(403, "只能定位导出目录或应用数据目录内的文件。")
+    if sys.platform != "darwin":
+        raise HTTPException(400, "当前系统不支持访达定位。")
+    subprocess.Popen(["open", "-R", str(path)])
+    return {"revealed": True}
 
 
 @app.get("/api/audio-outputs/{audio_id}")

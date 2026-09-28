@@ -369,11 +369,12 @@ async function viewDocumentMap(documentId) {
   try {
     box.innerHTML = '<h3>材料地图</h3><p>正在读取材料结构…</p>'; const doc = await ensureDocumentLoaded(documentId); const map = doc.material_map;
     const outline = map.outline.slice(0,14).map(item => '<button class="outline-item level-' + item.level + '" data-block-id="' + item.id + '">' + escapeHtml(item.title) + '</button>').join('');
-    const topics = map.topics.map(item => '<span class="signal">' + escapeHtml(item.name) + ' · ' + item.mentions + '</span>').join('') || '<span class="signal">暂未识别</span>';
-    const regs = map.regulations.slice(0,6).map(item => '<span class="signal">' + escapeHtml(item) + '</span>').join('') || '<span class="signal">暂未识别</span>';
-    const risks = map.risk_candidates.slice(0,4).map(item => '<button class="risk-candidate" data-block-id="' + item.block_id + '"><small>' + escapeHtml(item.locator) + '</small>' + escapeHtml(item.excerpt) + '</button>').join('') || '<p class="form-note">当前未找到明显候选项。仍建议由律师结合项目背景审阅全文。</p>';
-    box.innerHTML = '<h3>材料地图：' + escapeHtml(doc.original_name) + '</h3><p>' + escapeHtml(map.summary) + '</p><details class="material-map-details"><summary>查看结构导航、主题信号与核验候选</summary><div class="map-grid"><div><h4>结构导航</h4><div class="outline-list">' + outline + '</div></div><div><h4>关注信号</h4><div class="signal-list">' + topics + '</div><h4>识别到的规范名称</h4><div class="signal-list">' + regs + '</div></div></div><h4>待核验候选项</h4><div>' + risks + '</div></details>';
+    const risks = map.risk_candidates.slice(0,4).map(item => '<button class="risk-candidate" data-block-id="' + item.block_id + '"><small>' + escapeHtml(item.locator) + '</small>' + escapeHtml(item.excerpt) + '</button>').join('') || '<p class="form-note">当前未找到明显需要核实的表述；仍建议通读全文后自行判断。</p>';
+    const topics = map.topics.length ? map.topics.map(item => '<span class="signal">' + escapeHtml(item.name) + ' · ' + item.mentions + '</span>').join('') : '';
+    const regs = map.regulations.length ? map.regulations.slice(0,6).map(item => '<span class="signal">' + escapeHtml(item) + '</span>').join('') : '';
+    box.innerHTML = '<h3>材料地图：' + escapeHtml(doc.original_name) + '</h3><p>' + escapeHtml(map.summary) + '</p><details class="material-map-details" open><summary>查看结构导航、主题信号与核验候选</summary><div class="map-grid"><div><h4>结构导航</h4><div class="outline-list">' + outline + '</div></div><div>' + (topics ? '<h4>关注信号</h4><div class="signal-list">' + topics + '</div>' : '') + (regs ? '<h4>识别到的规范名称</h4><div class="signal-list">' + regs + '</div>' : '') + (!topics && !regs ? '<h4>关注信号</h4><p class="form-note">这篇材料没有明显的专名或高频主题词。</p>' : '') + '</div></div><h4>待核验候选项</h4><div>' + risks + '</div></details>';
     $$('[data-block-id]', box).forEach(button => button.addEventListener('click', () => showSourceBlock(doc.id, button.dataset.blockId)));
+    box.scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (error) { box.innerHTML = '<h3>材料地图</h3><p class="message error">' + escapeHtml(error.message) + '</p>'; }
 }
 
@@ -691,8 +692,14 @@ function renderStructurePanel() {
   const defaultChapter = latestPlan?.chapters?.find(chapter => chapter.enabled !== false);
   const defaultDocument = docs.find(doc => doc.id === defaultDocId) || docs[0];
   const chapterWordLimit = latestPlan ? Math.min(8000, latestPlan.chapters.filter(chapter => chapter.enabled !== false).length * 2400) : 8000;
-  const defaultWords = Math.min(project.target_duration <= 5 ? Math.min(1800, project.target_duration * 240) : 3800, chapterWordLimit || 8000);
+  // 目标字数默认按原文比例折算（约原文字数的 45%），没有字数信息时才回退到时长估算。
+  const sourceChars = Number(defaultDocument.source_chars || 0);
+  const proportionalWords = sourceChars ? Math.round(sourceChars * 0.45) : 0;
+  const fallbackWords = project.target_duration <= 5 ? Math.min(1800, project.target_duration * 240) : 3800;
+  const defaultWords = Math.max(400, Math.min(8000, chapterWordLimit || 8000, proportionalWords || fallbackWords));
+  const ratioLabel = proportionalWords ? '按原文比例 · 约 ' + Math.min(proportionalWords, 8000).toLocaleString() + ' 字' : '按原文比例';
   const wordPresets = [
+    ['ratio', ratioLabel, proportionalWords || fallbackWords],
     ['short', '短篇 · 约 1,800 字', project.target_duration <= 5 ? Math.min(1800, project.target_duration * 240) : 1800],
     ['standard', '标准 · 约 3,800 字', 3800],
     ['deep', '深度 · 约 7,000 字', 7000],
@@ -712,7 +719,7 @@ function renderStructurePanel() {
     '<div class="field"><label>目标听众</label><input id="narrative-audience" value="' + escapeHtml(scenario.audience) + '" /></div>' +
     '<div class="field full"><label>目标成稿字数</label><input id="narrative-target-words" type="number" min="400" max="8000" step="100" value="' + defaultWords + '"/>' +
       '<div class="style-preset-chips">' + wordPresets.map(([key, label, words]) => '<button type="button" class="preset-chip ' + (defaultWords === Math.min(words, 8000) ? 'active' : '') + '" data-set-words="' + words + '">' + label + '</button>').join('') + '</div>' +
-      '<small class="field-hint" id="narrative-word-hint">用于分配每节篇幅，实际字数可能有偏差；不按字数填充空话。</small></div>' +
+      '<small class="field-hint" id="narrative-word-hint">默认按原文约 45% 折算，实际字数可能有偏差；不按字数填充空话。</small></div>' +
     '<div class="field full"><label>写作画像</label><select id="narrative-profile"><option value="">正在加载画像…</option></select><button type="button" class="button button-outline button-small" id="manage-profile">新增 / 编辑画像</button><small class="field-hint">系统只把选定素材块发送给模型；画像影响表达方式，不改变事实来源。</small></div>' +
     '<div class="field full"><label>素材范围</label><div class="narrative-scope">' + scopeOptions + '</div></div>' +
     (supplementDocs.length ? '<div class="field full"><label class="check-label"><input type="checkbox" id="narrative-web-augment" ' + (project.web_research_mode === 'augment' ? 'checked' : '') + '/> 补充使用已登记公开链接的资料</label></div><div class="field full" id="narrative-supplemental" ' + (project.web_research_mode === 'augment' ? '' : 'hidden') + '><label>补充公开资料（需逐份勾选）</label>' + supplementOptions + '<small class="field-hint">只会读取勾选资料的正文；未勾选的网页不会进入生成请求。</small></div>' : '') + '</div>' +
@@ -736,7 +743,7 @@ function renderStructurePanel() {
     const input = $('#narrative-target-words');
     input.max = limit || 8000;
     if (Number(input.value) > Number(input.max)) input.value = input.max;
-    $('#narrative-word-hint').textContent = (limit < 8000 ? '当前章节范围最多 ' + limit.toLocaleString() + ' 字；' : '') + '实际字数可能有偏差，不按字数填充空话。';
+    $('#narrative-word-hint').textContent = (limit < 8000 ? '当前章节范围最多 ' + limit.toLocaleString() + ' 字；' : '') + '默认按原文约 45% 折算，实际字数可能有偏差。';
   };
   const syncWordChips = () => {
     const words = Number($('#narrative-target-words').value);
@@ -1109,6 +1116,8 @@ function renderNarrativeContentCard(content) {
   let bodyContent;
   if (isEditing) {
     bodyContent = '<textarea class="narrative-editor" data-narrative-editor="' + content.id + '">' + escapeHtml(content.markdown) + '</textarea>';
+    // 编辑模式下无目录列，避免编辑区被挤进 250px 侧栏列。
+    bodyContent = '<div class="reading-layout reading-editing"><div class="reading-main">' + bodyContent + '</div></div>';
   } else if (focused) {
     const index = reading.indexOf(focused);
     const prev = reading[index - 1], next = reading[index + 1];
@@ -1124,7 +1133,7 @@ function renderNarrativeContentCard(content) {
 const sectionOps = (content.section_sources || []).map((section, index) => '<div class="section-ops-row"><span class="section-ops-name">' + String(index + 1).padStart(2, '0') + '. ' + escapeHtml(section.heading || '未命名章节') + '</span><span class="section-ops-buttons"><button class="button button-quiet button-small" data-regenerate-section="' + content.id + '" data-section-id="' + escapeHtml(section.section_id) + '">重做本节</button><button class="button button-quiet button-small" data-export-section="' + content.id + '" data-section-id="' + escapeHtml(section.section_id) + '">导出本节</button></span></div>').join('');
   const scenario = SCENARIOS[appState.selectedProject.project.scenario] || SCENARIOS.topic_learning;
   const reviewNote = content.review_note || '请核对讲稿与材料的一致性。确认后再用于正式交付；长度检查只用于提醒。';
-  return '<article class="narrative-content-card"><div class="content-card-header"><div><p class="doc-kicker">' + escapeHtml(scenario.narrativeLabel) + ' · ' + statusText(content.status) + '</p><h3>' + escapeHtml(content.title) + '</h3><small>模型：' + escapeHtml(model.model_name || '未记录') + ' · <span class="status ' + content.status + '">' + statusText(content.status) + '</span> · ' + escapeHtml(floorText) + ' · ' + escapeHtml(researchText) + '</small></div><div class="detail-actions"><button class="button button-outline button-small" data-toggle-narrative-view="' + content.id + '">' + viewToggleText + '</button><button class="button button-outline button-small" data-confirm-narrative="' + content.id + '">确认审阅</button><button class="button button-outline button-small" data-export-narrative="' + content.id + '">导出 ' + (content.status === 'confirmed' ? 'DOCX' : '审阅稿') + '</button>' + (isEditing ? '<button class="button button-primary button-small" data-save-narrative="' + content.id + '">保存修改</button>' : '') + '</div></div><div class="reading-layout">' + (isEditing ? '' : toc) + '<div class="reading-main">' + bodyContent + '</div></div><div class="review-bar"><span class="review-note">' + escapeHtml(reviewNote) + '</span><details class="section-ops"><summary>按节重做 / 导出（共 ' + (content.section_sources || []).length + ' 节）</summary><div class="section-ops-list">' + sectionOps + '</div></details></div></article>';
+  return '<article class="narrative-content-card"><div class="content-card-header"><div><p class="doc-kicker">' + escapeHtml(scenario.narrativeLabel) + ' · ' + statusText(content.status) + '</p><h3>' + escapeHtml(content.title) + '</h3><small>模型：' + escapeHtml(model.model_name || '未记录') + ' · <span class="status ' + content.status + '">' + statusText(content.status) + '</span> · ' + escapeHtml(floorText) + ' · ' + escapeHtml(researchText) + '</small></div><div class="detail-actions"><button class="button button-outline button-small" data-toggle-narrative-view="' + content.id + '">' + viewToggleText + '</button><button class="button button-outline button-small" data-confirm-narrative="' + content.id + '">确认审阅</button><button class="button button-outline button-small" data-export-narrative="' + content.id + '">导出 ' + (content.status === 'confirmed' ? 'DOCX' : '审阅稿') + '</button>' + (isEditing ? '<button class="button button-primary button-small" data-save-narrative="' + content.id + '">保存修改</button>' : '') + '</div></div>' + bodyContent + '<div class="review-bar"><span class="review-note">' + escapeHtml(reviewNote) + '</span><details class="section-ops"><summary>按节重做 / 导出（共 ' + (content.section_sources || []).length + ' 节）</summary><div class="section-ops-list">' + sectionOps + '</div></details></div></article>';
 }
 
 async function saveNarrative(contentId, button) {
@@ -1152,7 +1161,7 @@ async function exportNarrative(contentId, button) {
 function renderAudioPanel() {
   const panel = $('#detail-panel');
   const contents = appState.selectedProject.narrative_contents || [];
-  const outputs = appState.selectedProject.audio_outputs || [];
+  const outputs = sortAudioOutputs(appState.selectedProject.audio_outputs || [], contents);
   const confirmedContents = contents.filter(item => item.status === 'confirmed');
   const audiobookCard = '<section class="panel-card"><h3>导出有声书（m4b）</h3>' + (confirmedContents.length ? '<p>把已确认讲稿按章节合成单一 m4b：自带章节标记与封面，拷到 iCloud Drive 后在 iPhone 图书/文件 App 中即可逐章收听，进度自动同步。</p><button class="button button-outline button-small" id="export-audiobook">合成有声书</button><p class="form-note">已逐章生成的音频会直接复用，不会重新合成。</p>' : '<p class="form-note">请先确认讲稿审阅，再合成有声书。</p>') + '</section>';
   panel.innerHTML = '<section class="panel-card audio-intro"><p class="eyebrow">音频输出</p><h3>先校对脚本，再生成最终音频</h3><p>讲稿草稿可以整理为口播脚本并试听；只有“已确认”的讲稿才能生成完整 MP3。浏览器朗读只用于校对，正式音质由所选 TTS 服务与音色决定。</p></section><section class="panel-card"><h3>从讲稿生成音频脚本</h3><p>可以整理整篇讲稿，也可以只整理其中一章。章节速听更适合通勤、运动等碎片时间逐节收听。</p><label class="audio-naturalize"><input type="checkbox" id="naturalize-audio"/><span>使用文本模型改善口语节奏<span class="audio-naturalize-note">额外调用一次模型；生成后仍需核对事实</span></span></label>' + (contents.length ? '<div class="audio-source-list">' + contents.map(renderAudioSourceRow).join('') + '</div>' : '<p class="form-note">请先在“' + (SCENARIOS[appState.selectedProject.project.scenario] || SCENARIOS.topic_learning).narrativeLabel + '”中生成讲稿。</p>') + '</section><section class="panel-card"><h3>音频脚本与文件</h3><div class="audio-output-list">' + (outputs.length ? outputs.map(renderAudioOutput).join('') : '<p class="form-note">尚未生成音频脚本。</p>') + '</div></section>' + audiobookCard;
@@ -1162,6 +1171,7 @@ function renderAudioPanel() {
   $$('[data-speak-script]').forEach(button => button.addEventListener('click', () => speakAudioScript(button.dataset.speakScript, button)));
   $$('[data-synthesize-audio]').forEach(button => button.addEventListener('click', () => synthesizeAudio(button.dataset.synthesizeAudio, button)));
   $$('[data-export-audio]').forEach(button => button.addEventListener('click', () => exportAudioOutput(button.dataset.exportAudio, button)));
+  $$('audio[data-output-player]').forEach(player => player.addEventListener('play', () => stopOtherAudio(player)));
   const audiobookButton = $('#export-audiobook');
   if (audiobookButton) audiobookButton.addEventListener('click', () => exportAudiobook(audiobookButton));
   $$('.audio-script-details').forEach(details => details.addEventListener('toggle', () => {
@@ -1169,6 +1179,25 @@ function renderAudioPanel() {
     if (details.open) appState.openAudioScript = details.dataset.audioId;
     else if (appState.openAudioScript === details.dataset.audioId) appState.openAudioScript = null;
   }));
+}
+
+function sortAudioOutputs(outputs, contents) {
+  // 按讲稿章节顺序排列：整篇在前，各章按讲稿中二级标题的出现顺序；未知标题排在后面。
+  const orderOf = new Map();
+  contents.forEach(content => {
+    orderOf.set(content.title, 0);
+    let index = 0;
+    (content.markdown || '').split(/\r?\n/).forEach(line => {
+      if (line.startsWith('## ')) { index += 1; orderOf.set(content.title + ' · ' + line.slice(3).trim(), index); }
+    });
+    if (!index) (content.section_sources || []).forEach((section, i) => orderOf.set(content.title + ' · ' + section.heading, i + 1));
+  });
+  return [...outputs].sort((a, b) => (orderOf.has(a.title) ? orderOf.get(a.title) : 999) - (orderOf.has(b.title) ? orderOf.get(b.title) : 999) || a.title.localeCompare(b.title, 'zh'));
+}
+
+function stopOtherAudio(exceptPlayer) {
+  $$('audio').forEach(player => { if (player !== exceptPlayer) player.pause(); });
+  if ('speechSynthesis' in window) window.speechSynthesis.cancel();
 }
 
 function renderAudioSourceRow(content) {
@@ -1183,7 +1212,7 @@ function renderAudioSourceRow(content) {
 }
 
 function renderAudioOutput(output) {
-  const player = output.audio_available ? '<audio controls src="/api/audio-outputs/' + output.id + '/stream?v=' + encodeURIComponent(output.updated_at) + '"></audio>' : '';
+  const player = '<audio controls data-output-player="' + output.id + '" ' + (output.audio_available ? 'src="/api/audio-outputs/' + output.id + '/stream?v=' + encodeURIComponent(output.updated_at) + '"' : 'data-no-audio="1"') + '></audio>';
   const source = (appState.selectedProject.narrative_contents || []).find(content => content.id === output.narrative_content_id);
   const readyForMp3 = source?.status === 'confirmed';
   const mp3Hint = readyForMp3 ? '' : '<small class="audio-gate-hint">确认对应讲稿后可生成完整 MP3</small>';
@@ -1195,7 +1224,7 @@ function renderAudioOutput(output) {
   return '<article class="audio-output-card"><div class="audio-output-main"><div class="audio-output-head"><span class="tag">' + statusLabel + '</span><h4>' + escapeHtml(output.title) + '</h4></div><details class="audio-script-details" data-audio-id="' + output.id + '"' + opened + '><summary>查看 / 编辑完整口播脚本</summary><div class="audio-script-body"><textarea class="audio-script-editor" data-audio-editor="' + output.id + '">' + escapeHtml(script) + '</textarea><div class="audio-script-meta"><span class="audio-script-stats">' + stats + '</span><button class="button button-outline button-small" data-save-audio="' + output.id + '">保存脚本</button></div><p class="audio-script-hint">修改脚本后，原有 MP3 会失效，需要重新生成。</p></div></details></div><div class="audio-actions">' + player +
     '<div class="audio-action-group"><span class="audio-action-label">试听</span><button class="button button-outline button-small" data-speak-script="' + output.id + '">浏览器校对朗读</button><button class="button button-outline button-small" data-preview-audio="' + output.id + '">TTS 短片试听</button></div>' +
     '<div class="audio-action-group"><span class="audio-action-label">产出</span><button class="button button-primary button-small" data-synthesize-audio="' + output.id + '" ' + (readyForMp3 ? '' : 'disabled') + '>' + (output.audio_available ? '重新生成 MP3' : '生成 MP3') + '</button>' + mp3Hint + '<button class="button button-outline button-small" data-export-audio="' + output.id + '">导出脚本与音频</button></div>' +
-    '<audio controls hidden data-preview-player="' + output.id + '"></audio></div></article>';
+    '</div></article>';
 }
 
 async function saveAudioScript(id, button) {
@@ -1212,11 +1241,13 @@ async function previewAudio(id, button) {
   try {
     setBusy(button, true, '合成试听片段…');
     const response = await request('/api/audio-outputs/' + id + '/synthesize', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({preview:true})});
-    const player = $('[data-preview-player="' + id + '"]');
+    const player = $('[data-output-player="' + id + '"]');
     if (!player) return;
     if (player.src.startsWith('blob:')) URL.revokeObjectURL(player.src);
-    player.src = URL.createObjectURL(await response.blob()); player.hidden = false;
-    showMessage('试听片段已生成，请点击播放。使用的是已保存脚本的前 180 字。');
+    stopOtherAudio(player);
+    player.src = URL.createObjectURL(await response.blob());
+    player.play();
+    showMessage('正在播放试听片段（已保存脚本的前 180 字）；点「重新生成 MP3」可恢复完整版。');
   } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); }
 }
 
@@ -1233,7 +1264,23 @@ async function createAudioScript(contentId, button) {
 }
 
 async function speakAudioScript(audioId, button) {
-  try { const output = await request('/api/audio-outputs/' + audioId); if (!('speechSynthesis' in window)) throw new Error('当前浏览器不支持语音试听。'); window.speechSynthesis.cancel(); const utterance = new SpeechSynthesisUtterance(output.script); utterance.lang = 'zh-CN'; utterance.rate = 1; window.speechSynthesis.speak(utterance); button.textContent = '正在试听…'; utterance.onend = () => { button.textContent = '浏览器校对朗读'; }; } catch (error) { showMessage(error.message, true); }
+  try {
+    const output = await request('/api/audio-outputs/' + audioId);
+    if (!('speechSynthesis' in window)) throw new Error('当前浏览器不支持语音试听。');
+    const synth = window.speechSynthesis;
+    // 再点一次 = 停止朗读；开始前先停掉其他正在播放的声音。
+    if (appState.speakingScriptId === audioId && synth.speaking) {
+      synth.cancel(); appState.speakingScriptId = ''; button.textContent = '浏览器校对朗读'; return;
+    }
+    synth.cancel(); stopOtherAudio();
+    const utterance = new SpeechSynthesisUtterance(output.script);
+    utterance.lang = 'zh-CN'; utterance.rate = 1;
+    const reset = () => { appState.speakingScriptId = ''; button.textContent = '浏览器校对朗读'; };
+    utterance.onend = reset; utterance.onerror = reset;
+    appState.speakingScriptId = audioId;
+    button.textContent = '⏹ 停止朗读';
+    synth.speak(utterance);
+  } catch (error) { showMessage(error.message, true); }
 }
 
 async function synthesizeAudio(audioId, button) {
@@ -1241,14 +1288,22 @@ async function synthesizeAudio(audioId, button) {
 }
 
 async function exportAudioOutput(audioId, button) {
-  try { setBusy(button, true, '导出中…'); const result = await request('/api/audio-outputs/' + audioId + '/export', { method: 'POST' }); showMessage('音频脚本已导出：' + result.script_path); } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); }
+  try { setBusy(button, true, '导出中…'); const result = await request('/api/audio-outputs/' + audioId + '/export', { method: 'POST' }); await revealExportedFile(result.script_path); } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); }
+}
+
+async function revealExportedFile(path) {
+  if (!path) { showMessage('导出完成。'); return; }
+  try {
+    await request('/api/reveal-in-finder', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path }) });
+    showMessage('已导出并在访达中定位：' + path);
+  } catch (_) { showMessage('已导出到：' + path); }
 }
 
 async function exportAudiobook(button) {
   try {
     setBusy(button, true, '合成中…');
     const result = await request('/api/projects/' + appState.selectedProject.project.id + '/audiobook', { method: 'POST' });
-    showMessage('有声书已生成（' + result.chapters + ' 章）：' + result.audiobook_path);
+    await revealExportedFile(result.audiobook_path);
   } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); }
 }
 
@@ -1299,7 +1354,9 @@ async function oneClickGenerate() {
     try { prefs = JSON.parse(localStorage.getItem('shengxi-oneclick-prefs') || '{}') || {}; } catch (_) { prefs = {}; }
     const audience = ($('#narrative-audience')?.value.trim()) || prefs.audience || scenario.audience;
     const wordsInput = Number($('#narrative-target-words')?.value);
-    const targetWords = Math.max(400, Math.min(8000, wordsInput || prefs.targetWords || Math.min(project.target_duration <= 5 ? Math.min(1800, project.target_duration * 240) : 3800, 8000)));
+    const sourceChars = appState.selectedProject.documents.reduce((sum, doc) => sum + Number(doc.source_chars || 0), 0);
+    const proportionalWords = sourceChars ? Math.round(sourceChars * 0.45) : 0;
+    const targetWords = Math.max(400, Math.min(8000, wordsInput || prefs.targetWords || proportionalWords || Math.min(project.target_duration <= 5 ? Math.min(1800, project.target_duration * 240) : 3800, 8000)));
     localStorage.setItem('shengxi-oneclick-prefs', JSON.stringify({ audience, targetWords }));
     // 第一步：章节方案（已确认则复用）
     let planId = '';

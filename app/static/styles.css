@@ -407,6 +407,7 @@ body.in-project .project-detail { margin-top: 0; }
 body.in-project .detail-header { position: sticky; top: 0; z-index: 40; background: var(--paper, #f7f5ef); padding: 12px 0; border-bottom: 1px solid var(--border); }
 
 /* ===== 讲稿阅读模式：侧边章节目录 + 单章聚焦 ===== */
+.reading-layout.reading-editing { grid-template-columns: minmax(0, 1fr); }
 .reading-layout {
   display: grid;
   grid-template-columns: 250px minmax(0, 1fr);
