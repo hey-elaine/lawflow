@@ -617,3 +617,48 @@ class ImprovementsTest(unittest.TestCase):
         self.assertTrue(output.is_file())
         self.assertGreaterEqual(duration, len(chunks))
         self.assertLessEqual(duration, len(chunks) + 1)
+
+    def test_macos_voice_detection_endpoint_and_resolution(self):
+        fake = "Tingting               zh_CN    # 你好\nTingting (Enhanced)    zh_CN    # 你好\nMeijia                 zh_TW    # 您好\n"
+        with patch.object(self.main, 'list_macos_zh_voices', return_value=self.main.__dict__ and [
+            {'name': 'Tingting', 'lang': 'zh_cn', 'enhanced': False},
+            {'name': 'Tingting (Enhanced)', 'lang': 'zh_cn', 'enhanced': True},
+            {'name': 'Meijia', 'lang': 'zh_tw', 'enhanced': False},
+        ]):
+            response = self.client.get('/api/settings/macos-voices')
+            self.assertEqual(response.status_code, 200)
+            data = response.json()
+            self.assertTrue(data['available'])
+            self.assertTrue(data['enhanced_available'])
+            self.assertEqual(len(data['voices']), 3)
+            self.assertIn('增强版', data['hint'])
+            # 基础音色自动升级为增强版
+            self.assertEqual(self.main.resolve_macos_voice('Tingting'), 'Tingting (Enhanced)')
+            # 未知音色回落到普通话（优先增强版）
+            self.assertEqual(self.main.resolve_macos_voice('Nonexistent'), 'Tingting (Enhanced)')
+            # 显式增强版保持不变
+            self.assertEqual(self.main.resolve_macos_voice('Tingting (Enhanced)'), 'Tingting (Enhanced)')
+        with patch.object(self.main, 'list_macos_zh_voices', return_value=[]):
+            empty = self.client.get('/api/settings/macos-voices')
+            self.assertFalse(empty.json()['available'])
+            self.assertIn('系统设置', empty.json()['hint'])
+
+    def test_demo_project_is_generic_and_legacy_cleanup(self):
+        created = self.client.post('/api/demo-project')
+        self.assertEqual(created.status_code, 201)
+        first = created.json()
+        self.assertTrue(first['created'])
+        projects = self.client.get('/api/projects').json()
+        names = [item['name'] for item in projects]
+        self.assertIn(self.main.DEMO_PROJECT_NAME, names)
+        self.assertNotIn(self.main.LEGACY_DEMO_PROJECT_NAME, names)
+        detail = self.client.get('/api/projects/' + first['project_id']).json()
+        script_texts = [item['script'] for item in detail['audio_outputs']]
+        joined = ' '.join(script_texts)
+        for term in ('法律', '律师', '备案', '合规'):
+            self.assertNotIn(term, joined)
+        self.assertIn('收藏', joined)
+        # 重复调用幂等
+        again = self.client.post('/api/demo-project').json()
+        self.assertFalse(again['created'])
+        self.assertEqual(again['project_id'], first['project_id'])

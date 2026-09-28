@@ -66,8 +66,8 @@ MODEL_PRESETS = {
 
 CONTENT_SCENARIOS = {
     "daily_brief": {
-        "name": "晨间 / 晚间法律速听",
-        "description": "将单篇资讯精炼为适合碎片化收听的短讲稿。",
+        "name": "晨间 / 晚间速听",
+        "description": "将单篇资讯或收藏文章精炼为适合碎片化收听的短讲稿。",
         "transform_mode": "condense",
         "verification_mode": "source_only",
         "target_duration": 5,
@@ -206,32 +206,33 @@ class DailyBriefSubscriptionCreate(BaseModel):
     active: bool = True
 
 
-DEMO_SOURCE_TITLE = "生成式人工智能服务合规动态"
-DEMO_PROJECT_NAME = "示例：五分钟人工智能合规速听"
-DEMO_SOURCE_TEXT = """《生成式人工智能服务管理暂行办法》自 2023 年 8 月 15 日起施行，面向境内公众提供生成式人工智能服务的活动适用相关要求。服务提供者需要采取有效措施防范歧视性内容，并尊重和保护知识产权、商业道德。
+DEMO_SOURCE_TITLE = "为什么我们越来越读不进长文章"
+LEGACY_DEMO_PROJECT_NAME = "示例：五分钟人工智能合规速听"
+DEMO_PROJECT_NAME = "示例：五分钟把收藏变成声音"
+DEMO_SOURCE_TEXT = """收集文章很容易，读完却很难。收藏夹里躺着的链接越来越多，真正看完的却寥寥无几。心理学上把这称为“收集的幻觉”：保存动作本身带来了掌控感，大脑便把“已保存”当作“已理解”，阅读的紧迫感随之消失。
 
-用户输入信息和使用记录属于需要依法保护的业务数据。对于具有舆论属性或者社会动员能力的服务，还应按规定开展安全评估，并履行算法备案、变更或注销备案手续。
+碎片时间也在重塑阅读习惯。手机上的一段文字平均只能获得十几秒的注意力，长文章需要的持续专注成了稀缺能力。研究者发现，深度理解依赖于在段落之间建立联系、停下来反思，而略读和滑屏恰恰跳过了这些环节。
 
-企业准备将境外模型或能力提供给境内公众时，应结合服务对象、运营主体、数据流向和内容治理安排，判断是否触发备案、安全评估和相应责任。"""
-DEMO_MARKDOWN = """# 五分钟读懂生成式人工智能服务合规要点
+一个被反复验证的解法是“二次遇见”：把收藏的文章转成音频，在通勤或散步时重听。听觉的线性节奏天然适合长内容，不能跳跃、不能快滑，注意力反而更容易留存。重听时大脑会自动把要点串联成叙事，这比收藏夹里的一次性囤积有效得多。"""
+DEMO_MARKDOWN = """# 五分钟读懂：怎么把收藏夹里的文章真正读完
 
-如果一家企业准备把生成式人工智能能力直接提供给境内公众，第一步不应只看模型效果，而要先确认服务对象、交付方式和运营主体是否进入了面向公众提供服务的监管范围。
+收藏一篇文章只需要一秒，读完它却需要决心。今天聊一个几乎每个人都会遇到的问题：为什么我们存了那么多好文章，却一篇也读不进去，以及一个简单的解法。
 
-## 先确认业务是否进入适用范围
+## 收藏带来的错觉
 
-办法已明确适用于面向境内公众提供生成式人工智能服务的活动。模型来自境内还是境外，并不是唯一判断依据；真正需要梳理的是谁在运营、谁面对用户、数据如何流动，以及产品是否具有公开传播或社会动员能力。
+保存动作给了大脑一种“已经处理过”的满足感。心理学上称之为收集的幻觉：收藏本身带来掌控感，紧迫感随之消失。于是收藏夹越来越满，真正读完的比例越来越低。
 
-## 内容、数据与备案要同步看
+## 碎片时间改变了阅读方式
 
-内容治理不能只停留在上线前的规则说明。服务提供者需要防范歧视性内容，并兼顾知识产权和商业道德。用户输入和使用记录也需要明确收集、使用和留存边界。对于具有舆论属性或社会动员能力的服务，还要进一步判断是否需要安全评估和算法备案。
+手机上的文字平均只能获得十几秒注意力。深度理解需要我们在段落之间建立联系、停下来反思，而快速滑动恰恰跳过这些环节。不是我们变笨了，而是阅读的节奏被切得太碎。
 
-## 今天可以先完成什么
+## 解法：让文章换一种方式遇见你
 
-把产品的用户范围、模型来源、运营主体和数据流向整理成一页事实说明。它既能帮助判断备案与评估义务，也为内容治理和隐私设计提供后续依据。
+把收藏转成音频，在通勤或散步时重听。听觉的线性节奏不能跳跃、不能快滑，注意力反而更容易留存；重听时大脑会把要点自动串成叙事。这比在收藏夹里囤积有效得多。
 
 ## 结尾
 
-生成式人工智能合规不是上线前的一次性检查，而是产品、运营和法务共同维护的日常机制。"""
+收藏不是终点，只是等待。给存下来的文字一次重新遇见的机会，它才会真正成为你的。"""
 
 
 class ProfileCreate(BaseModel):
@@ -1433,6 +1434,44 @@ def split_speech_text(script: str, limit: int = 1200) -> list[str]:
     return chunks
 
 
+def list_macos_zh_voices() -> list[dict]:
+    """解析 `say -v '?'`，返回本机可用的中文语音（含增强版识别）。"""
+    if sys.platform != "darwin" or not shutil.which("say"):
+        return []
+    try:
+        raw = subprocess.run(["say", "-v", "?"], capture_output=True, text=True, timeout=10).stdout or ""
+    except (subprocess.SubprocessError, OSError):
+        return []
+    voices = []
+    for line in raw.splitlines():
+        match = re.match(r"^(.+?)\s{2,}((?:zh|cmn)[-_A-Za-z]*)\s+#", line.strip())
+        if match:
+            name = match.group(1).strip()
+            lowered = name.lower()
+            voices.append({
+                "name": name,
+                "lang": match.group(2).lower(),
+                "enhanced": "(enhanced)" in lowered or "(premium)" in lowered,
+            })
+    return voices
+
+
+def resolve_macos_voice(preferred: str) -> str:
+    """优先使用增强版音色；普通话优先，未安装的音色回落到可用中文音色。"""
+    installed = list_macos_zh_voices()
+    if not installed:
+        return preferred
+    names = {voice["name"] for voice in installed}
+    if preferred in names:
+        base_name = preferred.split(" (")[0].strip()
+        enhanced = next((voice["name"] for voice in installed if voice["enhanced"] and voice["name"].split(" (")[0].strip() == base_name), None)
+        return enhanced or preferred
+    mandarin = [voice for voice in installed if voice["lang"].startswith(("zh_cn", "zh-cn", "cmn"))]
+    pool = mandarin or [voice for voice in installed if voice["lang"].startswith("zh")] or installed
+    enhanced = next((voice["name"] for voice in pool if voice["enhanced"]), None)
+    return enhanced or (pool[0]["name"] if pool else preferred)
+
+
 def speech_chunk(text: str, settings: dict) -> tuple[bytes, str]:
     provider = settings.get("tts_provider", "compatible")
     base = (settings.get("tts_base_url") or "").rstrip("/")
@@ -1441,7 +1480,7 @@ def speech_chunk(text: str, settings: dict) -> tuple[bytes, str]:
     if provider == "macos_say":
         if sys.platform != "darwin" or not shutil.which("say"):
             raise HTTPException(400, "macOS 免费语音仅能在安装了 say 命令的 Mac 上使用。")
-        voice = settings.get("tts_voice") or "Tingting"
+        voice = resolve_macos_voice((settings.get("tts_voice") or "Tingting").strip())
         speech_rate = max(90, min(360, round(175 * speed)))
         try:
             with tempfile.TemporaryDirectory(prefix="lawflow-macos-say-") as temp:
@@ -2136,12 +2175,19 @@ def rename_project(project_id: str, payload: ProjectRename):
 @app.post("/api/demo-project", status_code=201)
 def create_demo_project():
     """创建本地可删除的完整示例，不调用任何外部模型服务。"""
+    # 旧版法律主题示例自动退场，避免书架里出现两个示例。
+    legacy = next((project for project in list_projects() if project["name"] == LEGACY_DEMO_PROJECT_NAME), None)
+    if legacy is not None:
+        try:
+            delete_project(legacy["id"])
+        except HTTPException:
+            pass  # 旧示例清理失败不影响新示例创建
     existing = next((project for project in list_projects() if project["name"] == DEMO_PROJECT_NAME), None)
     if existing is not None:
         return {"project_id": existing["id"], "created": False}
     project = create_project(ProjectCreate(
         name=DEMO_PROJECT_NAME,
-        description="演示从法规资讯、结构确认、ChatGPT 协作到音频脚本与导出的完整本地流程。",
+        description="演示从收藏文章、结构确认到音频脚本与导出的完整本地流程。",
         scenario="daily_brief",
         transform_mode="condense",
         verification_mode="source_only",
@@ -2151,26 +2197,26 @@ def create_demo_project():
     source = create_text_source(project["id"], TextSourceCreate(
         title=DEMO_SOURCE_TITLE,
         content=DEMO_SOURCE_TEXT,
-        source_url="https://www.cac.gov.cn/2023-07/13/c_1690898327029107.htm",
+        source_url="",
     ))
     document = get_document(source["id"])
     source_ids = [block["id"] for block in document["blocks"] if block["kind"] == "paragraph"]
     plan = create_plan(project["id"], PlanCreate(
         source_document_id=source["id"],
-        audience="法律从业者",
+        audience="爱读书、爱收藏文章的普通人",
         output_type="lexcast",
-        style_name="自然、专业、适合晨间速听",
+        style_name="自然、温暖、适合晨间速听",
         include_audio=True,
     ))
     confirm_plan(plan["id"], PlanConfirm(chapters=plan["chapters"]))
     content = create_skill_host_content(project["id"], SkillHostContentRequest(
         document_id=source["id"],
-        title="五分钟读懂生成式人工智能服务合规要点",
+        title="五分钟读懂：怎么把收藏夹里的文章真正读完",
         markdown=DEMO_MARKDOWN,
         source_block_ids=source_ids,
-        audience="法律从业者",
+        audience="爱读书、爱收藏文章的普通人",
         style_profile="law_podcast_v4",
-        review_note="示例成稿：已按选定材料整理，等待律师确认。",
+        review_note="示例成稿：已按选定材料整理，等待确认。",
     ))
     create_audio_script(project["id"], AudioScriptRequest(narrative_content_id=content["id"]))
     return {"project_id": project["id"], "created": True}
@@ -3148,7 +3194,7 @@ def build_audio_script(markdown: str, title: str, scenario: str, target_duration
         text = re.sub(r"\[(\d+)\]", "", text)
         clean_lines.append(text)
     intro_map = {
-        "daily_brief": f"下面是《{title}》的法律速听，预计 {target_duration} 分钟。",
+        "daily_brief": f"下面是《{title}》的速听，预计 {target_duration} 分钟。",
         "topic_learning": f"下面开始本期主题学习：《{title}》。",
         "speaking_note": f"下面是一份关于《{title}》的培训讲稿口播版。",
         "legal_podcast": f"欢迎收听本期法律科普：《{title}》。",
@@ -3457,8 +3503,22 @@ def test_provider_connection(_: ProviderConnectionTest | None = None):
 @app.post("/api/settings/tts/test")
 def test_tts_connection():
     """Synthesise a short preview without requiring a text-model configuration."""
-    audio, _ = speech_chunk("你好，这是一段 LawFlow 语音试听。", get_internal_provider_settings())
+    audio, _ = speech_chunk("你好，这是一段声息语音试听。", get_internal_provider_settings())
     return Response(audio, media_type="audio/mpeg")
+
+
+@app.get("/api/settings/macos-voices")
+def get_macos_voices():
+    """检测本机可用的中文音色，并说明增强版可用性与下载指引。"""
+    voices = list_macos_zh_voices()
+    enhanced_available = any(voice["enhanced"] for voice in voices)
+    if not voices:
+        return {"available": False, "voices": [], "enhanced_available": False,
+                "hint": "未检测到 macOS 中文音色。请在「系统设置 → 辅助功能 → 朗读内容 → 系统声音 → 管理声音」中下载中文语音后重试。"}
+    hint = ("已检测到增强版音色，生成 MP3 时会自动优先使用，听感更自然。"
+            if enhanced_available else
+            "当前只有基础音色（偏机械）。想要更自然的声音：打开「系统设置 → 辅助功能 → 朗读内容 → 系统声音 → 管理声音」，下载「婷婷（增强版）」；下载完成后无需改动设置，声息会自动优先使用增强版。")
+    return {"available": True, "voices": voices, "enhanced_available": enhanced_available, "hint": hint}
 
 
 @app.get("/api/settings/export")

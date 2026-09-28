@@ -130,7 +130,7 @@ class LawFlowApiTest(unittest.TestCase):
         self.assertEqual(saved.status_code, 201)
         audio = self.client.post(f"/api/projects/{project_id}/audio-scripts", json={"narrative_content_id": saved.json()["id"]})
         self.assertEqual(audio.status_code, 201)
-        self.assertIn("法律速听", audio.json()["script"])
+        self.assertIn("速听", audio.json()["script"])
 
     def test_narrative_outline_content_and_docx_export_with_mocked_model(self):
         project = self.client.post("/api/projects", json={"name": "知识转译测试"}).json()

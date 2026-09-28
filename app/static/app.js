@@ -170,7 +170,7 @@ async function loadDemoProject(event) {
     const result = await request('/api/demo-project', {method:'POST'});
     await loadProjects();
     await openProject(result.project_id);
-    showMessage(result.created ? '完整示例已加载。可按上方步骤依次查看素材、结构、ChatGPT 协作、音频与导出。' : '已打开现有示例项目。');
+    showMessage(result.created ? '完整示例已加载。可按上方步骤依次查看素材、结构、讲稿、音频与导出。' : '已打开现有示例项目。');
   } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); }
 }
 
@@ -263,11 +263,11 @@ function renderProjectDetail() {
     '<button data-tab="' + key + '" class="' + (appState.activeTab === key ? 'active ' : '') + (status || '') + '"' + (status === 'current' ? ' aria-current="step"' : '') + '>' +
     '<span class="step-mark">' + (status === 'done' ? '✓' : status === 'current' ? '●' : '○') + '</span>' + label + '</button>'
   ).join('');
-  detail.innerHTML = '<div class="detail-header"><div><p class="eyebrow">' + escapeHtml(scenario.name) + '</p><h2>' + escapeHtml(data.project.name) + '</h2><p>' + escapeHtml(data.project.client_name || data.project.description || scenario.description) + '</p><div class="task-preferences"><button type="button" class="tag-edit-btn" id="edit-collection" title="归类到某个收藏夹">🏷 ' + ((data.project.collection || '').trim() ? escapeHtml(data.project.collection.trim()) : '未归类 · 点此归类') + '</button><span>' + TRANSFORM_NAMES[data.project.transform_mode] + '</span><span>' + VERIFICATION_NAMES[data.project.verification_mode] + '</span><span>' + data.project.target_duration + ' 分钟目标时长</span></div></div><div class="detail-actions"><button class="button button-outline button-small" id="back-to-projects">← 全部项目</button><button class="button button-outline button-small" id="export-project">导出至本机目录</button><button class="button button-outline button-small" id="reload-project">刷新任务</button><button class="button button-danger button-small" id="delete-project">删除任务</button></div></div>' + '<div class="tabbar">' + tabHtml + '</div>' + renderWorkflowHint(data, state) + '<div id="detail-panel" class="detail-panel"></div>';
+  detail.innerHTML = '<div class="detail-header"><div><p class="eyebrow">' + escapeHtml(scenario.name) + '</p><h2>' + escapeHtml(data.project.name) + '</h2><p>' + escapeHtml(data.project.client_name || data.project.description || scenario.description) + '</p><div class="task-preferences"><button type="button" class="tag-edit-btn" id="edit-collection" title="归类到某个收藏夹">🏷 ' + ((data.project.collection || '').trim() ? escapeHtml(data.project.collection.trim()) : '未归类 · 点此归类') + '</button><span>' + TRANSFORM_NAMES[data.project.transform_mode] + '</span><span>' + VERIFICATION_NAMES[data.project.verification_mode] + '</span><span>' + data.project.target_duration + ' 分钟目标时长</span></div></div><div class="detail-actions">' + (data.documents.length && !(data.narrative_contents || []).length ? '<button class="button button-primary button-small" id="one-click-generate">⚡ 一键生成</button>' : '') + '<button class="button button-outline button-small" id="back-to-projects">← 全部项目</button><button class="button button-outline button-small" id="export-project">导出至本机目录</button><button class="button button-outline button-small" id="reload-project">刷新任务</button><button class="button button-danger button-small" id="delete-project">删除任务</button></div></div>' + '<div class="tabbar">' + tabHtml + '</div>' + renderWorkflowHint(data, state) + '<div id="detail-panel" class="detail-panel"></div>';
   $('#edit-collection')?.addEventListener('click', () => openCollectionDialog(data.project.id));
   $$('.tabbar button', detail).forEach(button => button.addEventListener('click', () => { appState.activeTab = button.dataset.tab; renderProjectDetail(); }));
   $$('[data-workflow-next]', detail).forEach(button => button.addEventListener('click', () => { appState.activeTab = button.dataset.workflowNext; renderProjectDetail(); $('#detail-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }));
-  $('#reload-project').addEventListener('click', () => openProject(data.project.id)); $('#back-to-projects').addEventListener('click', closeProject); $('#export-project').addEventListener('click', exportProject); $('#delete-project').addEventListener('click', deleteProject); renderActivePanel();
+  $('#reload-project').addEventListener('click', () => openProject(data.project.id)); $('#back-to-projects').addEventListener('click', closeProject); $('#export-project').addEventListener('click', exportProject); $('#delete-project').addEventListener('click', deleteProject); const oneClickBtn = $('#one-click-generate'); if (oneClickBtn) oneClickBtn.addEventListener('click', () => oneClickGenerate()); renderActivePanel();
 }
 let collectionDialogProjectId = null;
 
@@ -1270,6 +1270,92 @@ function renderTasksPanel() {
   $$('[data-task-evidence]').forEach(button => button.addEventListener('click', async () => { const doc = currentDocument(); if (!doc) return; await ensureDocumentLoaded(doc.id); const ids = button.dataset.taskEvidence.split(',').filter(Boolean); const blocks = appState.selectedDocument.blocks.filter(block => ids.includes(block.id)); showSourceOverlay('表述的原文依据', blocks.map(block => '<h4>' + escapeHtml(block.source_locator) + '</h4><pre>' + escapeHtml(block.text) + '</pre>').join('')); }));
 }
 async function saveTask(card, status) { status = status || $('.status-pill.active', card)?.dataset.taskStatus || 'open'; try { await request('/api/tasks/' + card.dataset.taskId, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status, owner: ($('.task-owner', card)?.value || '').trim(), due_date: $('.task-due', card)?.value || '' }) }); appState.selectedProject = await request('/api/projects/' + appState.selectedProject.project.id); renderProjectDetail(); showMessage('已保存。'); } catch (error) { showMessage(error.message, true); } }
+async function oneClickGenerate() {
+  const button = $('#one-click-generate');
+  const projectId = appState.selectedProject.project.id;
+  const project = appState.selectedProject.project;
+  try {
+    if (!appState.selectedProject.documents.length) throw new Error('请先导入素材，再一键生成。');
+    if (project.verification_mode === 'external_verify') {
+      const open = (appState.selectedProject.tasks || []).some(task => task.status === 'open' || task.status === 'in_progress');
+      if (open) throw new Error('本项目为对外核验模式：请先在「核验与来源」完成或关闭全部核验事项，再一键生成。');
+    }
+    const scenario = SCENARIOS[project.scenario] || SCENARIOS.topic_learning;
+    let prefs = {};
+    try { prefs = JSON.parse(localStorage.getItem('shengxi-oneclick-prefs') || '{}') || {}; } catch (_) { prefs = {}; }
+    const audience = ($('#narrative-audience')?.value.trim()) || prefs.audience || scenario.audience;
+    const wordsInput = Number($('#narrative-target-words')?.value);
+    const targetWords = Math.max(400, Math.min(8000, wordsInput || prefs.targetWords || Math.min(project.target_duration <= 5 ? Math.min(1800, project.target_duration * 240) : 3800, 8000)));
+    localStorage.setItem('shengxi-oneclick-prefs', JSON.stringify({ audience, targetWords }));
+    // 第一步：章节方案（已确认则复用）
+    let planId = '';
+    const confirmedPlan = appState.selectedProject.plans.find(item => item.status === 'confirmed');
+    if (!confirmedPlan) {
+      const doc = appState.selectedProject.documents[0];
+      setBusy(button, true, 'AI 正在划分章节…');
+      const plan = await request('/api/projects/' + projectId + '/plans', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source_document_id: doc.id, selected_heading_ids: [], audience, output_type: project.scenario === 'speaking_note' ? 'client_brief' : 'lexcast', style_name: '深入浅出、适合朗读', include_audio: !!project.audio_enabled, auto_split: true, split_mode: 'ai' }) });
+      setBusy(button, true, '确认章节结构…');
+      await request('/api/plans/' + plan.id + '/confirm', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chapters: plan.chapters }) });
+      planId = plan.id;
+      appState.selectedProject = await request('/api/projects/' + projectId);
+    } else {
+      planId = confirmedPlan.id;
+    }
+    // 第二步：写作大纲（已有则复用）
+    let outlineId = '';
+    const outlines = appState.selectedProject.narrative_outlines || [];
+    const usableOutline = outlines.find(item => item.status === 'confirmed') || outlines.find(item => item.status === 'draft');
+    if (usableOutline) {
+      outlineId = usableOutline.id;
+      if (usableOutline.status !== 'confirmed') {
+        setBusy(button, true, '确认大纲…');
+        await request('/api/narrative-outlines/' + outlineId + '/confirm', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outline: usableOutline.outline }) });
+      }
+    } else {
+      const doc = appState.selectedProject.documents[0];
+      const docLoaded = await ensureDocumentLoaded(doc.id);
+      const sourceBlockIds = docLoaded.blocks.filter(block => block.kind === 'paragraph').map(block => block.id);
+      if (!sourceBlockIds.length) throw new Error('素材里没有可用的正文段落。');
+      const profiles = (appState.profiles && appState.profiles.length) ? appState.profiles : await request('/api/narrative/profiles');
+      const profileId = (profiles[0] && profiles[0].id) || 'law_podcast_v4';
+      setBusy(button, true, '生成写作大纲…');
+      const outline = await request('/api/projects/' + projectId + '/narrative-outlines', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ document_id: doc.id, source_plan_id: planId, title: (doc.original_name || '学习笔记').replace(/\.[^.]+$/, '').slice(0, 120) || '学习笔记', source_block_ids: sourceBlockIds, audience, style_profile: profileId, target_length: lengthOfWords(targetWords), target_words: targetWords, transform_mode: project.transform_mode, minimum_output_mode: project.minimum_output_mode || 'auto', minimum_output_ratio: Number(project.minimum_output_ratio || 0.3), web_research_mode: 'off' }) });
+      setBusy(button, true, '确认大纲…');
+      await request('/api/narrative-outlines/' + outline.id + '/confirm', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outline: outline.outline }) });
+      outlineId = outline.id;
+    }
+    // 第三步：逐节写作（轮询进度）
+    let content = (appState.selectedProject.narrative_contents || [])[0];
+    if (!content) {
+      let pollTimer = null;
+      try {
+        setBusy(button, true, '逐节写作中（较耗时）…');
+        pollTimer = setInterval(async () => {
+          try {
+            const progress = await request('/api/narrative-outlines/' + outlineId + '/progress');
+            if (progress.status === 'running' && progress.current > 0) setBusy(button, true, '正在写第 ' + progress.current + ' / ' + progress.total + ' 节…');
+          } catch (_) { /* 进度查询失败不影响生成 */ }
+        }, 4000);
+        content = await request('/api/narrative-outlines/' + outlineId + '/contents', { method: 'POST' });
+      } finally { if (pollTimer) clearInterval(pollTimer); }
+    }
+    // 第四步：音频脚本 + MP3
+    if (project.audio_enabled) {
+      setBusy(button, true, '整理音频脚本…');
+      const script = await request('/api/projects/' + projectId + '/audio-scripts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ narrative_content_id: content.id, naturalize: false }) });
+      setBusy(button, true, '合成 MP3…');
+      await request('/api/audio-outputs/' + script.id + '/synthesize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+    }
+    appState.selectedProject = await request('/api/projects/' + projectId);
+    appState.activePlan = appState.selectedProject.plans.find(item => item.id === planId) || null;
+    appState.activeTab = project.audio_enabled ? 'audio' : 'narrative';
+    renderProjectDetail();
+    showMessage('一键生成完成：章节、大纲、讲稿' + (project.audio_enabled ? '和 MP3 音频' : '') + '都已就绪，可以开始收听了。');
+  } catch (error) {
+    showMessage(error.message, true);
+  } finally { setBusy(button, false); }
+}
+
 async function exportProject() { const button = $('#export-project'); try { setBusy(button, true, '正在导出…'); const output = await request('/api/projects/' + appState.selectedProject.project.id + '/exports', { method: 'POST' }); showMessage('成果包已写入：' + output.output_dir); } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); } }
 async function deleteProject() { const project = appState.selectedProject?.project; if (!project) return; const confirmed = window.confirm('删除项目“' + project.name + '”？\n\n项目中的原始材料、章节方案、讲稿、音频和任务记录将从本机工作目录删除。已经导出的成果包不会删除。'); if (!confirmed) return; const button = $('#delete-project'); try { setBusy(button, true, '删除中…'); await request('/api/projects/' + project.id, { method: 'DELETE' }); appState.selectedProjectId = null; appState.selectedProject = null; appState.selectedDocument = null; appState.activePlan = null; $('#project-detail').classList.add('hidden'); $('#project-detail').innerHTML = ''; document.body.classList.remove('in-project'); await loadProjects(); showShelf(); showMessage('项目及本地派生音频已删除。'); } catch (error) { showMessage(error.message, true); } finally { if (button?.isConnected) setBusy(button, false); } }
 function showSourceOverlay(title, html) { const overlay = document.createElement('div'); overlay.className = 'source-modal'; overlay.innerHTML = '<div class="source-modal-card"><div class="source-modal-top"><div><p class="eyebrow">原始材料依据</p><h3>' + escapeHtml(title) + '</h3></div><button class="icon-button" aria-label="关闭">×</button></div><div>' + html + '</div></div>'; $('.icon-button', overlay).addEventListener('click', () => overlay.remove()); overlay.addEventListener('click', event => { if (event.target === overlay) overlay.remove(); }); document.body.appendChild(overlay); }
@@ -1366,7 +1452,7 @@ function bindDialogs() {
         if (ttsFieldset) {
           const testRow = document.createElement('div');
           testRow.className = 'setting-test-row';
-          testRow.innerHTML = '<button type="button" class="button button-outline button-small" id="test-tts">保存并试听音色</button><span id="tts-test-result" class="field-hint"></span><audio id="tts-test-player" controls hidden></audio>';
+          testRow.innerHTML = '<button type="button" class="button button-outline button-small" id="test-tts">保存并试听音色</button><button type="button" class="button button-outline button-small" id="detect-voices">检测本机音色</button><span id="tts-test-result" class="field-hint"></span><audio id="tts-test-player" controls hidden></audio>';
           ttsFieldset.querySelector('.field-hint')?.insertAdjacentElement('afterend', testRow);
         }
       }
@@ -1438,6 +1524,28 @@ function bindDialogs() {
     } catch (error) {
       result.textContent = readableError(error); result.className = 'field-hint error-hint';
     } finally { setBusy(button, false); }
+  });
+  document.addEventListener('click', async event => {
+    if (event.target.id !== 'detect-voices') return;
+    const button = event.target; const result = $('#tts-test-result');
+    try {
+      setBusy(button, true, '检测中…');
+      const data = await request('/api/settings/macos-voices');
+      const names = (data.voices || []).map(voice => (voice.enhanced ? '★ ' : '') + voice.name).join('、');
+      result.textContent = (names ? '本机中文音色：' + names + '（★ 为增强版）。' : '') + (data.hint || '');
+      result.className = 'field-hint ' + (data.enhanced_available ? 'success-hint' : '');
+    } catch (error) {
+      result.textContent = readableError(error); result.className = 'field-hint error-hint';
+    } finally { setBusy(button, false); }
+  });
+  document.addEventListener('input', event => {
+    if (event.target.id !== 'narrative-audience' && event.target.id !== 'narrative-target-words') return;
+    try {
+      const prefs = JSON.parse(localStorage.getItem('shengxi-oneclick-prefs') || '{}') || {};
+      if (event.target.id === 'narrative-audience') prefs.audience = event.target.value.trim();
+      else prefs.targetWords = Number(event.target.value) || undefined;
+      localStorage.setItem('shengxi-oneclick-prefs', JSON.stringify(prefs));
+    } catch (_) { /* 偏好记忆失败不影响使用 */ }
   });
 }
 function applyProviderPreset(form, overwrite = false) {
