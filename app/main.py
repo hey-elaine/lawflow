@@ -2393,16 +2393,8 @@ def fetch_article(url: str) -> tuple[str, str]:
         body = article.group(0)
     else:
         body = re.sub(r".*?<body[^>]*>", "", cleaned, flags=re.S | re.I)
-    body = re.sub(r"</(p|div|h[1-6]|li|tr|section|blockquote|figcaption)>", "\n", body, flags=re.I)
-    body = re.sub(r"<br\s*/?>", "\n", body, flags=re.I)
-    body = re.sub(r"<[^>]+>", "", body)
-    text = unescape(body)
-    paragraphs = []
-    for line in text.splitlines():
-        line = re.sub(r"\s+", " ", line).strip()
-        if line:
-            paragraphs.append(line)
-    return title[:120], "\n\n".join(paragraphs)
+    # 与网页导入同一条净化链路：保留标题层级并过滤界面残留文字
+    return title[:120], html_to_article_text(body)
 
 
 class LinkSourceCreate(BaseModel):
@@ -2510,15 +2502,17 @@ BROWSER_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36
 
 UI_NOISE_RE = re.compile(
     r"^(预览时|修改于|编辑于|发表于|不喜欢|点赞|点踩|回复|举报|分享|收藏|关注|已关注|登录|注册|退出"
-    r"|打开App|打开APP|扫码|下载|评论区|写评论|查看更多|点击查看|展开|收起|下一篇|上一篇|返回"
+    r"|打开App|打开APP|扫码|微信扫一扫|长按识别|扫码关注|轻点两下|点亮在看|正在加载|加载中|下载|评论区|写评论|查看更多|点击查看|展开|收起|下一篇|上一篇|返回"
     r"|相关推荐|继续阅读|阅读全文|全文完|广告|赞助|首页|导航|搜索|订阅|免责声明：以上)"
 )
 
 
 def _is_ui_noise(line: str) -> bool:
-    """网页正文里混入的界面文字：过短且不成句，或命中常见 UI 词。"""
+    """网页正文里混入的界面文字：纯标点、过短且不成句，或命中常见 UI 词。"""
     if line.startswith("#") or line.startswith("- "):
         return False
+    if not re.search(r"[\w\u4e00-鿿]", line):
+        return True
     if len(line) < 10 and not re.search(r"[。！？…：;；\"』」）)]", line):
         return True
     return bool(UI_NOISE_RE.match(line) and len(line) < 20)

@@ -579,6 +579,26 @@ class ImprovementsTest(unittest.TestCase):
         self.assertEqual(response.content, b'preview-mp3')
         self.assertEqual(response.headers['content-type'], 'audio/mpeg')
 
+    def test_fetch_article_filters_noise_and_keeps_headings(self):
+        import httpx
+        html = ('<html><head><meta property="og:title" content="当中国AI企业走上安理会讲台"/></head><body>'
+                '<div id="js_content">'
+                '<h2>为什么重要</h2>'
+                '<p>中国代表在安理会会议上就人工智能治理阐明了立场，强调发展中国家应当拥有平等参与规则制定的权利。</p>'
+                '<p>预览时标签不可点</p><p>不喜欢</p><p>微信扫一扫</p><p>关注该公众号</p><p>知道了</p><p>允许</p><p>使用完整服务</p><p>，</p><p>×</p>'
+                '<p>文章还提到，主要国家正在竞争制定全球人工智能安全标准，技术出口管制成为博弈工具。</p>'
+                '</div></body></html>')
+        response = httpx.Response(200, headers={'content-type': 'text/html; charset=utf-8'}, text=html,
+                                  request=httpx.Request('GET', 'https://mp.weixin.qq.com/s/xyz'))
+        with patch.object(self.main.httpx, 'get', return_value=response):
+            title, text = self.main.fetch_article('https://mp.weixin.qq.com/s/xyz')
+        self.assertEqual(title, '当中国AI企业走上安理会讲台')
+        for noise in ('预览时标签不可点', '不喜欢', '微信扫一扫', '关注该公众号', '知道了', '允许', '使用完整服务', '×'):
+            self.assertNotIn(noise, text)
+        self.assertNotIn('\n，\n', text)
+        self.assertIn('## 为什么重要', text)
+        self.assertIn('中国代表在安理会会议上', text)
+
     def test_web_page_title_extracts_og_title(self):
         import httpx
         project = self.client.post('/api/projects', json={'name': '标题抓取', 'verification_mode': 'source_only'}).json()
