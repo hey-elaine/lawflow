@@ -1502,7 +1502,8 @@ def synthesize_audio(script: str, title: str, settings: dict) -> tuple[Path, str
     return output_path, model, duration
 
 
-SOURCE_BUDGET_CHARS = 60000  # DeepSeek 128K 上下文下安全的一欠性素材预算（支持播客改写 1万→3千 的压缩比）
+SOURCE_BUDGET_CHARS = 60000  # DeepSeek 128K 上下文下安全的一次性素材预算（支持播客改写 1万→3千 的压缩比）
+GENERATION_PROGRESS: dict[str, dict] = {}  # outline_id -> {status,total,current,heading}，供前端轮询逐节写作进度
 
 
 def source_dossier(blocks: list[dict], max_chars_per_block: int = 2600, max_total_chars: int = SOURCE_BUDGET_CHARS) -> str:
@@ -1678,7 +1679,7 @@ def reading_section_ids(markdown: str) -> list[str]:
     return [f"section-{index}" for index in range(1, max(1, len(headings)) + 1)]
 
 
-def generate_narrative_markdown(outline: dict, blocks: list[dict], audience: str, style_profile: str, transform_mode: str = "adapt", scenario: str = "topic_learning", target_duration: int = 10, web_research_mode: str = "discover") -> tuple[str, list[dict], dict]:
+def generate_narrative_markdown(outline: dict, blocks: list[dict], audience: str, style_profile: str, transform_mode: str = "adapt", scenario: str = "topic_learning", target_duration: int = 10, web_research_mode: str = "discover", progress_key: str = "") -> tuple[str, list[dict], dict]:
     profile = get_style_profiles().get(style_profile)
     if profile is None:
         raise HTTPException(status_code=400, detail="未知的写作风格画像。")
@@ -1689,7 +1690,9 @@ def generate_narrative_markdown(outline: dict, blocks: list[dict], audience: str
         "augment": "仅可使用用户明确导入并审阅的公开来源；来源之外的网页信息不得写入正文。",
     }.get(web_research_mode, "不得使用联网检索内容。")
     rendered_sections, section_sources = [], []
+    GENERATION_PROGRESS[progress_key] = {"status": "running", "total": len(outline["sections"]), "current": 0, "heading": ""}
     for section_index, section in enumerate(outline["sections"]):
+        GENERATION_PROGRESS[progress_key] = {"status": "running", "total": len(outline["sections"]), "current": section_index + 1, "heading": section["heading"]}
         selected = [block_map[block_id] for block_id in section["source_block_ids"] if block_id in block_map]
         dossier = source_dossier(selected, max_chars_per_block=2400, max_total_chars=SOURCE_BUDGET_CHARS)
         points = "\n".join("- " + point for point in section.get("key_points", [])) or "- 围绕本节材料展开，不添加材料外事实。"
@@ -1730,6 +1733,7 @@ def generate_narrative_markdown(outline: dict, blocks: list[dict], audience: str
         section_text = re.sub(r"^(?:#{1,6}[ \t]+[^\n]*\r?\n+)+", "", section_text.strip()).strip()
         rendered_sections.append("## {}\n\n{}".format(section["heading"], section_text))
         section_sources.append({"section_id": section["id"], "heading": section["heading"], "source_block_ids": section["source_block_ids"]})
+    GENERATION_PROGRESS[progress_key] = {"status": "done", "total": len(outline["sections"]), "current": len(outline["sections"]), "heading": ""}
     markdown = "# {}\n".format(outline["title"])
     markdown += "\n\n".join(rendered_sections)
     settings = get_internal_provider_settings()
@@ -2743,6 +2747,11 @@ def confirm_narrative_outline(outline_id: str, payload: NarrativeOutlineConfirm)
     return {"id": outline_id, "title": title, "status": "confirmed", "outline": outline}
 
 
+@app.get("/api/narrative-outlines/{outline_id}/progress")
+def narrative_generation_progress(outline_id: str):
+    return GENERATION_PROGRESS.get(outline_id, {"status": "idle", "total": 0, "current": 0, "heading": ""})
+
+
 @app.post("/api/narrative-outlines/{outline_id}/contents", status_code=201)
 def generate_narrative_content(outline_id: str):
     conn = db()
@@ -2760,7 +2769,7 @@ def generate_narrative_content(outline_id: str):
     project = project_or_404(row["project_id"])
     preferences = project_preferences(project)
     outline.update({"minimum_output_mode": preferences["minimum_output_mode"], "minimum_output_ratio": preferences["minimum_output_ratio"]})
-    markdown, section_sources, model_metadata = generate_narrative_markdown(outline, blocks, row["audience"], row["style_profile"], outline.get("transform_mode", preferences["transform_mode"]), preferences["scenario"], max(1, round(outline.get("target_total_words", 2400) / 240)), outline.get("web_research_mode", preferences["web_research_mode"]))
+    markdown, section_sources, model_metadata = generate_narrative_markdown(outline, blocks, row["audience"], row["style_profile"], outline.get("transform_mode", preferences["transform_mode"]), preferences["scenario"], max(1, round(outline.get("target_total_words", 2400) / 240)), outline.get("web_research_mode", preferences["web_research_mode"]), progress_key=outline_id)
     content_id = str(uuid.uuid4())
     timestamp = now_iso()
     conn = db()

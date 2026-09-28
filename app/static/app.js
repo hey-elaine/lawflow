@@ -640,7 +640,7 @@ function renderNarrativeOutputPanel() {
   const learningStats = (() => { let total = 0, done = 0; contents.forEach(content => { const reading = readingSections(content.markdown || ''); total += reading.length; const completed = new Set((content.reading_progress || {}).completed_section_ids || []); reading.forEach(section => { if (completed.has(section.id)) done += 1; }); }); return { total, done }; })();
   const learningSummary = learningStats.total ? '<p class="form-note">碎片学习进度：已学 ' + learningStats.done + ' / ' + learningStats.total + ' 节' + (learningStats.done < learningStats.total ? '，从上次停下的地方继续即可。' : '，全部完成。') + '</p>' : '';
 
-  panel.innerHTML = (contents.length ? '' : '<section class="panel-card"><h3>生成' + scenario.narrativeLabel + '</h3><p>大纲已确认。生成后可整篇阅读、逐节重写、人工修改并导出 DOCX。</p><div class="plan-actions"><button class="button button-primary" data-generate-from-outline="' + confirmedOutline.id + '">生成' + escapeHtml(scenario.narrativeLabel) + '</button></div></section>') +
+  panel.innerHTML = (contents.length ? '' : '<section class="panel-card"><h3>生成' + scenario.narrativeLabel + '</h3><p>大纲已确认。生成后可整篇阅读、逐节重写、人工修改并导出 DOCX。</p><p class="form-note" id="generation-status">点击下方按钮开始逐节写作；写作过程中这里会显示当前进度。</p><div class="plan-actions"><button class="button button-primary" data-generate-from-outline="' + confirmedOutline.id + '">逐节生成' + escapeHtml(scenario.narrativeLabel) + '</button></div></section>') +
     '<section class="panel-card"><h3>已生成的' + scenario.narrativeLabel + '</h3>' + learningSummary + '<div class="narrative-content-list">' + (contents.length ? contents.map(renderNarrativeContentCard).join('') : '<p class="form-note">尚未生成讲稿。</p>') + '</div></section>' +
     '<details class="panel-card optional-path"><summary>也可以让 ChatGPT 写稿，再粘贴回本地审阅</summary><div class="optional-path-body"><p>无需 OpenAI API Key。LawFlow 只复制当前材料块与写作要求；你在 ChatGPT App 生成 Markdown 后，粘贴回本地即可。</p><div class="handoff-actions"><button class="button button-outline" id="copy-chatgpt-prompt">复制给 ChatGPT</button><button class="button button-primary" id="open-chatgpt-import">粘贴 ChatGPT 成稿</button></div></div></details>';
 
@@ -892,19 +892,35 @@ async function confirmNarrativeOutline(record) {
     appState.selectedProject = await request('/api/projects/' + appState.selectedProject.project.id);
     const updated = appState.selectedProject.narrative_outlines.find(item => item.id === record.id);
     renderNarrativeOutline(updated);
-    showMessage('大纲已确认。你可以立即点击“开始逐节生成长文”。');
+    const hasTasks = (appState.selectedProject.tasks || []).some(task => task.status !== 'closed');
+    appState.activeTab = hasTasks ? 'review' : 'narrative';
+    renderProjectDetail();
+    showMessage(hasTasks ? '大纲已确认。建议先过一遍材料核对清单，再进入主题讲稿逐节生成。' : '大纲已确认。可以直接逐节生成讲稿了。');
   } catch (error) { showMessage(error.message, true); } finally { if (button?.isConnected) setBusy(button, false); }
 }
 
 async function generateNarrative(outlineId, button) {
+  let pollTimer = null;
   try {
-    setBusy(button, true, '逐节写作中（较耗时）…');
-    await request('/api/narrative-outlines/' + outlineId + '/contents', { method: 'POST' });
-    appState.selectedProject = await request('/api/projects/' + appState.selectedProject.project.id);
     appState.activeTab = 'narrative';
     renderProjectDetail();
+    const statusLine = () => $('#generation-status');
+    const busyButton = () => $('[data-generate-from-outline]') || button;
+    setBusy(busyButton(), true, '逐节写作中（较耗时）…');
+    pollTimer = setInterval(async () => {
+      try {
+        const progress = await request('/api/narrative-outlines/' + outlineId + '/progress');
+        if (progress.status === 'running' && progress.current > 0) {
+          const line = statusLine();
+          if (line) line.textContent = '正在写第 ' + progress.current + ' / ' + progress.total + ' 节：' + progress.heading;
+        }
+      } catch (error) { /* 进度查询失败不影响生成 */ }
+    }, 4000);
+    await request('/api/narrative-outlines/' + outlineId + '/contents', { method: 'POST' });
+    appState.selectedProject = await request('/api/projects/' + appState.selectedProject.project.id);
+    renderProjectDetail();
     showMessage('知识转译成稿已生成！可直接阅读排版或导出 DOCX。');
-  } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); }
+  } catch (error) { showMessage(error.message, true); } finally { if (pollTimer) clearInterval(pollTimer); if (button?.isConnected) setBusy(button, false); }
 }
 
 function renderNarrativeContentCard(content) {
