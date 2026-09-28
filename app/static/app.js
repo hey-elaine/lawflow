@@ -1118,15 +1118,16 @@ function renderTasksPanel() {
   const intro = external
     ? '对外培训、Speak Note 和公开播客发布前，逐条确认以下表述的事实与来源，全部处理完才能生成正式讲稿。'
     : '讲稿由 AI 依据材料转译，以下是转译前建议你亲自过目的表述（逐条对照原文确认即可，不影响讲稿生成）。';
-  const statusLabel = { open: '待确认', in_progress: '看过了，存疑', done: '已确认无误', dismissed: '与本主题无关，忽略' };
+  const statusLabel = { open: '待确认', in_progress: '存疑', done: '已确认', dismissed: '忽略' };
   const cards = tasks.map(task => {
-    const statusOptions = Object.entries(statusLabel).map(([value, label]) => '<option value="' + value + '" ' + (task.status === value ? 'selected' : '') + '>' + label + '</option>').join('');
+    const pills = Object.entries(statusLabel).map(([value, label]) => '<button type="button" class="status-pill' + (task.status === value ? ' active' : '') + '" data-task-status="' + value + '">' + label + '</button>').join('');
     return '<div class="task-card" data-task-id="' + task.id + '">' +
       '<p class="task-card-text">' + escapeHtml(task.detail) + '</p>' +
       '<div class="task-card-foot">' +
         (external ? '<span class="risk-tag risk-' + task.risk_level + '">' + ({ high: '高风险', medium: '中风险', low: '低风险' }[task.risk_level] || task.risk_level) + '</span>' : '') +
         '<button class="button button-outline button-small" data-task-evidence="' + escapeHtml(task.evidence_block_ids.join(',')) + '">查看原文依据</button>' +
-        '<span class="task-card-status"><select class="task-status">' + statusOptions + '</select></span>' +
+        '<span class="spacer"></span>' +
+        '<span class="status-pills">' + pills + '</span>' +
         (external ? '<input class="task-owner" value="' + escapeHtml(task.owner) + '" placeholder="负责人"/><input class="task-due" type="date" value="' + escapeHtml(task.due_date) + '"/>' : '') +
       '</div></div>';
   }).join('');
@@ -1134,11 +1135,11 @@ function renderTasksPanel() {
     (tasks.length
       ? '<p class="form-note">' + (external ? '还有 ' + openCount + ' 项未处理。' : '共 ' + tasks.length + ' 条，已确认 ' + (tasks.length - openCount) + ' 条。逐条过一遍即可，全部处理或直接跳到下一步都行。') + '</p><div class="task-list">' + cards + '</div>'
       : '<p class="form-note">当前材料没有挑出需要特别确认的表述，可以直接进入下一步。</p>') + '</section>';
-  $$('.task-card select').forEach(select => select.addEventListener('change', () => saveTask(select.closest('.task-card'))));
+  $$('.task-card .status-pill').forEach(pill => pill.addEventListener('click', () => saveTask(pill.closest('.task-card'), pill.dataset.taskStatus)));
   $$('.task-card .task-owner, .task-card .task-due').forEach(input => input.addEventListener('change', () => saveTask(input.closest('.task-card'))));
   $$('[data-task-evidence]').forEach(button => button.addEventListener('click', async () => { const doc = currentDocument(); if (!doc) return; await ensureDocumentLoaded(doc.id); const ids = button.dataset.taskEvidence.split(',').filter(Boolean); const blocks = appState.selectedDocument.blocks.filter(block => ids.includes(block.id)); showSourceOverlay('表述的原文依据', blocks.map(block => '<h4>' + escapeHtml(block.source_locator) + '</h4><pre>' + escapeHtml(block.text) + '</pre>').join('')); }));
 }
-async function saveTask(card) { const status = $('.task-status', card).value; try { await request('/api/tasks/' + card.dataset.taskId, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status, owner: ($('.task-owner', card)?.value || '').trim(), due_date: $('.task-due', card)?.value || '' }) }); appState.selectedProject = await request('/api/projects/' + appState.selectedProject.project.id); renderProjectDetail(); showMessage('已保存。'); } catch (error) { showMessage(error.message, true); } }
+async function saveTask(card, status) { status = status || $('.status-pill.active', card)?.dataset.taskStatus || 'open'; try { await request('/api/tasks/' + card.dataset.taskId, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status, owner: ($('.task-owner', card)?.value || '').trim(), due_date: $('.task-due', card)?.value || '' }) }); appState.selectedProject = await request('/api/projects/' + appState.selectedProject.project.id); renderProjectDetail(); showMessage('已保存。'); } catch (error) { showMessage(error.message, true); } }
 async function exportProject() { const button = $('#export-project'); try { setBusy(button, true, '正在导出…'); const output = await request('/api/projects/' + appState.selectedProject.project.id + '/exports', { method: 'POST' }); showMessage('成果包已写入：' + output.output_dir); } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); } }
 async function deleteProject() { const project = appState.selectedProject?.project; if (!project) return; const confirmed = window.confirm('删除项目“' + project.name + '”？\n\n项目中的原始材料、章节方案、讲稿、音频和任务记录将从本机工作目录删除。已经导出的成果包不会删除。'); if (!confirmed) return; const button = $('#delete-project'); try { setBusy(button, true, '删除中…'); await request('/api/projects/' + project.id, { method: 'DELETE' }); appState.selectedProjectId = null; appState.selectedProject = null; appState.selectedDocument = null; appState.activePlan = null; $('#project-detail').classList.add('hidden'); $('#project-detail').innerHTML = ''; document.body.classList.remove('in-project'); await loadProjects(); showMessage('项目及本地派生音频已删除。'); } catch (error) { showMessage(error.message, true); } finally { if (button?.isConnected) setBusy(button, false); } }
 function showSourceOverlay(title, html) { const overlay = document.createElement('div'); overlay.className = 'source-modal'; overlay.innerHTML = '<div class="source-modal-card"><div class="source-modal-top"><div><p class="eyebrow">原始材料依据</p><h3>' + escapeHtml(title) + '</h3></div><button class="icon-button" aria-label="关闭">×</button></div><div>' + html + '</div></div>'; $('.icon-button', overlay).addEventListener('click', () => overlay.remove()); overlay.addEventListener('click', event => { if (event.target === overlay) overlay.remove(); }); document.body.appendChild(overlay); }
