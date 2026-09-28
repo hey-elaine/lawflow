@@ -20,7 +20,7 @@ class ImprovementsTest(unittest.TestCase):
     def test_output_floor_is_optional_and_mode_aware(self):
         self.assertEqual(self.main.output_floor(1000, 'condense', 'none', 0.3), 0)
         self.assertEqual(self.main.output_floor(1000, 'condense', 'auto', 0.3), 300)
-        self.assertEqual(self.main.output_floor(1000, 'adapt', 'auto', 0.3), 150)
+        self.assertEqual(self.main.output_floor(1000, 'adapt', 'auto', 0.3), 1000)
         self.assertEqual(self.main.output_floor(1000, 'adapt', 'custom', 0.42), 420)
 
     def test_project_keeps_research_and_output_preferences(self):

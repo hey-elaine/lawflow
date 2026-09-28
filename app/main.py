@@ -1305,7 +1305,7 @@ def output_floor(source_chars: int, transform_mode: str, minimum_output_mode: st
     """Return a review threshold, not a forced padding target."""
     if minimum_output_mode == "none":
         return 0
-    ratio = minimum_output_ratio if minimum_output_mode == "custom" else (0.3 if transform_mode == "condense" else 0.15)
+    ratio = minimum_output_ratio if minimum_output_mode == "custom" else {"condense": 0.3, "adapt": 1.0, "enrich": 1.2}.get(transform_mode, 1.0)
     return max(0, round(source_chars * ratio))
 
 
@@ -1535,6 +1535,9 @@ def parse_model_json(content: str) -> dict:
         raise HTTPException(status_code=502, detail="模型返回的大纲不是有效 JSON，请重试或更换模型。") from error
 
 
+TRANSFORM_OUTPUT_RATIOS = {"condense": 0.4, "adapt": 1.0, "enrich": 1.3}  # 转译类产出不低于原文量
+
+
 def normalize_narrative_outline(raw: dict, request: NarrativeOutlineRequest, blocks: list[dict]) -> dict:
     raw_sections = raw.get("sections") if isinstance(raw, dict) else None
     minimum = 1
@@ -1563,10 +1566,19 @@ def normalize_narrative_outline(raw: dict, request: NarrativeOutlineRequest, blo
     if len(sections) < minimum:
         raise HTTPException(status_code=502, detail="模型未生成足够的大纲章节，请重试。")
     total_words = request.target_words if request.target_words is not None else min(NARRATIVE_LENGTHS[request.target_length]["total_words"], request.target_duration * 240)
-    if total_words / len(sections) > 2400:
-        raise HTTPException(400, "每节目标超过 2400 字；请增加章节，或降低目标字数。")
+    # 篇幅以素材量为准：每节目标 = 该节素材字数 × 处理方式比例（转译≥原文），不再平均拆分固定总字数
+    ratio = TRANSFORM_OUTPUT_RATIOS.get(request.transform_mode, 1.0)
+    block_text = {block["id"]: len(block.get("text", "")) for block in blocks}
+    source_based_total = 0
     for section in sections:
-        section["target_words"] = max(100, total_words // len(sections))
+        section_chars = sum(block_text.get(block_id, 0) for block_id in section["source_block_ids"])
+        section["target_words"] = max(100, min(5000, round(section_chars * ratio)))
+        source_based_total += section["target_words"]
+    # 用户指定的目标字数作为保底：高于素材测算总量时按比例放大（每节上限 5000）
+    if total_words > source_based_total and source_based_total > 0:
+        factor = total_words / source_based_total
+        for section in sections:
+            section["target_words"] = min(5000, max(100, round(section["target_words"] * factor)))
     return {
         "title": clean_text(str(raw.get("title") or request.title))[:200],
         "opening_angle": clean_text(str(raw.get("opening_angle", "")))[:400],
@@ -1728,7 +1740,7 @@ def generate_narrative_markdown(outline: dict, blocks: list[dict], audience: str
             prompt += "\n请将以下开场思路写成实际口播正文，不照抄写作指令：" + outline.get("opening_angle", "")
         if section_index == len(outline["sections"]) - 1:
             prompt += "\n请将以下收束思路写成实际结尾，不照抄写作指令：" + outline.get("closing_angle", "")
-        section_text = model_chat([{"role": "system", "content": "你是严谨的法律知识内容作者，忠实于材料，不编造事实。"}, {"role": "user", "content": prompt}], temperature=0.55, max_tokens=max(1200, min(5000, section["target_words"] * 2)))
+        section_text = model_chat([{"role": "system", "content": "你是严谨的法律知识内容作者，忠实于材料，不编造事实。"}, {"role": "user", "content": prompt}], temperature=0.55, max_tokens=max(1200, min(8000, section["target_words"] * 2)))
         # 模型经常自己重复本节标题；统一去掉正文开头的一至多行标题，避免与下方拼接的小标题重复。
         section_text = re.sub(r"^(?:#{1,6}[ \t]+[^\n]*\r?\n+)+", "", section_text.strip()).strip()
         rendered_sections.append("## {}\n\n{}".format(section["heading"], section_text))

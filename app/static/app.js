@@ -109,9 +109,17 @@ async function openProject(projectId) {
     appState.selectedDocument = null;
     appState.activePlan = appState.selectedProject.plans[0] || null;
     $('#project-detail').classList.remove('hidden');
+    document.body.classList.add('in-project');
     renderProjectDetail();
-    $('#project-detail').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   } catch (error) { showMessage(error.message, true); }
+}
+
+function closeProject() {
+  appState.selectedProjectId = null; appState.selectedProject = null; appState.selectedDocument = null; appState.activePlan = null;
+  $('#project-detail').classList.add('hidden'); $('#project-detail').innerHTML = '';
+  document.body.classList.remove('in-project');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 function projectStepState(data) {
@@ -150,6 +158,7 @@ function renderWorkflowHint(data, state) {
 
 function renderProjectDetail() {
   const detail = $('#project-detail'); const data = appState.selectedProject; if (!data) return;
+  document.body.classList.add('in-project');
   const scenario = SCENARIOS[data.project.scenario] || SCENARIOS.topic_learning;
   const verificationStep = data.project.verification_mode === 'source_only' ? 0 : 3;
   const narrativeStep = verificationStep ? 4 : 3;
@@ -164,10 +173,10 @@ function renderProjectDetail() {
     '<button data-tab="' + key + '" class="' + (appState.activeTab === key ? 'active ' : '') + (status || '') + '"' + (status === 'current' ? ' aria-current="step"' : '') + '>' +
     '<span class="step-mark">' + (status === 'done' ? '✓' : status === 'current' ? '●' : '○') + '</span>' + label + '</button>'
   ).join('');
-  detail.innerHTML = '<div class="detail-header"><div><p class="eyebrow">' + escapeHtml(scenario.name) + '</p><h2>' + escapeHtml(data.project.name) + '</h2><p>' + escapeHtml(data.project.client_name || data.project.description || scenario.description) + '</p><div class="task-preferences"><span>' + TRANSFORM_NAMES[data.project.transform_mode] + '</span><span>' + VERIFICATION_NAMES[data.project.verification_mode] + '</span><span>' + data.project.target_duration + ' 分钟目标时长</span></div></div><div class="detail-actions"><button class="button button-outline button-small" id="export-project">导出至本机目录</button><button class="button button-outline button-small" id="reload-project">刷新任务</button><button class="button button-danger button-small" id="delete-project">删除任务</button></div></div>' + '<div class="tabbar">' + tabHtml + '</div>' + renderWorkflowHint(data, state) + '<div id="detail-panel" class="detail-panel"></div>';
+  detail.innerHTML = '<div class="detail-header"><div><p class="eyebrow">' + escapeHtml(scenario.name) + '</p><h2>' + escapeHtml(data.project.name) + '</h2><p>' + escapeHtml(data.project.client_name || data.project.description || scenario.description) + '</p><div class="task-preferences"><span>' + TRANSFORM_NAMES[data.project.transform_mode] + '</span><span>' + VERIFICATION_NAMES[data.project.verification_mode] + '</span><span>' + data.project.target_duration + ' 分钟目标时长</span></div></div><div class="detail-actions"><button class="button button-outline button-small" id="back-to-projects">← 全部项目</button><button class="button button-outline button-small" id="export-project">导出至本机目录</button><button class="button button-outline button-small" id="reload-project">刷新任务</button><button class="button button-danger button-small" id="delete-project">删除任务</button></div></div>' + '<div class="tabbar">' + tabHtml + '</div>' + renderWorkflowHint(data, state) + '<div id="detail-panel" class="detail-panel"></div>';
   $$('.tabbar button', detail).forEach(button => button.addEventListener('click', () => { appState.activeTab = button.dataset.tab; renderProjectDetail(); }));
   $$('[data-workflow-next]', detail).forEach(button => button.addEventListener('click', () => { appState.activeTab = button.dataset.workflowNext; renderProjectDetail(); $('#detail-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }));
-  $('#reload-project').addEventListener('click', () => openProject(data.project.id)); $('#export-project').addEventListener('click', exportProject); $('#delete-project').addEventListener('click', deleteProject); renderActivePanel();
+  $('#reload-project').addEventListener('click', () => openProject(data.project.id)); $('#back-to-projects').addEventListener('click', closeProject); $('#export-project').addEventListener('click', exportProject); $('#delete-project').addEventListener('click', deleteProject); renderActivePanel();
 }
 function renderActivePanel() { if (appState.activeTab === 'materials') return renderMaterialsPanel(); if (appState.activeTab === 'structure') return renderStructurePanel(); if (appState.activeTab === 'review') return renderReviewPanel(); if (appState.activeTab === 'narrative') return renderNarrativeOutputPanel(); if (appState.activeTab === 'audio') return renderAudioPanel(); return renderTasksPanel(); }
 function currentDocument() { const docs = appState.selectedProject.documents; return appState.selectedDocument || docs[0] || null; }
@@ -715,7 +724,8 @@ function bindNarrativeContentEvents() {
   $$('[data-save-narrative]').forEach(button => button.addEventListener('click', () => saveNarrative(button.dataset.saveNarrative, button)));
   $$('[data-regenerate-section]').forEach(button => button.addEventListener('click', () => regenerateSection(button.dataset.regenerateSection, button.dataset.sectionId, button)));
   $$('[data-export-section]').forEach(button => button.addEventListener('click', () => exportSection(button.dataset.exportSection, button.dataset.sectionId, button)));
-  $$('[data-resume-learning], [data-open-learning-section]').forEach(button => button.addEventListener('click', () => saveReadingProgress(button.dataset.resumeLearning || button.dataset.openLearningSection, button.dataset.sectionId, null, true)));
+  $$('[data-focus-section]').forEach(button => button.addEventListener('click', () => { appState.readingFocus[button.dataset.focusSection] = button.dataset.sectionId; renderNarrativeOutputPanel(); document.querySelector('.reading-main')?.scrollIntoView({ block: 'start' }); }));
+  $$('[data-resume-learning], [data-open-learning-section]').forEach(button => button.addEventListener('click', () => { appState.readingFocus[button.dataset.resumeLearning || button.dataset.openLearningSection] = button.dataset.sectionId; saveReadingProgress(button.dataset.resumeLearning || button.dataset.openLearningSection, button.dataset.sectionId, null, true); }));
   $$('[data-toggle-learning-complete]').forEach(button => button.addEventListener('click', () => saveReadingProgress(button.dataset.toggleLearningComplete, button.dataset.sectionId, button.dataset.completed !== 'true', false)));
 }
 
@@ -923,22 +933,47 @@ async function generateNarrative(outlineId, button) {
   } catch (error) { showMessage(error.message, true); } finally { if (pollTimer) clearInterval(pollTimer); if (button?.isConnected) setBusy(button, false); }
 }
 
+function markdownSections(markdown = '') {
+  const parts = []; let current = null;
+  for (const line of markdown.split('\n')) {
+    const match = line.match(/^##[ \t]+(.+)$/);
+    if (match) { current = { id: 'section-' + (parts.length + 1), heading: match[1].trim(), lines: [line] }; parts.push(current); }
+    else if (current) current.lines.push(line);
+  }
+  return parts.map(part => ({ id: part.id, heading: part.heading, text: part.lines.join('\n') }));
+}
+
 function renderNarrativeContentCard(content) {
   appState.narrativeEditing = appState.narrativeEditing || {};
+  appState.readingFocus = appState.readingFocus || {};
   const isEditing = !!appState.narrativeEditing[content.id];
   const viewToggleText = isEditing ? '👁️ 查看排版' : '✏️ 修改正文';
-  const bodyContent = isEditing ?
-    '<textarea class="narrative-editor" data-narrative-editor="' + content.id + '">' + escapeHtml(content.markdown) + '</textarea>' :
-    '<div class="narrative-article">' + renderNarrativeHtml(content.markdown, content.id) + '</div>';
 
   const reading = readingSections(content.markdown);
   const progress = content.reading_progress || { last_section_id: '', completed_section_ids: [] };
   const completed = new Set(progress.completed_section_ids || []);
+  const doneCount = reading.filter(section => completed.has(section.id)).length;
   const lastIndex = reading.findIndex(section => section.id === progress.last_section_id);
   const resume = lastIndex >= 0 && !completed.has(reading[lastIndex].id) ? reading[lastIndex]
     : reading.slice(lastIndex + 1).find(section => !completed.has(section.id))
       || reading.find(section => !completed.has(section.id)) || reading[Math.max(lastIndex, 0)];
-  const readingPanel = isEditing ? '' : '<div class="reading-progress"><div class="reading-progress-head"><div><b>学习进度</b><small>已学 ' + reading.filter(section => completed.has(section.id)).length + ' / ' + reading.length + ' 节 · 记录保存在本机</small></div><button class="button button-primary button-small" data-resume-learning="' + content.id + '" data-section-id="' + resume.id + '">继续学习</button></div><div class="reading-section-list">' + reading.map((section, index) => '<div class="reading-section-row"><button class="reading-section-link" data-open-learning-section="' + content.id + '" data-section-id="' + section.id + '"><span>' + String(index + 1).padStart(2, '0') + '</span>' + escapeHtml(section.heading) + '</button><button class="button button-quiet button-small" data-toggle-learning-complete="' + content.id + '" data-section-id="' + section.id + '" data-completed="' + completed.has(section.id) + '">' + (completed.has(section.id) ? '✓ 已学' : '标记已学') + '</button></div>').join('') + '</div></div>';
+
+  // 侧边章节目录：始终可见，点击进入单章阅读，随时可回目录
+  const focusId = appState.readingFocus[content.id] || '';
+  const focused = reading.find(section => section.id === focusId);
+  const toc = '<aside class="reading-toc"><div class="reading-toc-head"><div><b>章节目录</b><small>已学 ' + doneCount + ' / ' + reading.length + ' 节</small></div><button class="button button-primary button-small" data-resume-learning="' + content.id + '" data-section-id="' + resume.id + '">继续学习</button></div><div class="reading-toc-list">' + reading.map((section, index) => '<button class="reading-toc-item ' + (section.id === focusId ? 'active' : '') + (completed.has(section.id) ? ' done' : '') + '" data-focus-section="' + content.id + '" data-section-id="' + section.id + '"><span>' + String(index + 1).padStart(2, '0') + '</span><em>' + escapeHtml(section.heading) + '</em>' + (completed.has(section.id) ? '<i>✓</i>' : '') + '</button>').join('') + '</div></aside>';
+
+  let bodyContent;
+  if (isEditing) {
+    bodyContent = '<textarea class="narrative-editor" data-narrative-editor="' + content.id + '">' + escapeHtml(content.markdown) + '</textarea>';
+  } else if (focused) {
+    const index = reading.indexOf(focused);
+    const prev = reading[index - 1], next = reading[index + 1];
+    const nav = '<div class="reading-focus-nav"><button class="button button-outline button-small" data-focus-section="' + content.id + '" data-section-id="">← 返回目录</button>' + (prev ? '<button class="button button-outline button-small" data-focus-section="' + content.id + '" data-section-id="' + prev.id + '">← 上一节</button>' : '') + (next ? '<button class="button button-outline button-small" data-focus-section="' + content.id + '" data-section-id="' + next.id + '">下一节 →</button>' : '') + '<button class="button button-primary button-small" data-toggle-learning-complete="' + content.id + '" data-section-id="' + focused.id + '" data-completed="' + completed.has(focused.id) + '">' + (completed.has(focused.id) ? '✓ 已学' : '标记已学') + '</button></div>';
+    bodyContent = '<div class="reading-focus">' + nav + '<div class="narrative-article">' + renderNarrativeHtml(focused.text, content.id) + '</div>' + nav + '</div>';
+  } else {
+    bodyContent = '<div class="narrative-article">' + renderNarrativeHtml(content.markdown, content.id) + '</div>';
+  }
 
   const model = content.model || {};
   const floorText = model.output_floor ? ('长度检查：' + model.output_chars + ' / ' + model.output_floor + ' 字 · ' + (model.floor_status === 'pass' ? '通过' : '建议复核')) : '长度检查：未启用';
@@ -947,7 +982,7 @@ function renderNarrativeContentCard(content) {
   const sectionExportActions = (content.section_sources || []).map((section, index) => '<button class="button button-quiet button-small" data-export-section="' + content.id + '" data-section-id="' + escapeHtml(section.section_id) + '">导出第' + (index + 1) + '节</button>').join('');
   const scenario = SCENARIOS[appState.selectedProject.project.scenario] || SCENARIOS.topic_learning;
   const reviewNote = content.review_note || '请核对讲稿与材料的一致性。确认后再用于正式交付；长度检查只用于提醒。';
-  return '<article class="narrative-content-card"><div class="content-card-header"><div><p class="doc-kicker">' + escapeHtml(scenario.narrativeLabel) + ' · ' + statusText(content.status) + '</p><h3>' + escapeHtml(content.title) + '</h3><small>模型：' + escapeHtml(model.model_name || '未记录') + ' · <span class="status ' + content.status + '">' + statusText(content.status) + '</span> · ' + escapeHtml(floorText) + ' · ' + escapeHtml(researchText) + '</small></div><div class="detail-actions"><button class="button button-outline button-small" data-toggle-narrative-view="' + content.id + '">' + viewToggleText + '</button><button class="button button-outline button-small" data-confirm-narrative="' + content.id + '">确认审阅</button><button class="button button-outline button-small" data-export-narrative="' + content.id + '">导出 ' + (content.status === 'confirmed' ? 'DOCX' : '审阅稿') + '</button>' + (isEditing ? '<button class="button button-primary button-small" data-save-narrative="' + content.id + '">保存修改</button>' : '') + '</div></div>' + readingPanel + bodyContent + '<div class="review-bar"><span class="review-note">' + escapeHtml(reviewNote) + '</span><span class="section-actions">' + sectionActions + sectionExportActions + '</span></div></article>';
+  return '<article class="narrative-content-card"><div class="content-card-header"><div><p class="doc-kicker">' + escapeHtml(scenario.narrativeLabel) + ' · ' + statusText(content.status) + '</p><h3>' + escapeHtml(content.title) + '</h3><small>模型：' + escapeHtml(model.model_name || '未记录') + ' · <span class="status ' + content.status + '">' + statusText(content.status) + '</span> · ' + escapeHtml(floorText) + ' · ' + escapeHtml(researchText) + '</small></div><div class="detail-actions"><button class="button button-outline button-small" data-toggle-narrative-view="' + content.id + '">' + viewToggleText + '</button><button class="button button-outline button-small" data-confirm-narrative="' + content.id + '">确认审阅</button><button class="button button-outline button-small" data-export-narrative="' + content.id + '">导出 ' + (content.status === 'confirmed' ? 'DOCX' : '审阅稿') + '</button>' + (isEditing ? '<button class="button button-primary button-small" data-save-narrative="' + content.id + '">保存修改</button>' : '') + '</div></div><div class="reading-layout">' + (isEditing ? '' : toc) + '<div class="reading-main">' + bodyContent + '</div></div><div class="review-bar"><span class="review-note">' + escapeHtml(reviewNote) + '</span><span class="section-actions">' + sectionActions + sectionExportActions + '</span></div></article>';
 }
 
 async function saveNarrative(contentId, button) {
@@ -1075,7 +1110,7 @@ function renderTasksPanel() {
 }
 async function saveTask(row) { const button = $('.save-task', row); try { setBusy(button, true, '保存…'); await request('/api/tasks/' + row.dataset.taskId, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: $('.task-status', row).value, owner: $('.task-owner', row).value.trim(), due_date: $('.task-due', row).value }) }); appState.selectedProject = await request('/api/projects/' + appState.selectedProject.project.id); renderProjectDetail(); showMessage('任务已保存。'); } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); } }
 async function exportProject() { const button = $('#export-project'); try { setBusy(button, true, '正在导出…'); const output = await request('/api/projects/' + appState.selectedProject.project.id + '/exports', { method: 'POST' }); showMessage('成果包已写入：' + output.output_dir); } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); } }
-async function deleteProject() { const project = appState.selectedProject?.project; if (!project) return; const confirmed = window.confirm('删除项目“' + project.name + '”？\n\n项目中的原始材料、章节方案、讲稿、音频和任务记录将从本机工作目录删除。已经导出的成果包不会删除。'); if (!confirmed) return; const button = $('#delete-project'); try { setBusy(button, true, '删除中…'); await request('/api/projects/' + project.id, { method: 'DELETE' }); appState.selectedProjectId = null; appState.selectedProject = null; appState.selectedDocument = null; appState.activePlan = null; $('#project-detail').classList.add('hidden'); $('#project-detail').innerHTML = ''; await loadProjects(); showMessage('项目及本地派生音频已删除。'); } catch (error) { showMessage(error.message, true); } finally { if (button?.isConnected) setBusy(button, false); } }
+async function deleteProject() { const project = appState.selectedProject?.project; if (!project) return; const confirmed = window.confirm('删除项目“' + project.name + '”？\n\n项目中的原始材料、章节方案、讲稿、音频和任务记录将从本机工作目录删除。已经导出的成果包不会删除。'); if (!confirmed) return; const button = $('#delete-project'); try { setBusy(button, true, '删除中…'); await request('/api/projects/' + project.id, { method: 'DELETE' }); appState.selectedProjectId = null; appState.selectedProject = null; appState.selectedDocument = null; appState.activePlan = null; $('#project-detail').classList.add('hidden'); $('#project-detail').innerHTML = ''; document.body.classList.remove('in-project'); await loadProjects(); showMessage('项目及本地派生音频已删除。'); } catch (error) { showMessage(error.message, true); } finally { if (button?.isConnected) setBusy(button, false); } }
 function showSourceOverlay(title, html) { const overlay = document.createElement('div'); overlay.className = 'source-modal'; overlay.innerHTML = '<div class="source-modal-card"><div class="source-modal-top"><div><p class="eyebrow">原始材料依据</p><h3>' + escapeHtml(title) + '</h3></div><button class="icon-button" aria-label="关闭">×</button></div><div>' + html + '</div></div>'; $('.icon-button', overlay).addEventListener('click', () => overlay.remove()); overlay.addEventListener('click', event => { if (event.target === overlay) overlay.remove(); }); document.body.appendChild(overlay); }
 
 function bindDialogs() {

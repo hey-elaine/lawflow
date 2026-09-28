@@ -389,3 +389,81 @@
 }
 .outline-advanced summary:hover { color: var(--ink); }
 .outline-advanced[open] { padding-bottom: 18px; }
+
+/* ===== 项目工作台：打开项目后进入独立全屏视图，隐藏主页内容 ===== */
+body.in-project .hero,
+body.in-project #workflow,
+body.in-project #trust,
+body.in-project #skill,
+body.in-project .footer,
+body.in-project .workspace-top,
+body.in-project #project-list,
+body.in-project #daily-brief-list { display: none; }
+body.in-project header nav { visibility: hidden; }
+body.in-project #workspace { max-width: min(1560px, 96vw); padding-top: 24px; }
+body.in-project #workspace .eyebrow { display: none; }
+body.in-project .project-detail { margin-top: 0; }
+body.in-project .detail-header { position: sticky; top: 0; z-index: 40; background: var(--paper, #f7f5ef); padding: 12px 0; border-bottom: 1px solid var(--border); }
+
+/* ===== 讲稿阅读模式：侧边章节目录 + 单章聚焦 ===== */
+.reading-layout {
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr);
+  gap: 22px;
+  align-items: start;
+  margin-top: 16px;
+}
+.reading-toc {
+  position: sticky;
+  top: 76px;
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+  background: rgba(31, 77, 56, 0.03);
+}
+.reading-toc-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.reading-toc-head b { font-size: 14px; }
+.reading-toc-head small { display: block; color: var(--muted); font-size: 11px; }
+.reading-toc-list { display: flex; flex-direction: column; gap: 2px; }
+.reading-toc-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  border-radius: 8px;
+  padding: 7px 9px;
+  font-size: 13px;
+  color: var(--ink);
+  cursor: pointer;
+}
+.reading-toc-item span { color: var(--muted); font-size: 11px; flex-shrink: 0; }
+.reading-toc-item em { font-style: normal; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reading-toc-item i { font-style: normal; color: var(--accent, #1f4d38); flex-shrink: 0; }
+.reading-toc-item:hover { background: rgba(31, 77, 56, 0.08); }
+.reading-toc-item.active { background: var(--accent, #1f4d38); color: #fff; }
+.reading-toc-item.active span { color: rgba(255, 255, 255, 0.7); }
+.reading-toc-item.done:not(.active) em { color: var(--muted); }
+.reading-focus-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.reading-focus-nav .button:last-child { margin-left: auto; }
+.reading-focus .reading-focus-nav:last-child { margin-top: 18px; }
+@media (max-width: 900px) {
+  .reading-layout { grid-template-columns: 1fr; }
+  .reading-toc { position: static; max-height: 260px; }
+}
