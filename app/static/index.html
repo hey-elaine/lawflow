@@ -4,12 +4,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>声息｜把没有时间读完的东西，带到路上</title>
-  <link rel="stylesheet" href="/styles.css?v=20260928-16" />
+  <link rel="stylesheet" href="/styles.css?v=20260928-17" />
 </head>
 <body>
   <header class="nav shell">
-    <a class="brand" href="#top" aria-label="声息首页"><span class="brand-mark">声</span><span>声息 <strong>Shengxi</strong></span></a>
-    <nav><a href="#top" id="nav-shelf">书架</a><a href="#workflow">使用方式</a><a href="#trust">审阅依据</a><a href="#skill">AI 协作</a></nav>
+    <a class="brand" href="#top" aria-label="声息首页"><span class="brand-stacked"><span class="brand-char">声</span><span class="brand-char">息</span><span class="brand-sub">Shengxi</span></span></a>
+    <nav><a href="#listen">试听</a><a href="#workflow">如何使用</a><a href="#trust">为什么可信</a><a href="#top" id="nav-shelf">我的书架</a></nav>
     <button class="button button-quiet" id="open-settings">设置</button>
   </header>
 
@@ -20,24 +20,50 @@
         <p class="eyebrow">声息 · 把稍后读，真的读完</p>
         <h1>把没有时间读完的东西，<br/><em>带到路上。</em></h1>
         <p class="hero-description">好文章存进收藏夹，就慢慢变成了「等有空再看」。只是这个「有空」，常常并不会真的出现。丢进声息：长文拆成一节一节的小课，地铁上读一节，睡觉前听一节。读到哪儿，它都替你记着。</p>
-        <div class="hero-actions"><a href="#top" class="button button-primary" id="hero-open-shelf">丢一篇文章进来</a><button type="button" class="button button-outline" id="hero-load-demo">看看拆好的样子</button></div>
+        <div class="hero-actions"><a href="#top" class="button button-primary" id="hero-open-shelf">开始整理 <span class="button-arrow">→</span></a><a href="#listen" class="listen-link">听一个示例 <span class="listen-link-play" aria-hidden="true">▶</span></a></div>
       </div>
-      <div class="hero-visual" aria-label="声息学习成果示意">
-        <div class="visual-layout">
-          <div class="visual-card visual-source"><span class="mini-label">你丢进来的</span><b>链接、PDF、长文</b><small>公众号 · 网页 · PDF · DOCX · TXT</small></div>
-          <svg class="workflow-arrows" viewBox="0 0 72 312" aria-hidden="true" preserveAspectRatio="none">
+      <div class="hero-visual" aria-label="一篇文章拆成三个可听章节的示意">
+        <div class="demo-flow">
+          <div class="demo-article">
+            <span class="demo-article-title">一场关于秋天的散步</span>
+            <span class="demo-article-lines" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+            <img class="demo-article-art" src="/img/watercolor-autumn.jpg" alt="" />
+          </div>
+          <svg class="demo-arrows" viewBox="0 0 90 260" aria-hidden="true" preserveAspectRatio="none">
             <defs>
-              <marker id="workflow-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-                <path d="M 0 0 L 10 5 L 0 10 z" fill="#5d8d7c"></path>
-              </marker>
+              <marker id="demo-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 1 L 9 5 L 0 9" fill="none" stroke="#a49672" stroke-width="1.4" stroke-linecap="round"></path></marker>
             </defs>
-            <circle cx="1" cy="156" r="3.5" fill="#5d8d7c"></circle>
-            <path d="M 1 156 C 25 156, 40 78, 71 78" marker-end="url(#workflow-arrow)"></path>
-            <path d="M 1 156 C 25 156, 40 234, 71 234" marker-end="url(#workflow-arrow)"></path>
+            <path d="M 6 130 C 40 130, 52 62, 84 62" marker-end="url(#demo-arrow)"></path>
+            <path d="M 6 130 C 40 130, 52 198, 84 198" marker-end="url(#demo-arrow)"></path>
+            <circle cx="6" cy="130" r="3"></circle>
           </svg>
-          <div class="visual-card visual-output"><span class="flow-step">✨ 它还你的</span><span class="mini-label">系列化小课</span><b>一节一节，读完打勾</b><p>拆章节 · 有进度 · 能听<br/>读到哪，它都记着</p><span class="verified">● 不编造，每个说法能回到原文</span></div>
-          <div class="visual-card visual-task"><span class="flow-step">✨ 带上路</span><span class="mini-label">通勤 · 骑车 · 高铁 · 飞机</span><b>眼睛忙不过来，耳朵还空着</b><small>读一节，或听一节 · 读完的标个勾 · 进度它替你记着</small></div>
+          <div class="demo-chapters">
+            <div class="demo-chip"><span class="demo-play" aria-hidden="true">▶</span><span class="demo-chip-lines" aria-hidden="true"><i></i><i></i></span><span class="demo-dur">10分钟</span></div>
+            <div class="demo-chip"><span class="demo-play" aria-hidden="true">▶</span><span class="demo-chip-lines" aria-hidden="true"><i></i><i></i></span><span class="demo-dur">12分钟</span></div>
+            <div class="demo-chip"><span class="demo-play" aria-hidden="true">▶</span><span class="demo-chip-lines" aria-hidden="true"><i></i><i></i></span><span class="demo-dur">8分钟</span></div>
+          </div>
         </div>
+        <p class="hero-note">今天听一点，明天再继续。<svg class="hero-note-stroke" viewBox="0 0 120 26" aria-hidden="true"><path d="M 4 18 C 34 24, 66 22, 116 6" fill="none" /></svg></p>
+      </div>
+    </section>
+
+    <div class="banner-photo" role="presentation"><img src="/img/banner-train.jpg" alt="高铁车窗边小桌板上的笔记本与耳机，窗外是秋天的湖面与树林" /></div>
+
+    <section id="listen" class="listen-section">
+      <div class="shell">
+        <div class="listen-heading"><h2>在路上，也能慢慢听完。</h2><p>拆好的章节按顺序排好，戴上耳机，从上次停下的地方继续。</p></div>
+        <div class="listen-player" id="listen-player">
+          <img class="listen-cover" src="/img/cover-listen.jpg" alt="" />
+          <div class="listen-main">
+            <b id="listen-title">—</b>
+            <span class="listen-meta" id="listen-meta"></span>
+            <div class="listen-progress"><div class="listen-bar"><i id="listen-bar"></i></div><span class="listen-time"><span id="listen-current">0:00</span> / <span id="listen-total">0:00</span></span></div>
+            <div class="listen-controls"><button type="button" class="listen-ctrl" id="listen-prev" aria-label="上一章">⏮</button><button type="button" class="listen-toggle" id="listen-toggle" aria-label="播放 / 暂停">▶</button><button type="button" class="listen-ctrl" id="listen-next" aria-label="下一章">⏭</button></div>
+            <p class="listen-caption" id="listen-caption">下一段，刚好适合回家的路。</p>
+          </div>
+          <ol class="listen-chapters" id="listen-chapters"></ol>
+        </div>
+        <p class="listen-empty hidden" id="listen-empty">还没有可试听的章节——在书架里生成音频后，会出现在这里。</p>
       </div>
     </section>
 
@@ -101,6 +127,6 @@
 
   <dialog id="daily-brief-dialog" class="dialog"><form id="daily-brief-form"><div class="dialog-header"><h2>每日法律速听</h2><button type="button" aria-label="关闭" class="icon-button" data-close-dialog="daily-brief-dialog">×</button></div><p class="form-note">订阅公开 RSS 或 Atom 源。系统每天只收集新文章并建立待审速听任务；不会自动发布，也不会自动生成最终 MP3。</p><label>订阅名称<input required name="name" maxlength="120" placeholder="例如：数据合规资讯" /></label><label>RSS / Atom 地址<input required name="feed_url" type="url" placeholder="https://example.com/feed.xml" /></label><div class="plan-settings"><div class="field"><label>每日运行时间<input name="daily_time" type="time" value="08:00" /></label></div><div class="field"><label>每次最多收集<input name="max_items" type="number" min="1" max="10" value="3" /> 篇</label></div></div><label class="check-label"><input type="checkbox" name="auto_generate" /> 允许自动生成待审速听稿与音频脚本（仅在模型已配置且允许发送素材时）</label><div class="dialog-actions"><button type="button" class="button button-outline" data-close-dialog="daily-brief-dialog">取消</button><button type="submit" class="button button-primary">保存订阅</button></div></form></dialog>
 
-  <script src="/app.js?v=20260928-16"></script>
+  <script src="/app.js?v=20260928-17"></script>
 </body>
 </html>

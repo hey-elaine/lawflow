@@ -1364,7 +1364,6 @@ async function boot() {
   bindDialogs();
   enhanceSelects();
   new MutationObserver(() => { enhanceSelects(); $$('.select-box select').forEach(syncSelectBox); }).observe(document.body, { childList: true, subtree: true });
-  $('#hero-load-demo')?.addEventListener('click', loadDemoProject);
   $('#nav-shelf')?.addEventListener('click', event => { event.preventDefault(); showShelf(); });
   $('#hero-open-shelf')?.addEventListener('click', event => { event.preventDefault(); showShelf(true); });
   $('.brand')?.addEventListener('click', event => { event.preventDefault(); goHome(); });
@@ -1373,10 +1372,85 @@ async function boot() {
     return;
   }
   initHomeSkillSection();
+  initListenSection();
   checkForUpdates();
   try { await Promise.all([loadProjects(), loadDailyBriefSubscriptions()]); } catch (error) { showMessage('无法连接本地服务：' + readableError(error), true); }
 }
 document.addEventListener('DOMContentLoaded', boot);
+
+/* ===== 首页试听段：用真实音频数据驱动播放器 ===== */
+let listenState = { tracks: [], index: 0, audio: null };
+
+function formatListenTime(seconds) {
+  if (!Number.isFinite(seconds)) return '0:00';
+  const m = Math.floor(seconds / 60), s = Math.round(seconds % 60);
+  return m + ':' + String(s).padStart(2, '0');
+}
+
+async function initListenSection() {
+  if (window.location.protocol === 'file:') return;
+  const player = $('#listen-player'), empty = $('#listen-empty');
+  if (!player) return;
+  try {
+    const projects = appState.projects?.length ? appState.projects : await request('/api/projects');
+    for (const item of projects.slice(0, 8)) {
+      const detail = await request('/api/projects/' + item.id);
+      const ready = (detail.audio_outputs || []).filter(output => output.audio_available);
+      if (!ready.length) continue;
+      listenState.tracks = ready;
+      renderListenPlayer(detail.project.name);
+      return;
+    }
+    player.classList.add('hidden');
+    empty?.classList.remove('hidden');
+  } catch (error) { player.classList.add('hidden'); empty?.classList.remove('hidden'); }
+}
+
+function renderListenPlayer(projectName) {
+  const list = $('#listen-chapters');
+  if (!list) return;
+  list.innerHTML = listenState.tracks.map((track, index) =>
+    '<li><button type="button" class="listen-chapter" data-listen-index="' + index + '"><span class="listen-no">' + String(index + 1).padStart(2, '0') + '</span><span class="listen-name">' + escapeHtml(track.title || ('第 ' + (index + 1) + ' 章')) + '</span><span class="listen-duration" data-listen-duration="' + track.id + '">' + (track.duration_seconds ? formatListenTime(track.duration_seconds) : '') + '</span></button></li>'
+  ).join('');
+  $$('#listen-chapters .listen-chapter').forEach(button => button.addEventListener('click', () => playListenTrack(Number(button.dataset.listenIndex))));
+  $('#listen-meta').textContent = '共 ' + listenState.tracks.length + ' 段 · ' + projectName;
+  listenState.audio = new Audio('/api/audio-outputs/' + listenState.tracks[0].id + '/stream');
+  const audio = listenState.audio;
+  audio.addEventListener('loadedmetadata', () => { $('#listen-total').textContent = formatListenTime(audio.duration); });
+  audio.addEventListener('timeupdate', () => {
+    const ratio = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
+    $('#listen-bar').style.width = ratio + '%';
+    $('#listen-current').textContent = formatListenTime(audio.currentTime);
+  });
+  audio.addEventListener('ended', () => { if (listenState.index < listenState.tracks.length - 1) playListenTrack(listenState.index + 1); else setListenToggle(false); });
+  audio.addEventListener('play', () => setListenToggle(true));
+  audio.addEventListener('pause', () => setListenToggle(false));
+  syncListenUi();
+  $('#listen-toggle')?.addEventListener('click', () => { if (audio.paused) audio.play().catch(() => {}); else audio.pause(); });
+  $('#listen-prev')?.addEventListener('click', () => playListenTrack((listenState.index - 1 + listenState.tracks.length) % listenState.tracks.length));
+  $('#listen-next')?.addEventListener('click', () => playListenTrack((listenState.index + 1) % listenState.tracks.length));
+}
+
+function setListenToggle(playing) {
+  const button = $('#listen-toggle');
+  if (button) button.textContent = playing ? '❚❚' : '▶';
+}
+
+function playListenTrack(index) {
+  if (!listenState.tracks.length) return;
+  listenState.index = index;
+  listenState.audio.src = '/api/audio-outputs/' + listenState.tracks[index].id + '/stream';
+  syncListenUi();
+  listenState.audio.play().catch(() => {});
+}
+
+function syncListenUi() {
+  const track = listenState.tracks[listenState.index];
+  if (!track) return;
+  $('#listen-title').textContent = track.title || ('第 ' + (listenState.index + 1) + ' 段');
+  $('#listen-total').textContent = track.duration_seconds ? formatListenTime(track.duration_seconds) : '0:00';
+  $$('#listen-chapters .listen-chapter').forEach((button, i) => button.classList.toggle('active', i === listenState.index));
+}
 
 
 async function loadProfileOptions(selectedId) {
