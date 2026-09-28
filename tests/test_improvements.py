@@ -4,6 +4,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import types
 import unittest
 from unittest.mock import patch
@@ -681,3 +682,46 @@ class ImprovementsTest(unittest.TestCase):
             audio, provider = self.main.speech_chunk('离线回落测试。', {'tts_provider':'edge_tts','tts_voice':'zh-CN-XiaoxiaoNeural','tts_speed':1})
         self.assertEqual(audio, b'mp3')
         self.assertEqual(provider, 'macos-say:Tingting')
+
+    def test_merge_audiobook_builds_chaptered_m4b(self):
+        with tempfile.TemporaryDirectory() as temp:
+            paths = []
+            for freq in (440, 660):
+                chapter_path = Path(temp) / f'chapter-{freq}.mp3'
+                subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', f'sine=frequency={freq}:duration=1', '-y', str(chapter_path)], check=True)
+                paths.append(chapter_path)
+            output = Path(temp) / 'book.m4b'
+            result = self.main.merge_audiobook([('开端', paths[0]), ('收束', paths[1])], None, '测试有声书', output)
+            self.assertTrue(result.is_file())
+            probe = subprocess.run(['ffprobe', '-v', 'error', '-show_chapters', '-of', 'json', str(output)], check=True, capture_output=True, text=True)
+            chapters = json.loads(probe.stdout)['chapters']
+            self.assertEqual(len(chapters), 2)
+            self.assertEqual(chapters[0]['tags']['title'], '第1章 开端')
+            self.assertEqual(chapters[1]['tags']['title'], '第2章 收束')
+            self.assertAlmostEqual(float(chapters[1]['start_time']), 1.0, delta=0.2)
+
+    def test_audiobook_endpoint_exports_sectioned_m4b(self):
+        fixture = self.main.DATA_DIR / 'fixture.mp3'
+        subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-y', str(fixture)], check=True)
+        project = self.client.post('/api/projects', json={'name': '有声书项目', 'verification_mode': 'source_only'}).json()
+        source = self.client.post(f"/api/projects/{project['id']}/text-sources", json={'title': '素材', 'content': '这是第一段材料内容。这是第二段材料内容。'}).json()
+        document = self.client.get(f"/api/documents/{source['id']}").json()
+        ids = [b['id'] for b in document['blocks'] if b['kind'] == 'paragraph']
+        markdown = '# 讲稿\n\n## 第一节 开端\n\n开端内容，语调平缓。\n\n## 第二节 收束\n\n收束内容，给出行动建议。'
+        content = self.client.post(f"/api/projects/{project['id']}/skill-host-contents", json={'document_id': source['id'], 'title': '章节讲稿', 'markdown': markdown, 'source_block_ids': ids}).json()
+        confirmed = self.client.put(f"/api/narrative-contents/{content['id']}", json={'markdown': markdown, 'status': 'confirmed'})
+        self.assertEqual(confirmed.status_code, 200)
+        with tempfile.TemporaryDirectory() as temp:
+            with patch.object(self.main, 'speech_chunk', return_value=(fixture.read_bytes(), 'fixture')):
+                with patch.object(self.main, 'get_configured_export_directory', return_value=Path(temp)):
+                    response = self.client.post(f"/api/projects/{project['id']}/audiobook")
+            self.assertEqual(response.status_code, 201)
+            data = response.json()
+            self.assertEqual(data['chapters'], 2)
+            audiobook = Path(data['audiobook_path'])
+            self.assertEqual(audiobook.suffix, '.m4b')
+            self.assertTrue(audiobook.is_file())
+            probe = subprocess.run(['ffprobe', '-v', 'error', '-show_chapters', '-of', 'json', str(audiobook)], check=True, capture_output=True, text=True)
+            chapters = json.loads(probe.stdout)['chapters']
+            self.assertEqual(len(chapters), 2)
+            self.assertIn('开端', chapters[0]['tags']['title'])

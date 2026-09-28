@@ -1153,13 +1153,17 @@ function renderAudioPanel() {
   const panel = $('#detail-panel');
   const contents = appState.selectedProject.narrative_contents || [];
   const outputs = appState.selectedProject.audio_outputs || [];
-  panel.innerHTML = '<section class="panel-card audio-intro"><p class="eyebrow">音频输出</p><h3>先校对脚本，再生成最终音频</h3><p>讲稿草稿可以整理为口播脚本并试听；只有“已确认”的讲稿才能生成完整 MP3。浏览器朗读只用于校对，正式音质由所选 TTS 服务与音色决定。</p></section><section class="panel-card"><h3>从讲稿生成音频脚本</h3><p>可以整理整篇讲稿，也可以只整理其中一章。章节速听更适合通勤、运动等碎片时间逐节收听。</p><label class="audio-naturalize"><input type="checkbox" id="naturalize-audio"/><span>使用文本模型改善口语节奏<span class="audio-naturalize-note">额外调用一次模型；生成后仍需核对事实</span></span></label>' + (contents.length ? '<div class="audio-source-list">' + contents.map(renderAudioSourceRow).join('') + '</div>' : '<p class="form-note">请先在“' + (SCENARIOS[appState.selectedProject.project.scenario] || SCENARIOS.topic_learning).narrativeLabel + '”中生成讲稿。</p>') + '</section><section class="panel-card"><h3>音频脚本与文件</h3><div class="audio-output-list">' + (outputs.length ? outputs.map(renderAudioOutput).join('') : '<p class="form-note">尚未生成音频脚本。</p>') + '</div></section>';
+  const confirmedContents = contents.filter(item => item.status === 'confirmed');
+  const audiobookCard = '<section class="panel-card"><h3>导出有声书（m4b）</h3>' + (confirmedContents.length ? '<p>把已确认讲稿按章节合成单一 m4b：自带章节标记与封面，拷到 iCloud Drive 后在 iPhone 图书/文件 App 中即可逐章收听，进度自动同步。</p><button class="button button-outline button-small" id="export-audiobook">合成有声书</button><p class="form-note">已逐章生成的音频会直接复用，不会重新合成。</p>' : '<p class="form-note">请先确认讲稿审阅，再合成有声书。</p>') + '</section>';
+  panel.innerHTML = '<section class="panel-card audio-intro"><p class="eyebrow">音频输出</p><h3>先校对脚本，再生成最终音频</h3><p>讲稿草稿可以整理为口播脚本并试听；只有“已确认”的讲稿才能生成完整 MP3。浏览器朗读只用于校对，正式音质由所选 TTS 服务与音色决定。</p></section><section class="panel-card"><h3>从讲稿生成音频脚本</h3><p>可以整理整篇讲稿，也可以只整理其中一章。章节速听更适合通勤、运动等碎片时间逐节收听。</p><label class="audio-naturalize"><input type="checkbox" id="naturalize-audio"/><span>使用文本模型改善口语节奏<span class="audio-naturalize-note">额外调用一次模型；生成后仍需核对事实</span></span></label>' + (contents.length ? '<div class="audio-source-list">' + contents.map(renderAudioSourceRow).join('') + '</div>' : '<p class="form-note">请先在“' + (SCENARIOS[appState.selectedProject.project.scenario] || SCENARIOS.topic_learning).narrativeLabel + '”中生成讲稿。</p>') + '</section><section class="panel-card"><h3>音频脚本与文件</h3><div class="audio-output-list">' + (outputs.length ? outputs.map(renderAudioOutput).join('') : '<p class="form-note">尚未生成音频脚本。</p>') + '</div></section>' + audiobookCard;
   $$('[data-save-audio]').forEach(button => button.addEventListener('click', () => saveAudioScript(button.dataset.saveAudio, button)));
   $$('[data-preview-audio]').forEach(button => button.addEventListener('click', () => previewAudio(button.dataset.previewAudio, button)));
   $$('[data-create-audio-script]').forEach(button => button.addEventListener('click', () => createAudioScript(button.dataset.createAudioScript, button)));
   $$('[data-speak-script]').forEach(button => button.addEventListener('click', () => speakAudioScript(button.dataset.speakScript, button)));
   $$('[data-synthesize-audio]').forEach(button => button.addEventListener('click', () => synthesizeAudio(button.dataset.synthesizeAudio, button)));
   $$('[data-export-audio]').forEach(button => button.addEventListener('click', () => exportAudioOutput(button.dataset.exportAudio, button)));
+  const audiobookButton = $('#export-audiobook');
+  if (audiobookButton) audiobookButton.addEventListener('click', () => exportAudiobook(audiobookButton));
   $$('.audio-script-details').forEach(details => details.addEventListener('toggle', () => {
     if (!details.dataset.audioId) return;
     if (details.open) appState.openAudioScript = details.dataset.audioId;
@@ -1238,6 +1242,14 @@ async function synthesizeAudio(audioId, button) {
 
 async function exportAudioOutput(audioId, button) {
   try { setBusy(button, true, '导出中…'); const result = await request('/api/audio-outputs/' + audioId + '/export', { method: 'POST' }); showMessage('音频脚本已导出：' + result.script_path); } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); }
+}
+
+async function exportAudiobook(button) {
+  try {
+    setBusy(button, true, '合成中…');
+    const result = await request('/api/projects/' + appState.selectedProject.project.id + '/audiobook', { method: 'POST' });
+    showMessage('有声书已生成（' + result.chapters + ' 章）：' + result.audiobook_path);
+  } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); }
 }
 
 function renderTasksPanel() {

@@ -3296,6 +3296,114 @@ def export_audio_script(audio_id: str):
     return result
 
 
+def audiobook_section_headings(markdown: str) -> list[str]:
+    """讲稿中的二级标题即章节；至少两节才值得做有声书。"""
+    headings = []
+    for line in markdown.splitlines():
+        if line.startswith("## "):
+            heading = clean_text(line[3:])
+            if heading:
+                headings.append(heading)
+    return headings
+
+
+def _ffmetadata_escape(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("=", "\\=").replace(";", "\\;").replace("#", "\\#").replace("\n", "\\n")
+
+
+def merge_audiobook(chapters: list[tuple[str, Path]], cover: Path | None, title: str, output_path: Path) -> Path:
+    """把多段音频按顺序合并为带章节标记（可选封面）的 m4b 有声书。"""
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        raise HTTPException(400, "有声书导出需要安装 FFmpeg（含 ffprobe）。")
+    durations = []
+    for _, audio_path in chapters:
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(audio_path)],
+            check=True, capture_output=True, text=True, timeout=60,
+        )
+        durations.append(float(probe.stdout.strip().splitlines()[0]))
+    metadata_text = [";FFMETADATA1", "title=" + _ffmetadata_escape(title)]
+    start = 0.0
+    for index, ((heading, _), duration) in enumerate(zip(chapters, durations), start=1):
+        end = start + max(duration, 0.1)
+        metadata_text += ["[CHAPTER]", "TIMEBASE=1/1000", f"START={int(round(start * 1000))}", f"END={int(round(end * 1000))}", "title=" + _ffmetadata_escape(f"第{index}章 {heading}")]
+        start = end
+    with tempfile.TemporaryDirectory(prefix="lawflow-audiobook-") as temp:
+        temp_dir = Path(temp)
+        concat_path = temp_dir / "list.txt"
+        concat_path.write_text("".join(f"file '{audio_path.resolve()}'\n" for _, audio_path in chapters), encoding="utf-8")
+        metadata_path = temp_dir / "chapters.txt"
+        metadata_path.write_text("\n".join(metadata_text) + "\n", encoding="utf-8")
+        command = ["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_path), "-i", str(metadata_path)]
+        if cover is not None and cover.is_file():
+            command += ["-i", str(cover), "-map", "0:a", "-map", "2:v", "-c:v", "copy", "-disposition:v", "attached_pic"]
+        # 输出选项必须放在所有输入之后，否则 -map_metadata 会被当成输入选项报错。
+        command += ["-map_metadata", "1", "-c:a", "aac", "-b:a", "128k", str(output_path)]
+        subprocess.run(command, check=True, capture_output=True, timeout=600)
+    if not output_path.is_file():
+        raise HTTPException(502, "有声书合并失败，未生成文件。")
+    return output_path
+
+
+def pick_audiobook_cover(project_id: str) -> Path | None:
+    """按项目 id 确定性地选一张内置封面；找不到则跳过封面。"""
+    covers_dir = STATIC_DIR / "img"
+    if not covers_dir.is_dir():
+        return None
+    covers = sorted(covers_dir.glob("cover-*.jpg")) + sorted(covers_dir.glob("watercolor-*.jpg"))
+    if not covers:
+        return None
+    return covers[sum(ord(char) for char in project_id) % len(covers)]
+
+
+@app.post("/api/projects/{project_id}/audiobook", status_code=201)
+def export_project_audiobook(project_id: str):
+    """把已确认讲稿按章节合成单一 m4b 有声书（含章节标记与封面），可在 iPhone 图书/文件 app 中逐章收听。"""
+    project = project_or_404(project_id)
+    conn = db()
+    contents = conn.execute("SELECT * FROM narrative_contents WHERE project_id = ? AND status = 'confirmed' ORDER BY updated_at DESC", (project_id,)).fetchall()
+    conn.close()
+    if not contents:
+        raise HTTPException(400, "请先确认讲稿，再导出有声书。")
+    content = contents[0]
+    headings = audiobook_section_headings(content["markdown"])
+    if len(headings) < 2:
+        raise HTTPException(400, "讲稿里没有可分章的二级标题（需要两节以上），无法生成有声书章节。")
+    chapter_files: list[tuple[str, Path]] = []
+    for heading in headings:
+        audio_title = f"{content['title']} · {heading}"
+        conn = db()
+        existing = conn.execute(
+            "SELECT * FROM audio_outputs WHERE project_id = ? AND narrative_content_id = ? AND title = ?",
+            (project_id, content["id"], audio_title),
+        ).fetchone()
+        conn.close()
+        audio_id = existing["id"] if existing else create_audio_script(project_id, AudioScriptRequest(
+            narrative_content_id=content["id"], section_heading=heading,
+        ))["id"]
+        conn = db()
+        row = conn.execute("SELECT audio_path FROM audio_outputs WHERE id = ?", (audio_id,)).fetchone()
+        conn.close()
+        audio_path = Path(row["audio_path"]) if row and row["audio_path"] else None
+        if audio_path is None or not audio_path.is_file():
+            synthesize_audio_output(audio_id, AudioSynthesisRequest())
+            conn = db()
+            row = conn.execute("SELECT audio_path FROM audio_outputs WHERE id = ?", (audio_id,)).fetchone()
+            conn.close()
+            audio_path = Path(row["audio_path"]) if row and row["audio_path"] else None
+        if audio_path is None or not audio_path.is_file():
+            raise HTTPException(502, f"章节音频合成失败：{heading}")
+        chapter_files.append((heading, audio_path))
+    output_root = get_configured_export_directory()
+    safe_title = re.sub(r"[\\/:*?\"<>|]", "_", project["name"]).strip() or "shengxi-audiobook"
+    output_path = output_root / f"{safe_title}.m4b"
+    try:
+        merge_audiobook(chapter_files, pick_audiobook_cover(project_id), project["name"], output_path)
+    except (subprocess.SubprocessError, OSError) as error:
+        raise HTTPException(502, f"有声书合并失败：{error}") from error
+    return {"audiobook_path": str(output_path), "chapters": len(chapter_files), "title": project["name"]}
+
+
 @app.get("/api/audio-outputs/{audio_id}")
 def get_audio_output(audio_id: str):
     conn = db()
