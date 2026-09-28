@@ -467,3 +467,20 @@ body.in-project .detail-header { position: sticky; top: 0; z-index: 40; backgrou
   .reading-layout { grid-template-columns: 1fr; }
   .reading-toc { position: static; max-height: 260px; }
 }
+
+/* 按节操作折叠面板 */
+.section-ops { margin-top: 12px; }
+.section-ops summary { cursor: pointer; color: var(--ink-soft, #5b6657); font-size: 13px; user-select: none; padding: 6px 0; }
+.section-ops summary:hover { color: var(--accent, #2f5d43); }
+.section-ops-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; max-height: 320px; overflow-y: auto; padding-right: 4px; }
+.section-ops-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 10px; border-radius: 8px; background: rgba(47, 93, 67, 0.04); }
+.section-ops-row:hover { background: rgba(47, 93, 67, 0.08); }
+.section-ops-name { flex: 1; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.section-ops-buttons { display: flex; gap: 8px; flex-shrink: 0; }
+.reading-nav-spacer { flex: 1; }
+.reading-focus-nav { flex-wrap: wrap; gap: 8px; }
+
+/* review-bar 纵向排布：提示一行，按节操作占满宽度 */
+.narrative-content-card .review-bar { flex-direction: column; align-items: stretch; gap: 4px; }
+.narrative-content-card .section-ops-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 12px; max-height: 340px; }
+@media(max-width: 900px) { .narrative-content-card .section-ops-list { grid-template-columns: 1fr; } }
