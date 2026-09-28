@@ -1537,8 +1537,8 @@ def parse_model_json(content: str) -> dict:
 def normalize_narrative_outline(raw: dict, request: NarrativeOutlineRequest, blocks: list[dict]) -> dict:
     raw_sections = raw.get("sections") if isinstance(raw, dict) else None
     minimum = 1
-    if not isinstance(raw_sections, list) or not minimum <= len(raw_sections) <= 8:
-        raise HTTPException(status_code=400, detail=f"大纲章节数须在 {minimum}–8 节之间。")
+    if not isinstance(raw_sections, list) or not minimum <= len(raw_sections) <= 12:
+        raise HTTPException(status_code=400, detail=f"大纲章节数须在 {minimum}–12 节之间。")
     allowed_ids = {block["id"] for block in blocks}
     section_words = NARRATIVE_LENGTHS[request.target_length]["section_words"]
     sections = []
