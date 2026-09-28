@@ -459,10 +459,12 @@ body.in-project .detail-header { position: sticky; top: 0; z-index: 40; backgrou
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-  margin-bottom: 14px;
+  margin-bottom: 0;
+  padding: 12px min(7vw, 72px);
+  background: #fffefa;
+  border-bottom: 1px solid #e6e0d3;
 }
-.reading-focus-nav .button:last-child { margin-left: auto; }
-.reading-focus .reading-focus-nav:last-child { margin-top: 18px; }
+.reading-focus .reading-focus-nav:last-child { margin-top: 0; border-bottom: 0; border-top: 1px solid #e6e0d3; }
 @media (max-width: 900px) {
   .reading-layout { grid-template-columns: 1fr; }
   .reading-toc { position: static; max-height: 260px; }
@@ -484,3 +486,16 @@ body.in-project .detail-header { position: sticky; top: 0; z-index: 40; backgrou
 .narrative-content-card .review-bar { flex-direction: column; align-items: stretch; gap: 4px; }
 .narrative-content-card .section-ops-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 12px; max-height: 340px; }
 @media(max-width: 900px) { .narrative-content-card .section-ops-list { grid-template-columns: 1fr; } }
+
+/* 待确认表述卡片清单 */
+.task-list { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }
+.task-card { padding: 14px 18px; border: 1px solid #e6e0d3; border-radius: 10px; background: #fffefa; }
+.task-card-text { margin: 0 0 12px; font-size: 14px; line-height: 1.75; color: #1b2924; }
+.task-card-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.task-card-foot .task-owner, .task-card-foot .task-due { width: 130px; padding: 6px 9px; border: 1px solid #e0dacf; border-radius: 8px; font-size: 13px; }
+.task-card-status select { padding: 6px 9px; border: 1px solid #e0dacf; border-radius: 8px; font-size: 13px; background: #fff; }
+.task-card-foot .spacer { flex: 1; }
+.risk-tag { display: inline-flex; padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+.risk-tag.risk-high { background: #f3dddd; color: #963b36; }
+.risk-tag.risk-medium { background: #f8eacb; color: #895d13; }
+.risk-tag.risk-low { background: #dbeadf; color: #1c6647; }
