@@ -543,6 +543,8 @@ class ImprovementsTest(unittest.TestCase):
     def test_macos_say_tts_uses_local_voice_without_api_key(self):
         with patch.object(self.main.sys, 'platform', 'darwin'), patch.object(self.main.shutil, 'which', return_value='/usr/bin/say'), patch.object(self.main.subprocess, 'run') as run:
             def make_output(args, **_kwargs):
+                if '?' in args:
+                    return subprocess.CompletedProcess(args, 0, stdout='Tingting            zh_CN    # 你好\n')
                 target = Path(args[args.index('-o') + 1] if '-o' in args else args[-1])
                 target.write_bytes(b'mp3')
                 return subprocess.CompletedProcess(args, 0)
