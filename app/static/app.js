@@ -1,6 +1,6 @@
 const appState = { projects: [], selectedProjectId: null, selectedProject: null, selectedDocument: null, activeTab: 'materials', activePlan: null, editingContentId: null, collectionFilter: '' };
 const SCENARIOS = {
-  daily_brief: { name: '晨间 / 晚间法律速听', description: '单篇资讯的短时精炼收听', transform: 'condense', verification: 'source_only', duration: 5, audio: true, audience: '个人学习', narrativeLabel: '速听讲稿' },
+  daily_brief: { name: '晨间 / 晚间速听', description: '单篇资讯或收藏文章的短时精炼收听', transform: 'condense', verification: 'source_only', duration: 5, audio: true, audience: '个人学习', narrativeLabel: '速听讲稿' },
   topic_learning: { name: '专题学习与表达', description: '围绕选定材料形成分章节学习内容', transform: 'adapt', verification: 'material_check', duration: 10, audio: true, audience: '法律从业者与企业法务', narrativeLabel: '主题讲稿' },
   speaking_note: { name: '客户培训 / Speak Note', description: '准备培训、发言和对外交流讲稿', transform: 'enrich', verification: 'external_verify', duration: 20, audio: false, audience: '客户法务与业务团队', narrativeLabel: 'Speak Note' },
   legal_podcast: { name: '法律科普播客', description: '实务热点与经验积累的对外表达', transform: 'enrich', verification: 'external_verify', duration: 20, audio: true, audience: '行业听众与潜在客户', narrativeLabel: '播客讲稿' },
@@ -59,7 +59,7 @@ function escapeHtml(value = '') { return String(value).replace(/[&<>'"]/g, char 
 function formatDate(value) { try { return value ? new Intl.DateTimeFormat('zh-CN', { month: 'short', day: 'numeric' }).format(new Date(value)) : ''; } catch (_) { return value || ''; } }
 function statusText(status) { return ({ draft: '草稿', pending_review: '待律师审核', confirmed: '已确认', needs_revision: '待修改', discarded: '已废弃', open: '待处理', in_progress: '处理中', done: '已完成', dismissed: '已关闭' })[status] || status; }
 function showMessage(message, error = false) { const box = $('#workspace-message'); box.textContent = message; box.className = error ? 'message error' : 'message'; setTimeout(() => box.classList.add('hidden'), 4800); }
-function setBusy(button, busy, label = '处理中…') { if (!button) return; if (busy) { button.dataset.label = button.textContent; button.textContent = label; button.disabled = true; } else { button.textContent = button.dataset.label || button.textContent; button.disabled = false; } }
+function setBusy(button, busy, label = '处理中…') { if (!button) return; if (busy) { if (!button.disabled) button.dataset.label = button.textContent; button.textContent = label; button.disabled = true; } else { button.textContent = button.dataset.label || button.textContent; button.disabled = false; } }
 
 async function loadProjects() { appState.projects = await request('/api/projects'); renderProjectList(); }
 async function loadDailyBriefSubscriptions() {
@@ -263,7 +263,7 @@ function renderProjectDetail() {
     '<button data-tab="' + key + '" class="' + (appState.activeTab === key ? 'active ' : '') + (status || '') + '"' + (status === 'current' ? ' aria-current="step"' : '') + '>' +
     '<span class="step-mark">' + (status === 'done' ? '✓' : status === 'current' ? '●' : '○') + '</span>' + label + '</button>'
   ).join('');
-  detail.innerHTML = '<div class="detail-header"><div><p class="eyebrow">' + escapeHtml(scenario.name) + '</p><h2>' + escapeHtml(data.project.name) + '</h2><p>' + escapeHtml(data.project.client_name || data.project.description || scenario.description) + '</p><div class="task-preferences"><button type="button" class="tag-edit-btn" id="edit-collection" title="归类到某个收藏夹">🏷 ' + ((data.project.collection || '').trim() ? escapeHtml(data.project.collection.trim()) : '未归类 · 点此归类') + '</button><span>' + TRANSFORM_NAMES[data.project.transform_mode] + '</span><span>' + VERIFICATION_NAMES[data.project.verification_mode] + '</span><span>' + data.project.target_duration + ' 分钟目标时长</span></div></div><div class="detail-actions">' + (data.documents.length && !(data.narrative_contents || []).length ? '<button class="button button-primary button-small" id="one-click-generate">⚡ 一键生成</button>' : '') + '<button class="button button-outline button-small" id="back-to-projects">← 全部项目</button><button class="button button-outline button-small" id="export-project">导出至本机目录</button><button class="button button-outline button-small" id="reload-project">刷新任务</button><button class="button button-danger button-small" id="delete-project">删除任务</button></div></div>' + '<div class="tabbar">' + tabHtml + '</div>' + renderWorkflowHint(data, state) + '<div id="detail-panel" class="detail-panel"></div>';
+  detail.innerHTML = '<div class="detail-header"><div><p class="eyebrow">' + escapeHtml(scenario.name) + '</p><h2>' + escapeHtml(data.project.name) + '</h2><p>' + escapeHtml(data.project.client_name || data.project.description || scenario.description) + '</p><div class="task-preferences"><button type="button" class="tag-edit-btn" id="edit-collection" title="归类到某个收藏夹">🏷 ' + ((data.project.collection || '').trim() ? escapeHtml(data.project.collection.trim()) : '未归类 · 点此归类') + '</button><span>' + TRANSFORM_NAMES[data.project.transform_mode] + '</span><span>' + VERIFICATION_NAMES[data.project.verification_mode] + '</span><span>' + data.project.target_duration + ' 分钟目标时长</span></div></div><div class="detail-actions">' + (data.documents.length && (!(data.narrative_contents || []).length || !(data.audio_outputs || []).some(item => item.audio_available)) ? '<button class="button button-primary button-small" id="one-click-generate">⚡ 一键生成</button>' : '') + '<button class="button button-outline button-small" id="back-to-projects">← 全部项目</button><button class="button button-outline button-small" id="export-project">导出至本机目录</button><button class="button button-outline button-small" id="reload-project">刷新任务</button><button class="button button-danger button-small" id="delete-project">删除任务</button></div></div>' + '<div class="tabbar">' + tabHtml + '</div>' + renderWorkflowHint(data, state) + '<div id="detail-panel" class="detail-panel"></div>';
   $('#edit-collection')?.addEventListener('click', () => openCollectionDialog(data.project.id));
   $$('.tabbar button', detail).forEach(button => button.addEventListener('click', () => { appState.activeTab = button.dataset.tab; renderProjectDetail(); }));
   $$('[data-workflow-next]', detail).forEach(button => button.addEventListener('click', () => { appState.activeTab = button.dataset.workflowNext; renderProjectDetail(); $('#detail-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }));
@@ -1314,7 +1314,10 @@ async function oneClickGenerate() {
     } else {
       const doc = appState.selectedProject.documents[0];
       const docLoaded = await ensureDocumentLoaded(doc.id);
-      const sourceBlockIds = docLoaded.blocks.filter(block => block.kind === 'paragraph').map(block => block.id);
+      // 已确认章节方案时，沿用章节的材料块（含标题块），避免与后端校验不一致
+      const activePlan = appState.selectedProject.plans.find(item => item.id === planId);
+      const chapterBlocks = activePlan ? [...new Set((activePlan.chapters || []).filter(chapter => chapter.enabled !== false).flatMap(chapter => chapter.source_block_ids || []))] : [];
+      const sourceBlockIds = chapterBlocks.length ? chapterBlocks : docLoaded.blocks.filter(block => block.kind === 'paragraph').map(block => block.id);
       if (!sourceBlockIds.length) throw new Error('素材里没有可用的正文段落。');
       const profiles = (appState.profiles && appState.profiles.length) ? appState.profiles : await request('/api/narrative/profiles');
       const profileId = (profiles[0] && profiles[0].id) || 'law_podcast_v4';
@@ -1339,12 +1342,31 @@ async function oneClickGenerate() {
         content = await request('/api/narrative-outlines/' + outlineId + '/contents', { method: 'POST' });
       } finally { if (pollTimer) clearInterval(pollTimer); }
     }
-    // 第四步：音频脚本 + MP3
+    // 第四步：音频脚本 + MP3（轻量模式自动确认讲稿；严格模式停下等人工确认）
+    if (content.status !== 'confirmed') {
+      if (project.verification_mode === 'source_only') {
+        await request('/api/narrative-contents/' + content.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ markdown: content.markdown, review_note: '一键生成：轻量模式自动确认。', status: 'confirmed' }) });
+        content = { ...content, status: 'confirmed' };
+      } else {
+        appState.selectedProject = await request('/api/projects/' + projectId);
+        appState.activeTab = 'narrative';
+        renderProjectDetail();
+        showMessage('讲稿已生成（待确认）。请在「讲稿」页快速过一遍并点确认，之后回到音频页即可合成 MP3。');
+        return;
+      }
+    }
     if (project.audio_enabled) {
-      setBusy(button, true, '整理音频脚本…');
-      const script = await request('/api/projects/' + projectId + '/audio-scripts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ narrative_content_id: content.id, naturalize: false }) });
-      setBusy(button, true, '合成 MP3…');
-      await request('/api/audio-outputs/' + script.id + '/synthesize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+      const existingOutput = (appState.selectedProject.audio_outputs || []).find(item => item.narrative_content_id === content.id);
+      let script;
+      if (existingOutput) { script = existingOutput; }
+      else {
+        setBusy(button, true, '整理音频脚本…');
+        script = await request('/api/projects/' + projectId + '/audio-scripts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ narrative_content_id: content.id, naturalize: false }) });
+      }
+      if (!script.audio_available) {
+        setBusy(button, true, '合成 MP3…');
+        await request('/api/audio-outputs/' + script.id + '/synthesize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+      }
     }
     appState.selectedProject = await request('/api/projects/' + projectId);
     appState.activePlan = appState.selectedProject.plans.find(item => item.id === planId) || null;
