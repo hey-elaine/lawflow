@@ -664,3 +664,20 @@ class ImprovementsTest(unittest.TestCase):
         again = self.client.post('/api/demo-project').json()
         self.assertFalse(again['created'])
         self.assertEqual(again['project_id'], first['project_id'])
+
+    def test_edge_tts_falls_back_to_macos_say_when_offline(self):
+        class BrokenCommunicate:
+            def __init__(self, *args, **kwargs):
+                raise OSError('network unreachable')
+        with patch.object(self.main.sys, 'platform', 'darwin'), patch.object(self.main.shutil, 'which', return_value='/usr/bin/say'), \
+             patch.object(self.main.edge_tts, 'Communicate', BrokenCommunicate), patch.object(self.main.subprocess, 'run') as run:
+            def make_output(args, **_kwargs):
+                if '?' in args:
+                    return subprocess.CompletedProcess(args, 0, stdout='Tingting            zh_CN    # 你好\n')
+                target = Path(args[args.index('-o') + 1] if '-o' in args else args[-1])
+                target.write_bytes(b'mp3')
+                return subprocess.CompletedProcess(args, 0)
+            run.side_effect = make_output
+            audio, provider = self.main.speech_chunk('离线回落测试。', {'tts_provider':'edge_tts','tts_voice':'zh-CN-XiaoxiaoNeural','tts_speed':1})
+        self.assertEqual(audio, b'mp3')
+        self.assertEqual(provider, 'macos-say:Tingting')

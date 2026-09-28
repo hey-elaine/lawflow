@@ -1472,28 +1472,33 @@ def resolve_macos_voice(preferred: str) -> str:
     return enhanced or (pool[0]["name"] if pool else preferred)
 
 
+def speech_chunk_fallback_macos(text: str, speed: float, settings: dict | None = None) -> tuple[bytes, str]:
+    """本机 say + FFmpeg 合成；Edge TTS 不可用时的兜底路径。"""
+    if sys.platform != "darwin" or not shutil.which("say"):
+        raise HTTPException(400, "macOS 免费语音仅能在安装了 say 命令的 Mac 上使用。")
+    voice = resolve_macos_voice(((settings or {}).get("tts_voice") or "Tingting").strip())
+    speech_rate = max(90, min(360, round(175 * speed)))
+    try:
+        with tempfile.TemporaryDirectory(prefix="lawflow-macos-say-") as temp:
+            aiff_path = Path(temp) / "speech.aiff"
+            mp3_path = Path(temp) / "speech.mp3"
+            subprocess.run(["say", "-v", voice, "-r", str(speech_rate), "-o", str(aiff_path), text], check=True, capture_output=True, timeout=120)
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(aiff_path), "-codec:a", "libmp3lame", "-b:a", "128k", str(mp3_path)], check=True, capture_output=True, timeout=120)
+            audio = mp3_path.read_bytes()
+    except (subprocess.SubprocessError, OSError) as error:
+        raise HTTPException(502, "macOS 本地语音合成失败。请确认系统已安装“婷婷”音色和 FFmpeg。") from error
+    if not audio:
+        raise HTTPException(502, "macOS 本地语音未生成可用音频。")
+    return audio, "macos-say:" + voice
+
+
 def speech_chunk(text: str, settings: dict) -> tuple[bytes, str]:
     provider = settings.get("tts_provider", "compatible")
     base = (settings.get("tts_base_url") or "").rstrip("/")
     key = settings.get("tts_api_key") or ""
     speed = float(settings.get("tts_speed", 1))
     if provider == "macos_say":
-        if sys.platform != "darwin" or not shutil.which("say"):
-            raise HTTPException(400, "macOS 免费语音仅能在安装了 say 命令的 Mac 上使用。")
-        voice = resolve_macos_voice((settings.get("tts_voice") or "Tingting").strip())
-        speech_rate = max(90, min(360, round(175 * speed)))
-        try:
-            with tempfile.TemporaryDirectory(prefix="lawflow-macos-say-") as temp:
-                aiff_path = Path(temp) / "speech.aiff"
-                mp3_path = Path(temp) / "speech.mp3"
-                subprocess.run(["say", "-v", voice, "-r", str(speech_rate), "-o", str(aiff_path), text], check=True, capture_output=True, timeout=120)
-                subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(aiff_path), "-codec:a", "libmp3lame", "-b:a", "128k", str(mp3_path)], check=True, capture_output=True, timeout=120)
-                audio = mp3_path.read_bytes()
-        except (subprocess.SubprocessError, OSError) as error:
-            raise HTTPException(502, "macOS 本地语音合成失败。请确认系统已安装“婷婷”音色和 FFmpeg。") from error
-        if not audio:
-            raise HTTPException(502, "macOS 本地语音未生成可用音频。")
-        return audio, "macos-say:" + voice
+        return speech_chunk_fallback_macos(text, speed, settings)
     if provider == "edge_tts":
         voice = settings.get("tts_voice") or "zh-CN-XiaoxiaoNeural"
         rate = "{:+d}%".format(round((speed - 1) * 100))
@@ -1504,11 +1509,13 @@ def speech_chunk(text: str, settings: dict) -> tuple[bytes, str]:
                     await edge_tts.Communicate(text, voice=voice, rate=rate).save(str(output_path))
                 asyncio.run(synthesize())
                 audio = output_path.read_bytes()
-        except Exception as error:
-            raise HTTPException(502, "Edge TTS 在线合成失败。该选项为实验性免费服务，可能受网络、服务策略或区域影响。") from error
-        if not audio:
-            raise HTTPException(502, "Edge TTS 未生成可用音频。")
-        return audio, "edge-tts:" + voice
+            if audio:
+                return audio, "edge-tts:" + voice
+        except Exception:
+            pass  # 网络或服务不可用时回落到本机语音，保证仍能出音频
+        if sys.platform == "darwin" and shutil.which("say"):
+            return speech_chunk_fallback_macos(text, speed)
+        raise HTTPException(502, "Edge TTS 在线合成失败，且本机语音不可用。请检查网络，或在设置中改用 macOS 本地语音。")
     if provider == "minimax":
         base = base or "https://api.minimax.cn/v1"
         model = settings.get("tts_model") or "speech-2.8-hd"
@@ -2218,7 +2225,17 @@ def create_demo_project():
         style_profile="law_podcast_v4",
         review_note="示例成稿：已按选定材料整理，等待确认。",
     ))
-    create_audio_script(project["id"], AudioScriptRequest(narrative_content_id=content["id"]))
+    # 示例开箱即可收听：确认成稿并预合成 MP3
+    conn = db()
+    conn.execute("UPDATE narrative_contents SET status = 'confirmed', review_note = '示例成稿：开箱即听。' WHERE id = ?", (content["id"],))
+    conn.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (now_iso(), project["id"]))
+    conn.commit()
+    conn.close()
+    try:
+        audio_id = create_audio_script(project["id"], AudioScriptRequest(narrative_content_id=content["id"]))["id"]
+        synthesize_audio_output(audio_id, AudioSynthesisRequest())
+    except HTTPException:
+        pass  # TTS 未就绪时示例仍可创建，音频可稍后在应用内生成
     return {"project_id": project["id"], "created": True}
 
 
