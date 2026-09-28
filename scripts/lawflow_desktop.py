@@ -22,7 +22,7 @@ h1{margin:0 0 8px;font-size:20px;letter-spacing:-.02em}p{margin:0;color:#41534d;
 .bar{width:190px;height:3px;margin:24px auto 0;border-radius:99px;background:#e6e1d5;overflow:hidden}
 .bar::after{content:"";display:block;width:40%;height:100%;border-radius:99px;background:#1d5b49;animation:slide 1.1s ease-in-out infinite}
 @keyframes slide{0%{transform:translateX(-110%)}100%{transform:translateX(290%)}}
-</style></head><body><div class="card"><div class="mark">律</div><h1>律析 LawFlow</h1><p>正在启动本地服务，请稍候…</p><div class="bar"></div></div></body></html>"""
+</style></head><body><div class="card"><div class="mark">声</div><h1>声息</h1><p>正在启动本地服务，请稍候…</p><div class="bar"></div></div></body></html>"""
 
 
 def error_page(message: str) -> str:
@@ -92,7 +92,7 @@ def main() -> None:
         # 用原生 html= 渲染加载页。不要用 data: URI：pywebview 会把它当本地文件
         # 交给内部 HTTP 服务器解析，产生一次短暂约 404 错误页。
         window = webview.create_window(
-            "律析 LawFlow",
+            "声息",
             html=LOADING_PAGE,
             width=1440,
             height=960,

@@ -13,7 +13,7 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
 async function request(url, options = {}) {
   if (window.location.protocol === 'file:') {
-    throw new Error('当前打开的是源码页面，不能直接使用。请打开已安装的知了 app。');
+    throw new Error('当前打开的是源码页面，不能直接使用。请打开已安装的声息 app。');
   }
   const response = await fetch(url, options);
   if (!response.ok) {
@@ -109,7 +109,7 @@ async function openProject(projectId) {
     appState.selectedDocument = null;
     appState.activePlan = appState.selectedProject.plans[0] || null;
     $('#project-detail').classList.remove('hidden');
-    document.body.classList.add('in-project');
+    document.body.classList.add('in-project', 'in-shelf');
     renderProjectDetail();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   } catch (error) { showMessage(error.message, true); }
@@ -119,7 +119,25 @@ function closeProject() {
   appState.selectedProjectId = null; appState.selectedProject = null; appState.selectedDocument = null; appState.activePlan = null;
   $('#project-detail').classList.add('hidden'); $('#project-detail').innerHTML = '';
   document.body.classList.remove('in-project');
+  document.body.classList.add('in-shelf');
+  renderProjectList();
   window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function showShelf(openDialog = false) {
+  document.body.classList.remove('in-project');
+  document.body.classList.add('in-shelf');
+  $('#project-detail').classList.add('hidden');
+  appState.selectedProjectId = null; appState.selectedProject = null; appState.selectedDocument = null;
+  renderProjectList();
+  window.scrollTo({ top: 0 });
+  if (openDialog) $('#project-dialog')?.showModal();
+}
+
+function goHome() {
+  document.body.classList.remove('in-shelf', 'in-project');
+  $('#project-detail').classList.add('hidden');
+  window.scrollTo({ top: 0 });
 }
 
 function projectStepState(data) {
@@ -650,7 +668,7 @@ function renderNarrativeOutputPanel() {
   }
   if (!confirmedOutline) {
     panel.innerHTML = '<section class="panel-card workflow-gate"><p class="eyebrow">写作前置条件</p><h3>先确认大纲</h3><p>大纲决定章节顺序、材料范围和每节要回答的问题。确认后这里会显示“生成' + escapeHtml(scenario.narrativeLabel) + '”按钮。</p><div class="plan-actions"><button class="button button-primary" data-open-tab="structure">去确认大纲</button></div></section>' +
-      '<details class="panel-card optional-path"><summary>也可以让 ChatGPT 写稿，再粘贴回本地审阅</summary><div class="optional-path-body"><p>无需 OpenAI API Key。知了只复制当前材料块与写作要求；你在 ChatGPT App 生成 Markdown 后，粘贴回本地即可。</p><div class="handoff-actions"><button class="button button-outline" id="copy-chatgpt-prompt">复制给 ChatGPT</button><button class="button button-primary" id="open-chatgpt-import">粘贴 ChatGPT 成稿</button></div></div></details>';
+      '<details class="panel-card optional-path"><summary>也可以让 ChatGPT 写稿，再粘贴回本地审阅</summary><div class="optional-path-body"><p>无需 OpenAI API Key。声息只复制当前材料块与写作要求；你在 ChatGPT App 生成 Markdown 后，粘贴回本地即可。</p><div class="handoff-actions"><button class="button button-outline" id="copy-chatgpt-prompt">复制给 ChatGPT</button><button class="button button-primary" id="open-chatgpt-import">粘贴 ChatGPT 成稿</button></div></div></details>';
     $('[data-open-tab="structure"]', panel).addEventListener('click', () => { appState.activeTab = 'structure'; renderProjectDetail(); });
     $('#copy-chatgpt-prompt').addEventListener('click', copyChatGPTPrompt);
     $('#open-chatgpt-import').addEventListener('click', openChatGPTImport);
@@ -662,7 +680,7 @@ function renderNarrativeOutputPanel() {
 
   panel.innerHTML = (contents.length ? '' : '<section class="panel-card"><h3>生成' + scenario.narrativeLabel + '</h3><p>大纲已确认。生成后可整篇阅读、逐节重写、人工修改并导出 DOCX。</p><p class="form-note" id="generation-status">点击下方按钮开始逐节写作；写作过程中这里会显示当前进度。</p><div class="plan-actions"><button class="button button-primary" data-generate-from-outline="' + confirmedOutline.id + '">逐节生成' + escapeHtml(scenario.narrativeLabel) + '</button></div></section>') +
     '<section class="panel-card"><h3>已生成的' + scenario.narrativeLabel + '</h3>' + learningSummary + '<div class="narrative-content-list">' + (contents.length ? contents.map(renderNarrativeContentCard).join('') : '<p class="form-note">尚未生成讲稿。</p>') + '</div></section>' +
-    '<details class="panel-card optional-path"><summary>也可以让 ChatGPT 写稿，再粘贴回本地审阅</summary><div class="optional-path-body"><p>无需 OpenAI API Key。知了只复制当前材料块与写作要求；你在 ChatGPT App 生成 Markdown 后，粘贴回本地即可。</p><div class="handoff-actions"><button class="button button-outline" id="copy-chatgpt-prompt">复制给 ChatGPT</button><button class="button button-primary" id="open-chatgpt-import">粘贴 ChatGPT 成稿</button></div></div></details>';
+    '<details class="panel-card optional-path"><summary>也可以让 ChatGPT 写稿，再粘贴回本地审阅</summary><div class="optional-path-body"><p>无需 OpenAI API Key。声息只复制当前材料块与写作要求；你在 ChatGPT App 生成 Markdown 后，粘贴回本地即可。</p><div class="handoff-actions"><button class="button button-outline" id="copy-chatgpt-prompt">复制给 ChatGPT</button><button class="button button-primary" id="open-chatgpt-import">粘贴 ChatGPT 成稿</button></div></div></details>';
 
   $('[data-generate-from-outline]')?.addEventListener('click', event => generateNarrative(confirmedOutline.id, event.currentTarget));
   $('#copy-chatgpt-prompt').addEventListener('click', copyChatGPTPrompt);
@@ -1141,7 +1159,7 @@ function renderTasksPanel() {
 }
 async function saveTask(card, status) { status = status || $('.status-pill.active', card)?.dataset.taskStatus || 'open'; try { await request('/api/tasks/' + card.dataset.taskId, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status, owner: ($('.task-owner', card)?.value || '').trim(), due_date: $('.task-due', card)?.value || '' }) }); appState.selectedProject = await request('/api/projects/' + appState.selectedProject.project.id); renderProjectDetail(); showMessage('已保存。'); } catch (error) { showMessage(error.message, true); } }
 async function exportProject() { const button = $('#export-project'); try { setBusy(button, true, '正在导出…'); const output = await request('/api/projects/' + appState.selectedProject.project.id + '/exports', { method: 'POST' }); showMessage('成果包已写入：' + output.output_dir); } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); } }
-async function deleteProject() { const project = appState.selectedProject?.project; if (!project) return; const confirmed = window.confirm('删除项目“' + project.name + '”？\n\n项目中的原始材料、章节方案、讲稿、音频和任务记录将从本机工作目录删除。已经导出的成果包不会删除。'); if (!confirmed) return; const button = $('#delete-project'); try { setBusy(button, true, '删除中…'); await request('/api/projects/' + project.id, { method: 'DELETE' }); appState.selectedProjectId = null; appState.selectedProject = null; appState.selectedDocument = null; appState.activePlan = null; $('#project-detail').classList.add('hidden'); $('#project-detail').innerHTML = ''; document.body.classList.remove('in-project'); await loadProjects(); showMessage('项目及本地派生音频已删除。'); } catch (error) { showMessage(error.message, true); } finally { if (button?.isConnected) setBusy(button, false); } }
+async function deleteProject() { const project = appState.selectedProject?.project; if (!project) return; const confirmed = window.confirm('删除项目“' + project.name + '”？\n\n项目中的原始材料、章节方案、讲稿、音频和任务记录将从本机工作目录删除。已经导出的成果包不会删除。'); if (!confirmed) return; const button = $('#delete-project'); try { setBusy(button, true, '删除中…'); await request('/api/projects/' + project.id, { method: 'DELETE' }); appState.selectedProjectId = null; appState.selectedProject = null; appState.selectedDocument = null; appState.activePlan = null; $('#project-detail').classList.add('hidden'); $('#project-detail').innerHTML = ''; document.body.classList.remove('in-project'); await loadProjects(); showShelf(); showMessage('项目及本地派生音频已删除。'); } catch (error) { showMessage(error.message, true); } finally { if (button?.isConnected) setBusy(button, false); } }
 function showSourceOverlay(title, html) { const overlay = document.createElement('div'); overlay.className = 'source-modal'; overlay.innerHTML = '<div class="source-modal-card"><div class="source-modal-top"><div><p class="eyebrow">原始材料依据</p><h3>' + escapeHtml(title) + '</h3></div><button class="icon-button" aria-label="关闭">×</button></div><div>' + html + '</div></div>'; $('.icon-button', overlay).addEventListener('click', () => overlay.remove()); overlay.addEventListener('click', event => { if (event.target === overlay) overlay.remove(); }); document.body.appendChild(overlay); }
 
 function bindDialogs() {
@@ -1318,7 +1336,7 @@ async function initHomeSkillSection() {
     tag.textContent = '本地服务未连接';
   }
   const copy = $('#copy-skill-invoke');
-  if (copy) copy.addEventListener('click', async () => { const example = '请读取并按此 Skill 执行：https://github.com/hey-elaine/lawflow/tree/main/skills/lawflow\n\n$lawflow 使用知了处理本地项目中的材料：先读取受控上下文，给出可确认的大纲，再将成稿回写并导出 DOCX。'; try { await navigator.clipboard.writeText(example); showMessage('已复制 GitHub Skill 链接与调用示例。'); } catch (_) { showMessage('浏览器未授权剪贴板，请手动复制。', true); } });
+  if (copy) copy.addEventListener('click', async () => { const example = '请读取并按此 Skill 执行：https://github.com/hey-elaine/lawflow/tree/main/skills/lawflow\n\n$lawflow 使用声息处理本地项目中的材料：先读取受控上下文，给出可确认的大纲，再将成稿回写并导出 DOCX。'; try { await navigator.clipboard.writeText(example); showMessage('已复制 GitHub Skill 链接与调用示例。'); } catch (_) { showMessage('浏览器未授权剪贴板，请手动复制。', true); } });
 }
 async function checkForUpdates(manual = false) {
   const notice = $('#update-notice');
@@ -1335,7 +1353,7 @@ async function checkForUpdates(manual = false) {
     if (!notice) return;
     notice.classList.add('hidden');
     if (!status.update_available || !status.release_url) return;
-    notice.innerHTML = '<div class="shell"><span>知了 ' + escapeHtml(status.latest_version) + ' 已发布。</span><a class="button button-outline button-small" target="_blank" rel="noreferrer" href="' + escapeHtml(status.release_url) + '">前往 GitHub 下载</a><button class="icon-button" aria-label="关闭更新提示">×</button></div>';
+    notice.innerHTML = '<div class="shell"><span>声息 ' + escapeHtml(status.latest_version) + ' 已发布。</span><a class="button button-outline button-small" target="_blank" rel="noreferrer" href="' + escapeHtml(status.release_url) + '">前往 GitHub 下载</a><button class="icon-button" aria-label="关闭更新提示">×</button></div>';
     notice.classList.remove('hidden');
     $('.icon-button', notice)?.addEventListener('click', () => notice.classList.add('hidden'));
   } catch (_) {
@@ -1347,8 +1365,11 @@ async function boot() {
   enhanceSelects();
   new MutationObserver(() => { enhanceSelects(); $$('.select-box select').forEach(syncSelectBox); }).observe(document.body, { childList: true, subtree: true });
   $('#hero-load-demo')?.addEventListener('click', loadDemoProject);
+  $('#nav-shelf')?.addEventListener('click', event => { event.preventDefault(); showShelf(); });
+  $('#hero-open-shelf')?.addEventListener('click', event => { event.preventDefault(); showShelf(true); });
+  $('.brand')?.addEventListener('click', event => { event.preventDefault(); goHome(); });
   if (window.location.protocol === 'file:') {
-    showMessage('你正在打开源码页面。请打开已安装的知了 app 使用完整功能。', true);
+    showMessage('你正在打开源码页面。请打开已安装的声息 app 使用完整功能。', true);
     return;
   }
   initHomeSkillSection();

@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>知了｜把稍后读，真的读完</title>
-  <link rel="stylesheet" href="/styles.css?v=20260928-14" />
+  <title>声息｜把没有时间读完的东西，带到路上</title>
+  <link rel="stylesheet" href="/styles.css?v=20260928-16" />
 </head>
 <body>
   <header class="nav shell">
-    <a class="brand" href="#top" aria-label="知了首页"><span class="brand-mark">知</span><span>知了 <strong>Zhiliao</strong></span></a>
-    <nav><a href="#workspace">开始整理</a><a href="#workflow">使用方式</a><a href="#trust">审阅依据</a><a href="#skill">AI 协作</a></nav>
+    <a class="brand" href="#top" aria-label="声息首页"><span class="brand-mark">声</span><span>声息 <strong>Shengxi</strong></span></a>
+    <nav><a href="#top" id="nav-shelf">书架</a><a href="#workflow">使用方式</a><a href="#trust">审阅依据</a><a href="#skill">AI 协作</a></nav>
     <button class="button button-quiet" id="open-settings">设置</button>
   </header>
 
@@ -17,12 +17,12 @@
     <div id="update-notice" class="update-notice hidden" role="status"></div>
     <section class="hero shell">
       <div class="hero-copy">
-        <p class="eyebrow">知了 · 把稍后读，真的读完</p>
+        <p class="eyebrow">声息 · 把稍后读，真的读完</p>
         <h1>把没有时间读完的东西，<br/><em>带到路上。</em></h1>
-        <p class="hero-description">好文章存进收藏夹，就慢慢变成了「等有空再看」。只是这个「有空」，常常并不会真的出现。丢进知了：长文拆成一节一节的小课，地铁上读一节，睡觉前听一节。读到哪儿，它都替你记着。</p>
-        <div class="hero-actions"><a href="#workspace" class="button button-primary">丢一篇文章进来</a><button type="button" class="button button-outline" id="hero-load-demo">看看拆好的样子</button></div>
+        <p class="hero-description">好文章存进收藏夹，就慢慢变成了「等有空再看」。只是这个「有空」，常常并不会真的出现。丢进声息：长文拆成一节一节的小课，地铁上读一节，睡觉前听一节。读到哪儿，它都替你记着。</p>
+        <div class="hero-actions"><a href="#top" class="button button-primary" id="hero-open-shelf">丢一篇文章进来</a><button type="button" class="button button-outline" id="hero-load-demo">看看拆好的样子</button></div>
       </div>
-      <div class="hero-visual" aria-label="知了学习成果示意">
+      <div class="hero-visual" aria-label="声息学习成果示意">
         <div class="visual-layout">
           <div class="visual-card visual-source"><span class="mini-label">你丢进来的</span><b>链接、PDF、长文</b><small>公众号 · 网页 · PDF · DOCX · TXT</small></div>
           <svg class="workflow-arrows" viewBox="0 0 72 312" aria-hidden="true" preserveAspectRatio="none">
@@ -50,15 +50,6 @@
       </div>
     </section>
 
-    <section id="story" class="section shell story-section">
-      <div class="section-heading"><p class="eyebrow">为什么做知了</p><h2>它不是替你读书，<br/>只是把「收藏」变成「遇见」。</h2></div>
-      <div class="story-copy">
-        <p>做它的人是个律师。看到好文章、好报告、以后可能用得上的观点，会先存下来——存进微信收藏，丢进桌面文件夹，或者认真地放进知识库。工作被项目切得很碎，却又不能只知道眼前正在做的事。存下来的东西越来越多，「有空」越来越少。</p>
-        <p>后来发现，这不是律师的问题，是所有爱存文章的人共同的问题。所以知了不是一个律师工具：它只想帮我们，把那些已经认真收藏过一次的东西，真正再遇见一次。</p>
-        <p>我们总觉得学习需要一张书桌、一杯咖啡和一整个没有人打扰的下午。后来才发现，也未必。<em>有时只是戴上耳机，然后出发。</em></p>
-      </div>
-    </section>
-
     <section id="trust" class="trust-section"><div class="shell trust-grid"><div><p class="eyebrow light">为什么可信</p><h2>它不替你读书，<br/>只给阅读换一种发生的方式。</h2></div><div class="trust-points"><div><b>它不编</b><p>每个说法都能回到原文那一段；材料里没有的，它不会悄悄补上自己的想象。</p></div><div><b>它记得</b><p>存疑的地方标得清清楚楚，你标记过「存疑」的表述，转译时会特意谨慎处理。</p></div><div><b>它在你电脑里</b><p>材料、进度和学习记录都存在本地，不上传，不共享。</p></div></div></div></section>
 
     <section id="workspace" class="workspace shell">
@@ -73,14 +64,14 @@
       <div class="section-heading"><div><p class="eyebrow">AI 协作</p><h2>选择适合你的 AI 方式，<br/>成果始终回到本地审阅。</h2></div><span class="tag" id="home-skill-status">检测本地服务中</span></div>
       <div class="skill-home-grid">
         <article><span class="skill-index">A</span><h3>使用自己的模型</h3><p>连接 DeepSeek、OpenAI 或企业网关，在本地完成大纲、讲稿与 DOCX 导出。</p><small>适合需要批量处理或团队统一模型策略的场景。</small></article>
-        <article><span class="skill-index">B</span><h3>使用本机 Agent</h3><p>通过 Codex 或 CatPaw 读取受控材料块、生成内容并回写 知了，继续审阅和导出。</p><small>无需在知了中再配置额外模型 Key。</small></article>
-        <article><span class="skill-index">C</span><h3>使用 ChatGPT Plus</h3><p>复制当前材料包到 ChatGPT App 生成 Markdown，再粘贴回知了审阅。</p><small>适合个人按需生成；不需要 OpenAI API 余额。</small></article>
+        <article><span class="skill-index">B</span><h3>使用本机 Agent</h3><p>通过 Codex 或 CatPaw 读取受控材料块、生成内容并回写声息，继续审阅和导出。</p><small>无需在声息中再配置额外模型 Key。</small></article>
+        <article><span class="skill-index">C</span><h3>使用 ChatGPT Plus</h3><p>复制当前材料包到 ChatGPT App 生成 Markdown，再粘贴回声息审阅。</p><small>适合个人按需生成；不需要 OpenAI API 余额。</small></article>
         <article class="skill-invoke"><p class="eyebrow">安装与调用</p><code>$lawflow</code><p>先将本仓库的独立 Skill 安装到任意支持 Codex Skill 的 Agent，再在对话中输入 <code>$lawflow</code> 加你的任务。</p><a class="button button-outline button-small" href="https://github.com/hey-elaine/lawflow/tree/main/skills/lawflow" target="_blank" rel="noreferrer">打开 GitHub Skill</a><button class="button button-outline button-small" id="copy-skill-invoke">复制调用示例</button></article>
       </div>
     </section>
   </main>
 
-  <footer class="footer shell"><span>知了 Zhiliao · 有时只是戴上耳机，然后出发 🍂</span><span id="app-version">丢进来 · 拆成小课 · 带上路</span></footer>
+  <footer class="footer shell"><span>声息 Shengxi · 有时只是戴上耳机，然后出发 🍂</span><span id="app-version">丢进来 · 拆成小课 · 带上路</span></footer>
 
   <dialog id="project-dialog" class="dialog"><form id="project-form">
     <div class="dialog-header"><h2>丢一篇文章进来</h2><button type="button" aria-label="关闭" class="icon-button" data-close-dialog="project-dialog">×</button></div>
@@ -110,6 +101,6 @@
 
   <dialog id="daily-brief-dialog" class="dialog"><form id="daily-brief-form"><div class="dialog-header"><h2>每日法律速听</h2><button type="button" aria-label="关闭" class="icon-button" data-close-dialog="daily-brief-dialog">×</button></div><p class="form-note">订阅公开 RSS 或 Atom 源。系统每天只收集新文章并建立待审速听任务；不会自动发布，也不会自动生成最终 MP3。</p><label>订阅名称<input required name="name" maxlength="120" placeholder="例如：数据合规资讯" /></label><label>RSS / Atom 地址<input required name="feed_url" type="url" placeholder="https://example.com/feed.xml" /></label><div class="plan-settings"><div class="field"><label>每日运行时间<input name="daily_time" type="time" value="08:00" /></label></div><div class="field"><label>每次最多收集<input name="max_items" type="number" min="1" max="10" value="3" /> 篇</label></div></div><label class="check-label"><input type="checkbox" name="auto_generate" /> 允许自动生成待审速听稿与音频脚本（仅在模型已配置且允许发送素材时）</label><div class="dialog-actions"><button type="button" class="button button-outline" data-close-dialog="daily-brief-dialog">取消</button><button type="submit" class="button button-primary">保存订阅</button></div></form></dialog>
 
-  <script src="/app.js?v=20260928-14"></script>
+  <script src="/app.js?v=20260928-16"></script>
 </body>
 </html>

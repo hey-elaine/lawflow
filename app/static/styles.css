@@ -513,8 +513,34 @@ body.in-project .detail-header { position: sticky; top: 0; z-index: 40; backgrou
 .card-progress-bar i { display: block; height: 100%; border-radius: 999px; background: #2f5d43; transition: width 0.3s ease; }
 .card-progress span { font-size: 11.5px; color: #5b6657; white-space: nowrap; }
 
-/* 为什么做知了：故事段 */
-.story-section { background: #f7f4ec; }
-.story-copy { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
-.story-copy p { margin: 0; font: 15.5px/2.0 "Noto Serif SC", Georgia, serif; color: #33413a; }
-.story-copy em { font-style: normal; color: #2f5d43; font-weight: 600; }
+/* ===== 书架独立页 ===== */
+#workspace { display: none; }
+body.in-shelf #workspace { display: block; }
+body.in-shelf .hero, body.in-shelf #workflow, body.in-shelf #trust, body.in-shelf #skill, body.in-shelf .footer { display: none; }
+body.in-shelf header nav { visibility: visible; }
+body.in-shelf header nav a:not(#nav-shelf) { display: none; }
+body.in-shelf #workspace { max-width: min(1560px, 96vw); padding-top: 24px; }
+body.in-shelf #workspace .eyebrow { display: none; }
+body.in-project #workspace { display: block; }
+
+/* ===== 观夏风视觉：亚麻底色 · 茶棕系 · 竖排点缀 · 大留白 ===== */
+:root { --linen: #f6f3ea; --linen-deep: #efe9db; --tea: #6f5b3e; --tea-light: #9b8563; --ink-soft: #7a705d; }
+body { background: var(--linen); color: #3b3428; font-family: "Noto Serif SC", "Songti SC", Georgia, serif; }
+.hero { padding: clamp(90px, 14vh, 150px) 0 90px; position: relative; }
+.hero-copy .eyebrow, .section-heading .eyebrow { color: var(--tea-light); letter-spacing: 0.35em; font-size: 12px; }
+.hero h1 { font-weight: 500; letter-spacing: 0.04em; }
+.hero h1 em { color: var(--tea); font-style: normal; }
+.hero-description { color: #55503f; line-height: 2.2; }
+.hero::after { content: "把稍后读 · 真的读完"; position: absolute; right: 4vw; top: 50%; transform: translateY(-50%); writing-mode: vertical-rl; letter-spacing: 0.5em; font-size: 12px; color: var(--tea-light); opacity: 0.85; }
+@media (max-width: 1240px) { .hero::after { display: none; } }
+.section-heading h2 { font-weight: 500; letter-spacing: 0.05em; }
+.workflow-grid article span { font-family: Georgia, serif; font-style: italic; color: var(--tea-light); }
+.workflow-grid article h3 { font-weight: 500; letter-spacing: 0.08em; }
+.trust-section { background: var(--linen-deep); }
+.trust-points b { font-weight: 600; letter-spacing: 0.12em; }
+.nav { background: color-mix(in srgb, var(--linen) 88%, transparent); }
+.brand-mark { background: var(--tea); }
+.button-primary { background: var(--tea); border-color: var(--tea); }
+.button-primary:hover { background: #5d4b32; border-color: #5d4b32; }
+.project-card { background: #fbf9f2; border: 1px solid #e5dfcf; border-radius: 4px; }
+.chapter-row, .panel-card { border-radius: 4px; }
