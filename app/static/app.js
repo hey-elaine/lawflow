@@ -80,6 +80,10 @@ async function deleteDailyBriefSubscription(id) {
   if (!window.confirm('删除这个每日速听订阅？已收集的项目和导出成果不会删除。')) return;
   try { await request('/api/daily-brief-subscriptions/' + id, {method:'DELETE'}); await loadDailyBriefSubscriptions(); showMessage('每日速听订阅已删除。'); } catch (error) { showMessage(error.message, true); }
 }
+const COVER_IMAGES = ['/img/cover-tea.jpg', '/img/cover-rail.jpg', '/img/cover-notebook.jpg', '/img/cover-cafe.jpg', '/img/cover-listen.jpg', '/img/watercolor-autumn.jpg'];
+
+function coverForProject(id) { let hash = 0; for (const ch of id) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0; return COVER_IMAGES[hash % COVER_IMAGES.length]; }
+
 function renderCollectionBar() {
   const bar = $('#collection-bar');
   if (!bar) return;
@@ -113,7 +117,7 @@ function renderProjectList() {
     return !filter || tag === filter;
   });
   if (!visible.length) { list.innerHTML = '<div class="empty-state"><b>这个收藏夹还是空的</b><p>换一个标签看看，或点卡片上的「＋ 收藏夹」把它归到这。</p></div>'; return; }
-  list.innerHTML = visible.map(project => { const scenario = SCENARIOS[project.scenario] || SCENARIOS.topic_learning; const progress = project.learning_progress || { done: 0, total: 0 }; const percent = progress.total ? Math.round(progress.done / progress.total * 100) : 0; const progressHtml = progress.total ? '<div class="card-progress"><div class="card-progress-bar"><i style="width:' + percent + '%"></i></div><span>已学 ' + progress.done + ' / ' + progress.total + ' 节</span></div>' : ''; const tag = (project.collection || '').trim(); const tagBtn = '<button type="button" class="card-tag-btn' + (tag ? '' : ' untagged') + '" data-tag-project="' + project.id + '">' + (tag ? escapeHtml(tag) : '＋ 收藏夹') + '</button>'; return '<div class="project-card" role="button" tabindex="0" data-project-id="' + project.id + '"><div class="project-card-top"><span class="tag">' + escapeHtml(scenario.name) + '</span><small>' + formatDate(project.updated_at) + '</small></div><h3>' + escapeHtml(project.name) + '</h3><p>' + escapeHtml(project.description || project.client_name || scenario.name) + '</p>' + progressHtml + '<div class="meta">' + tagBtn + '<span>' + project.document_count + ' 份素材</span><span>' + (project.verification_mode === 'source_only' ? '无需核验' : project.task_count + ' 项核验') + '</span><span>' + project.target_duration + ' 分钟</span></div></div>'; }).join('');
+  list.innerHTML = visible.map(project => { const scenario = SCENARIOS[project.scenario] || SCENARIOS.topic_learning; const progress = project.learning_progress || { done: 0, total: 0 }; const percent = progress.total ? Math.round(progress.done / progress.total * 100) : 0; const progressHtml = progress.total ? '<div class="card-progress"><div class="card-progress-bar"><i style="width:' + percent + '%"></i></div><span>已学 ' + progress.done + ' / ' + progress.total + ' 节</span></div>' : ''; const tag = (project.collection || '').trim(); const tagBtn = '<button type="button" class="card-tag-btn' + (tag ? '' : ' untagged') + '" data-tag-project="' + project.id + '">' + (tag ? escapeHtml(tag) : '＋ 收藏夹') + '</button>'; const status = progress.total === 0 || progress.done === 0 ? '<span class="card-status status-not-start">▷ 未开始</span>' : progress.done >= progress.total ? '<span class="card-status status-done">✓ 已听完</span>' : '<span class="card-status status-listening">▶ 听到第 ' + (progress.done + 1) + ' 章</span>'; return '<div class="project-card" role="button" tabindex="0" data-project-id="' + project.id + '"><div class="card-cover"><img src="' + coverForProject(project.id) + '" alt="" loading="lazy" />' + status + '</div><div class="project-card-top"><span class="tag">' + escapeHtml(scenario.name) + '</span><small>' + formatDate(project.updated_at) + '</small></div><h3>' + escapeHtml(project.name) + '</h3><p>' + escapeHtml(project.description || project.client_name || scenario.name) + '</p>' + progressHtml + '<div class="meta">' + tagBtn + '<span>' + project.document_count + ' 份素材</span><span>' + (project.verification_mode === 'source_only' ? '无需核验' : project.task_count + ' 项核验') + '</span><span>' + project.target_duration + ' 分钟</span></div></div>'; }).join('');
   $$('.project-card', list).forEach(card => {
     card.addEventListener('click', () => openProject(card.dataset.projectId));
     card.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openProject(card.dataset.projectId); } });
@@ -243,7 +247,6 @@ function openCollectionDialog(projectId) {
     form.elements.collection.value = form.elements.collection.value.trim() === name ? '' : name;
     $$('.collection-chip', list).forEach(item => item.classList.toggle('active', item === chip && form.elements.collection.value.trim() === name));
   }));
-  $('#collection-options').innerHTML = existing.map(name => '<option value="' + escapeHtml(name) + '"></option>').join('');
   form.elements.collection.value = current;
   $('#collection-remove').hidden = !current;
   $('#collection-dialog').showModal();
@@ -271,8 +274,14 @@ function renderMaterialsPanel() {
     ? '导入一篇行业资讯、报道或公开材料，系统会将其精炼为适合碎片化收听的短讲稿。'
     : '导入已有材料，或按主题检索公开网页后逐条确认导入。生成时可明确选择原始材料和补充公开来源；未选中的检索结果不会进入讲稿。';
   const searchPanel = learning ? '<section class="panel-card web-search-panel"><div><p class="eyebrow">可选步骤</p><h3>按主题检索公开材料</h3><p>仅用于发现公开网页。先查看标题、摘要和链接，再选择要导入的来源；它不等同于外部事实核验。</p></div><div class="web-search-form"><input id="web-search-query" value="' + escapeHtml(appState.selectedProject.project.client_name || appState.selectedProject.project.name) + '" placeholder="例如：生成式人工智能 数据合规 监管动态"/><button class="button button-outline button-small" id="search-web-sources">检索公开材料</button></div><div id="web-search-results" class="web-search-results"></div></section>' : '';
-  panel.innerHTML = '<section class="panel-card"><h3>输入素材</h3><p>' + intro + '</p><div class="source-input-grid"><label class="upload-zone"><input type="file" id="document-upload" accept=".docx,.txt,.md"/><div><b>上传文件</b><span>DOCX、TXT、Markdown</span></div></label><div class="paste-source"><b>粘贴文章或公开材料</b><input id="text-source-title" placeholder="素材标题，例如：某监管动态解读"/><input id="text-source-url" placeholder="来源链接（可选）"/><textarea id="text-source-content" placeholder="粘贴公众号正文、新闻报道、公开判决摘要或你的实务笔记…"></textarea><button class="button button-outline button-small" id="create-text-source">保存为素材</button></div></div><div class="doc-list">' + (docs.length ? docs.map(doc => '<div class="doc-row"><div><b>' + escapeHtml(doc.original_name) + '</b><small>' + doc.paragraph_count + ' 个段落 · ' + doc.block_count + ' 个素材块' + (doc.source_url ? ' · 已记录来源' : '') + '</small></div><button class="button button-outline button-small" data-view-document="' + doc.id + '">查看主题地图</button></div>').join('') : '<p class="form-note">尚未导入素材。你可以先导入一篇资讯或一份实务笔记开始。</p>') + '</div></section>' + searchPanel + '<section class="panel-card" id="material-map-panel"><h3>主题地图</h3><p>选择一份已导入素材后，查看结构、主题信号、规范名称和可展开的内容方向。</p></section>';
+  panel.innerHTML = '<section class="panel-card"><h3>输入素材</h3><p>' + intro + '</p><div class="source-input-grid"><label class="upload-zone paper-drop" id="paper-drop"><input type="file" id="document-upload" accept=".docx,.txt,.md,.pdf" /><div class="paper-drop-inner"><b>放下一篇你想带走的文字</b><span>DOCX · PDF · TXT · Markdown</span><small>点选文件，或直接拖进来</small></div></label><div class="paste-source"><b>粘贴文章或公开材料</b><input id="text-source-title" placeholder="素材标题，例如：某监管动态解读"/><input id="text-source-url" placeholder="来源链接（可选）"/><textarea id="text-source-content" placeholder="粘贴公众号正文、新闻报道、公开判决摘要或你的实务笔记…"></textarea><button class="button button-outline button-small" id="create-text-source">保存为素材</button></div></div><div class="doc-list">' + (docs.length ? docs.map(doc => '<div class="doc-row"><div><b>' + escapeHtml(doc.original_name) + '</b><small>' + doc.paragraph_count + ' 个段落 · ' + doc.block_count + ' 个素材块' + (doc.source_url ? ' · 已记录来源' : '') + '</small></div><button class="button button-outline button-small" data-view-document="' + doc.id + '">查看主题地图</button></div>').join('') : '<p class="form-note">尚未导入素材。你可以先导入一篇资讯或一份实务笔记开始。</p>') + '</div></section>' + searchPanel + '<section class="panel-card" id="material-map-panel"><h3>主题地图</h3><p>选择一份已导入素材后，查看结构、主题信号、规范名称和可展开的内容方向。</p></section>';
   $('#document-upload').addEventListener('change', event => uploadDocument(event.target.files[0]));
+  const paperDrop = $('#paper-drop');
+  if (paperDrop) {
+    ['dragenter', 'dragover'].forEach(type => paperDrop.addEventListener(type, event => { event.preventDefault(); paperDrop.classList.add('dragover'); }));
+    paperDrop.addEventListener('dragleave', () => paperDrop.classList.remove('dragover'));
+    paperDrop.addEventListener('drop', event => { event.preventDefault(); paperDrop.classList.remove('dragover'); const file = event.dataTransfer?.files?.[0]; if (file) uploadDocument(file); });
+  }
   $('#create-text-source').addEventListener('click', createTextSource);
   $('#search-web-sources')?.addEventListener('click', searchWebSources);
   $$('[data-view-document]', panel).forEach(button => button.addEventListener('click', () => viewDocumentMap(button.dataset.viewDocument)));
@@ -1243,7 +1252,14 @@ function bindDialogs() {
   }
   $('#collection-form').addEventListener('submit', event => { event.preventDefault(); saveProjectCollection(collectionDialogProjectId, event.currentTarget.elements.collection.value.trim()); });
   $('#collection-remove').addEventListener('click', () => saveProjectCollection(collectionDialogProjectId, ''));
-  $('#new-project').addEventListener('click', () => { $('#collection-options').innerHTML = [...new Set(appState.projects.map(project => (project.collection || '').trim()).filter(Boolean))].map(name => '<option value="' + escapeHtml(name) + '"></option>').join(''); $('#project-dialog').showModal(); });
+  $('#new-project').addEventListener('click', () => {
+    const existing = [...new Set(appState.projects.map(project => (project.collection || '').trim()).filter(Boolean))];
+    const suggest = $('#collection-suggest');
+    suggest.classList.toggle('hidden', existing.length === 0);
+    suggest.innerHTML = existing.length ? '<span>已有收藏夹：</span>' + existing.map(name => '<button type="button" class="collection-suggest-chip" data-suggest-collection="' + escapeHtml(name) + '">' + escapeHtml(name) + '</button>').join('') : '';
+    $$('.collection-suggest-chip', suggest).forEach(chip => chip.addEventListener('click', () => { $('#project-form').elements.collection.value = chip.dataset.suggestCollection; }));
+    $('#project-dialog').showModal();
+  });
   $('#open-daily-brief').addEventListener('click', () => $('#daily-brief-dialog').showModal());
   $$('input[name="scenario"]').forEach(input => input.addEventListener('change', () => {
     const config = SCENARIOS[input.value];
