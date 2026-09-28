@@ -393,6 +393,7 @@
 /* ===== 项目工作台：打开项目后进入独立全屏视图，隐藏主页内容 ===== */
 body.in-project .hero,
 body.in-project #workflow,
+body.in-project #story,
 body.in-project #trust,
 body.in-project #skill,
 body.in-project .footer,
@@ -511,3 +512,9 @@ body.in-project .detail-header { position: sticky; top: 0; z-index: 40; backgrou
 .card-progress-bar { flex: 1; height: 6px; border-radius: 999px; background: rgba(47, 93, 67, 0.12); overflow: hidden; }
 .card-progress-bar i { display: block; height: 100%; border-radius: 999px; background: #2f5d43; transition: width 0.3s ease; }
 .card-progress span { font-size: 11.5px; color: #5b6657; white-space: nowrap; }
+
+/* 为什么做知了：故事段 */
+.story-section { background: #f7f4ec; }
+.story-copy { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+.story-copy p { margin: 0; font: 15.5px/2.0 "Noto Serif SC", Georgia, serif; color: #33413a; }
+.story-copy em { font-style: normal; color: #2f5d43; font-weight: 600; }
