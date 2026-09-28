@@ -2804,7 +2804,7 @@ def regenerate_narrative_section(content_id: str, section_id: str):
         raise HTTPException(400, "章节没有可用的材料块。")
     preferences = project_preferences(project)
     single_outline = {**outline, "sections": [section], "title": outline.get("title", row["title"])}
-    markdown, sources, metadata = generate_narrative_markdown(single_outline, blocks, outline_row["audience"], outline_row["style_profile"], outline.get("transform_mode", preferences["transform_mode"]), preferences["scenario"], max(1, round(section.get("target_words", 800) / 240)), outline.get("web_research_mode", preferences["web_research_mode"]))
+    markdown, sources, metadata = generate_narrative_markdown(single_outline, blocks, outline_row["audience"], outline_row["style_profile"], outline.get("transform_mode", preferences["transform_mode"]), preferences["scenario"], max(1, round(section.get("target_words", 800) / 240)), outline.get("web_research_mode", preferences["web_research_mode"]), progress_key=row["outline_id"])
     generated = re.sub(r"^(?:#{1,6}[ \t]+[^\n]*\r?\n+)+", "", markdown.strip()).strip()
     current = collapse_duplicate_headings(row["markdown"])
     heading = "## " + section["heading"]
