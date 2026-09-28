@@ -494,8 +494,19 @@ async function getNarrativeProfiles() {
 }
 
 function readingSections(markdown = '') {
-  const headings = [...markdown.matchAll(/^##[ \t]+(.+)$/gm)].map((match, index) => ({ id: 'section-' + (index + 1), heading: match[1].trim() }));
-  return headings.length ? headings : [{ id: 'section-1', heading: '全文' }];
+  const sections = markdownSections(markdown).map(section => ({ ...section, heading: section.heading.replace(/\*\*|__|`/g, '').trim() }));
+  return sections.length ? sections : [{ id: 'section-1', heading: '全文', text: markdown }];
+}
+
+function renderInlineMarkdown(text = '') {
+  // 先转义 HTML，再把常见行内 Markdown 语法转为标签，避免 ** 等标记原样显示。
+  let html = escapeHtml(text);
+  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/(^|[^*\\])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>');
+  html = html.replace(/(^|[^_\\])__([^_\n]+)__(?!_)/g, '$1<strong>$2</strong>');
+  html = html.replace(/(^|[^_\\])_([^_\n]+)_(?!_)/g, '$1<em>$2</em>');
+  html = html.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+  return html;
 }
 
 function renderNarrativeHtml(markdown = '', contentId = '') {
@@ -511,7 +522,7 @@ function renderNarrativeHtml(markdown = '', contentId = '') {
     if ((match = val.match(/^# (.+)$/))) {
       if (!skippedTitle) { skippedTitle = true; return; }
       lastHeading = null;
-      html += '<h1>' + escapeHtml(match[1]) + '</h1>';
+      html += '<h1>' + renderInlineMarkdown(match[1]) + '</h1>';
       return;
     }
     if ((match = val.match(/^(#{2,3}) (.+)$/))) {
@@ -519,15 +530,15 @@ function renderNarrativeHtml(markdown = '', contentId = '') {
       lastHeading = match[2];
       if (match[1] === '##') {
         sectionIndex += 1;
-        html += '<h2 id="read-' + escapeHtml(contentId) + '-section-' + sectionIndex + '">' + escapeHtml(match[2]) + '</h2>';
+        html += '<h2 id="read-' + escapeHtml(contentId) + '-section-' + sectionIndex + '">' + renderInlineMarkdown(match[2]) + '</h2>';
       } else {
-        html += '<h3>' + escapeHtml(match[2]) + '</h3>';
+        html += '<h3>' + renderInlineMarkdown(match[2]) + '</h3>';
       }
       return;
     }
     lastHeading = null;
-    if ((match = val.match(/^- (.+)$/))) html += '<div class="memo-bullet"><span>—</span><span>' + escapeHtml(match[1]) + '</span></div>';
-    else html += '<p>' + escapeHtml(val) + '</p>';
+    if ((match = val.match(/^- (.+)$/))) html += '<div class="memo-bullet"><span>—</span><span>' + renderInlineMarkdown(match[1]) + '</span></div>';
+    else html += '<p>' + renderInlineMarkdown(val) + '</p>';
   });
   return html;
 }
