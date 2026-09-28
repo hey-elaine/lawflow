@@ -210,6 +210,8 @@ function goHome() {
   document.body.classList.remove('in-shelf', 'in-project');
   $('#project-detail').classList.add('hidden');
   window.scrollTo({ top: 0 });
+  // 回主页时刷新试听区，让刚生成的音频不必重启就能出现
+  appState.projects?.length && initListenSection();
 }
 
 function projectStepState(data) {
