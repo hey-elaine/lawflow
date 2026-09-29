@@ -936,7 +936,7 @@ function renderNarrativeOutputPanel() {
   }
   if (!confirmedOutline) {
     panel.innerHTML = '<section class="panel-card workflow-gate"><p class="eyebrow">写作前置条件</p><h3>先确认大纲</h3><p>大纲决定章节顺序、材料范围和每节要回答的问题。确认后这里会显示“生成' + escapeHtml(scenario.narrativeLabel) + '”按钮。</p><div class="plan-actions"><button class="button button-primary" data-open-tab="structure">去确认大纲</button></div></section>' +
-      '<details class="panel-card optional-path"><summary>也可以让 ChatGPT 写稿，再粘贴回本地审阅</summary><div class="optional-path-body"><p>无需 OpenAI API Key。声息只复制当前材料块与写作要求；你在 ChatGPT App 生成 Markdown 后，粘贴回本地即可。</p><div class="handoff-actions"><button class="button button-outline" id="copy-chatgpt-prompt">复制给 ChatGPT</button><button class="button button-primary" id="open-chatgpt-import">粘贴 ChatGPT 成稿</button></div></div></details>';
+      '<details class="panel-card optional-path"><summary>也可以交给外部 AI 助手写稿，再粘贴回本地审阅</summary><div class="optional-path-body"><p>无需配置模型密钥。声息只复制当前材料块与写作要求；你在任意 AI 助手（如 ChatGPT、千问）生成 Markdown 后，粘贴回本地即可。</p><div class="handoff-actions"><button class="button button-outline" id="copy-chatgpt-prompt">复制给 AI 助手</button><button class="button button-primary" id="open-chatgpt-import">粘贴 AI 成稿</button></div></div></details>';
     $('[data-open-tab="structure"]', panel).addEventListener('click', () => { appState.activeTab = 'structure'; renderProjectDetail(); });
     $('#copy-chatgpt-prompt').addEventListener('click', copyChatGPTPrompt);
     $('#open-chatgpt-import').addEventListener('click', openChatGPTImport);
@@ -948,7 +948,7 @@ function renderNarrativeOutputPanel() {
 
   panel.innerHTML = (contents.length ? '' : '<section class="panel-card"><h3>生成' + scenario.narrativeLabel + '</h3><p>大纲已确认。生成后可整篇阅读、逐节重写、人工修改并导出 DOCX。</p><p class="form-note" id="generation-status">点击下方按钮开始逐节写作；写作过程中这里会显示当前进度。</p><div class="plan-actions"><button class="button button-primary" data-generate-from-outline="' + confirmedOutline.id + '">逐节生成' + escapeHtml(scenario.narrativeLabel) + '</button></div></section>') +
     '<section class="panel-card"><h3>已生成的' + scenario.narrativeLabel + '</h3>' + learningSummary + '<div class="narrative-content-list">' + (contents.length ? contents.map(renderNarrativeContentCard).join('') : '<p class="form-note">尚未生成讲稿。</p>') + '</div></section>' +
-    '<details class="panel-card optional-path"><summary>也可以让 ChatGPT 写稿，再粘贴回本地审阅</summary><div class="optional-path-body"><p>无需 OpenAI API Key。声息只复制当前材料块与写作要求；你在 ChatGPT App 生成 Markdown 后，粘贴回本地即可。</p><div class="handoff-actions"><button class="button button-outline" id="copy-chatgpt-prompt">复制给 ChatGPT</button><button class="button button-primary" id="open-chatgpt-import">粘贴 ChatGPT 成稿</button></div></div></details>';
+    '<details class="panel-card optional-path"><summary>也可以交给外部 AI 助手写稿，再粘贴回本地审阅</summary><div class="optional-path-body"><p>无需配置模型密钥。声息只复制当前材料块与写作要求；你在任意 AI 助手（如 ChatGPT、千问）生成 Markdown 后，粘贴回本地即可。</p><div class="handoff-actions"><button class="button button-outline" id="copy-chatgpt-prompt">复制给 AI 助手</button><button class="button button-primary" id="open-chatgpt-import">粘贴 AI 成稿</button></div></div></details>';
 
   $('[data-generate-from-outline]')?.addEventListener('click', event => generateNarrative(confirmedOutline.id, event.currentTarget));
   $('#copy-chatgpt-prompt').addEventListener('click', copyChatGPTPrompt);
@@ -972,7 +972,7 @@ async function getChatGPTHandoff() {
   if (!documentId) throw new Error('请先导入素材。');
   const doc = await ensureDocumentLoaded(documentId);
   const sourceBlockIds = selectedNarrativeSourceIds(documentId).length ? selectedNarrativeSourceIds(documentId) : doc.blocks.filter(block => block.kind === 'paragraph').map(block => block.id);
-  if (!sourceBlockIds.length) throw new Error('当前范围内没有可交给 ChatGPT 的正文材料。');
+  if (!sourceBlockIds.length) throw new Error('当前范围内没有可交给 AI 助手的正文材料。');
   const title = $('#narrative-title')?.value.trim() || appState.selectedProject.narrative_outlines?.[0]?.title || doc.original_name;
   return request('/api/projects/' + appState.selectedProject.project.id + '/chatgpt-handoff', {
     method:'POST', headers:{'Content-Type':'application/json'},
@@ -986,7 +986,7 @@ async function copyChatGPTPrompt(event) {
     setBusy(button, true, '整理材料包…');
     const handoff = await getChatGPTHandoff();
     await navigator.clipboard.writeText(handoff.prompt);
-    showMessage('已复制材料包。切换到 ChatGPT App 粘贴并生成 Markdown，然后回到这里导入。');
+    showMessage('已复制材料包。切换到任意 AI 助手粘贴并生成 Markdown，然后回到这里导入。');
   } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); }
 }
 
@@ -995,15 +995,15 @@ async function openChatGPTImport() {
     const handoff = await getChatGPTHandoff();
     const dialog = document.createElement('dialog');
     dialog.className = 'dialog chatgpt-import-dialog';
-    dialog.innerHTML = '<form><div class="dialog-header"><h2>导入 ChatGPT 成稿</h2><button type="button" class="icon-button" data-close>×</button></div><p class="form-note">仅粘贴基于刚才材料包生成的 Markdown。导入后仍会进入“待律师审核”。</p><label>讲稿标题<input id="chatgpt-import-title" value="' + escapeHtml(handoff.title) + '" /></label><label>Markdown 成稿<textarea id="chatgpt-import-markdown" required minlength="20" placeholder="粘贴 ChatGPT 返回的 Markdown 正文…"></textarea></label><div class="dialog-actions"><button type="button" class="button button-outline" data-close>取消</button><button type="submit" class="button button-primary">导入并审阅</button></div></form>';
+    dialog.innerHTML = '<form><div class="dialog-header"><h2>导入 AI 助手成稿</h2><button type="button" class="icon-button" data-close>×</button></div><p class="form-note">仅粘贴基于刚才材料包生成的 Markdown。导入后仍会进入“待律师审核”。</p><label>讲稿标题<input id="chatgpt-import-title" value="' + escapeHtml(handoff.title) + '" /></label><label>Markdown 成稿<textarea id="chatgpt-import-markdown" required minlength="20" placeholder="粘贴 AI 助手返回的 Markdown 正文…"></textarea></label><div class="dialog-actions"><button type="button" class="button button-outline" data-close>取消</button><button type="submit" class="button button-primary">导入并审阅</button></div></form>';
     document.body.appendChild(dialog); dialog.showModal();
     $$('[data-close]', dialog).forEach(button => button.addEventListener('click', () => dialog.close()));
     $('form', dialog).addEventListener('submit', async event => {
       event.preventDefault(); const submit = $('button[type="submit"]', dialog);
       try {
         setBusy(submit, true, '导入中…');
-        await request('/api/projects/' + appState.selectedProject.project.id + '/skill-host-contents', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({document_id:handoff.document_id, title:$('#chatgpt-import-title', dialog).value.trim() || handoff.title, markdown:$('#chatgpt-import-markdown', dialog).value.trim(), source_block_ids:handoff.source_block_ids, style_profile:$('#narrative-profile').value || appState.profiles?.[0]?.id || '', review_note:'由 ChatGPT App 生成，待律师审核。'})});
-        dialog.close(); appState.selectedProject = await request('/api/projects/' + appState.selectedProject.project.id); renderProjectDetail(); showMessage('ChatGPT 成稿已导入，现可在本地审阅、生成音频脚本和导出。');
+        await request('/api/projects/' + appState.selectedProject.project.id + '/skill-host-contents', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({document_id:handoff.document_id, title:$('#chatgpt-import-title', dialog).value.trim() || handoff.title, markdown:$('#chatgpt-import-markdown', dialog).value.trim(), source_block_ids:handoff.source_block_ids, style_profile:$('#narrative-profile').value || appState.profiles?.[0]?.id || '', review_note:'由外部 AI 助手生成，待律师审核。'})});
+        dialog.close(); appState.selectedProject = await request('/api/projects/' + appState.selectedProject.project.id); renderProjectDetail(); showMessage('AI 助手成稿已导入，现可在本地审阅、生成音频脚本和导出。');
       } catch (error) { showMessage(error.message, true); } finally { setBusy(submit, false); }
     });
   } catch (error) { showMessage(error.message, true); }
@@ -1591,6 +1591,7 @@ function bindDialogs() {
       $('#daily-brief-dialog').close(); form.reset(); await loadDailyBriefSubscriptions(); showMessage('每日速听订阅已保存，到点后会自动收集；也可以立即手动收集。');
     } catch (error) { showMessage(error.message, true); } finally { setBusy(submit, false); }
   });
+  $('#home-open-audio-settings')?.addEventListener('click', () => $('#open-settings').click());
   $('#open-settings').addEventListener('click', async () => {
     try {
       const [config, exportConfig] = await Promise.all([request('/api/settings/provider'), request('/api/settings/export')]);
