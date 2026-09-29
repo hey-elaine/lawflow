@@ -1075,12 +1075,13 @@ def ai_chapter_proposal(blocks: list[dict]) -> tuple[list[tuple[str, str]], dict
     )
     user = (
         "下面是材料全部候选标题（含层级、所属范围字数与开头摘录）。请设计章节划分：\n"
-        "1. 每章围绕一个完整的学习主题，目标 1500–4000 字；整份材料通常切成 4–12 章。\n"
-        "2. 超大主题（超过 6000 字）优先用其下级标题拆开；过碎（不足 800 字）的标题并入相邻主题，不要单独成章。\n"
-        "3. 不要同时选择父子标题；选中的章节按材料顺序排列，尽量覆盖全文。\n"
-        "4. 为每章设计一个具体的学习问题（这一章要弄清楚什么），避免空泛套话；问题不超过 40 字。\n"
-        "5. 为每章起一个简洁标题：用 5–20 字概括本章学习主题；不要照抄原文的小节编号（如 一、/（一）/C./1.），也不要带“第X章”字样。\n"
-        "6. 直接输出 JSON，不要任何解释性文字。\n\n"
+        "1. 每章围绕一个完整的学习主题；篇幅充足的材料（1 万字以上）目标每章 1500–4000 字，通常切成 4–12 章。\n"
+        "2. 全文只有几千字时不要把全文合成一章：优先按二级小节切分，每章 300–1500 字即可，碎片学习时每章几分钟更友好。\n"
+        "3. 超大主题（超过 6000 字）优先用其下级标题拆开；确实只有一个主题且无子结构的短材料才允许单章。\n"
+        "4. 不要同时选择父子标题；选中的章节按材料顺序排列，尽量覆盖全文。\n"
+        "5. 为每章设计一个具体的学习问题（这一章要弄清楚什么），避免空泛套话；问题不超过 40 字。\n"
+        "6. 为每章起一个简洁标题：用 5–20 字概括本章学习主题；不要照抄原文的小节编号（如 一、/（一）/C./1.），也不要带“第X章”字样。\n"
+        "7. 直接输出 JSON，不要任何解释性文字。\n\n"
         "候选标题：\n" + listing + "\n\n"
         '只输出 JSON，格式：{"chapters":[{"heading_id":"候选中的 id","title":"章节标题","question":"学习问题"}]}'
     )
@@ -1100,7 +1101,7 @@ def ai_chapter_proposal(blocks: list[dict]) -> tuple[list[tuple[str, str]], dict
             raise ValueError("模型返回的章节划分不可用")
         payload = {"chapters": rescued}
     items = payload.get("chapters") if isinstance(payload, dict) else None
-    if not isinstance(items, list) or len(items) < 2:
+    if not isinstance(items, list) or not items:
         raise ValueError("模型返回的章节划分不可用")
     by_id = {c["id"]: c for c in candidates}
     parsed: list[tuple[int, str, str]] = []
@@ -1127,7 +1128,9 @@ def ai_chapter_proposal(blocks: list[dict]) -> tuple[list[tuple[str, str]], dict
         picked.append((heading_id, question))
         if len(picked) >= 12:
             break
-    if len(picked) < 2:
+    # 单章划分也是合法结果（短材料只有一个主题时模型可能只返回一章）；
+    # 只有完全解不出有效章节才回退到规则切分。
+    if not picked:
         raise ValueError("模型返回的有效章节不足")
     return picked, titles
 
@@ -1743,6 +1746,11 @@ def normalize_narrative_outline(raw: dict, request: NarrativeOutlineRequest, blo
         })
     if len(sections) < minimum:
         raise HTTPException(status_code=502, detail="模型未生成足够的大纲章节，请重试。")
+    # 模型有时把第一节标题当成整篇标题；整篇标题应与首章区分，否则成稿会丢失顶层标题。
+    title = clean_text(str(raw.get("title") or request.title))[:200]
+    if title == sections[0]["heading"]:
+        fallback_title = clean_text(str(request.title))[:200]
+        title = fallback_title if fallback_title and fallback_title != sections[0]["heading"] else "{} · 导读".format(title)
     total_words = request.target_words if request.target_words is not None else min(NARRATIVE_LENGTHS[request.target_length]["total_words"], request.target_duration * 240)
     # 用户填写的目标篇幅应当与各节展示和实际生成指令一致。
     block_text = {block["id"]: len(block.get("text", "")) for block in blocks}
@@ -1758,7 +1766,7 @@ def normalize_narrative_outline(raw: dict, request: NarrativeOutlineRequest, blo
             section["target_words"] = max(minimum_section_words, min(allocation, remaining - minimum_section_words * (len(sections) - index - 1)))
             remaining -= section["target_words"]
     return {
-        "title": clean_text(str(raw.get("title") or request.title))[:200],
+        "title": title,
         "opening_angle": clean_text(str(raw.get("opening_angle", "")))[:400],
         "closing_angle": clean_text(str(raw.get("closing_angle", "")))[:400],
         "sections": sections,
@@ -1929,7 +1937,7 @@ def generate_narrative_markdown(outline: dict, blocks: list[dict], audience: str
 本节标题：{heading}
 写作目的：{purpose}
 面向读者：{audience}
-目标时长：约 {duration} 分钟；目标长度：约 {words} 个汉字
+目标时长：约 {duration} 分钟；目标长度：{words} 字左右（硬性上限，最多超出一到两成）
 加工方式：{transform_name}。{transform_description}
 写作画像：{style}
 场景化质量要求：
@@ -1944,6 +1952,7 @@ def generate_narrative_markdown(outline: dict, blocks: list[dict], audience: str
 2. 不要出现“作为 AI”“根据材料显示”“本节内容仅供参考”等元话语或免责声明；文章会在页面层面另行标注审阅状态。
 3. 使用自然连贯、适合朗读的段落，解释必要术语和因果关系；不要把材料简单压缩成项目符号，也不要使用僵硬的三段式总结。
 4. 可使用小标题，但不要重复总标题。只输出这一节的 Markdown 正文，不要输出来源列表。
+5. 字数预算是硬性要求：材料过多时先删减次要细节、重复例证和过渡句，不要靠压缩句子密度塞进更多事实；写完自查一遍，明显超出预算就删到预算以内。
 
 本节材料：
 {dossier}""".format(scenario=scenario_config["name"], title=outline["title"], heading=section["heading"], purpose=section.get("purpose", ""), audience=audience, duration=target_duration, words=section["target_words"], transform_name=transform["name"], transform_description=transform["description"], style=profile["instruction"], quality_rules=scenario_quality_rules(scenario), research_instruction=research_instruction, points=points, dossier=dossier)
@@ -1969,7 +1978,33 @@ def generate_narrative_markdown(outline: dict, blocks: list[dict], audience: str
     if outline.get("minimum_output_mode", "auto") == "auto":
         floor = min(floor, round(outline.get("target_total_words", source_chars) * 0.8))
     output_chars = len(re.sub(r"[#*_`>\-\[\]]", "", markdown))
-    model_metadata = {"provider_name": settings.get("provider_name", ""), "base_url": settings.get("base_url", ""), "model_name": settings.get("model_name", ""), "generated_at": now_iso(), "style_profile": style_profile, "transform_mode": transform_mode, "scenario": scenario, "target_duration": target_duration, "web_research_mode": web_research_mode, "quality_rules": SCENARIO_QUALITY_RULES.get(scenario, []), "output_floor": floor, "source_chars": source_chars, "output_chars": output_chars, "floor_status": "pass" if not floor or output_chars >= floor else "review"}
+    # 字数超标的兜底压缩：模型经常无视目标篇幅（目标 5 分钟写出 15 分钟的量）。
+    # 超出较多时自动做保事实压缩；单次压缩后仍明显超标的再补一轮（最多两轮）。
+    target_total = int(outline.get("target_total_words", 0) or 0)
+    overrun_condensed = False
+    if target_total >= 600:
+        overrun_limit = round(target_total * 1.4) + 300
+        for _pass in range(2):
+            if output_chars <= overrun_limit:
+                break
+            try:
+                condensed = model_chat([
+                    {"role": "system", "content": "你是严格的播客稿编辑。只做删减和压缩，不改写事实。"},
+                    {"role": "user", "content": "下面的讲稿严重超出目标篇幅，目前约 {current} 字，目标是约 {target} 字。请压缩到约 {target} 字：保留 Markdown 的 #/## 标题结构，保留全部关键事实、数字、日期、限制条件和结论；删掉重复表述、冗余铺垫和次要细节。不得新增内容，不得改变立场或结论。只输出压缩后的 Markdown。\n\n{body}".format(current=output_chars, target=target_total, body=markdown)},
+                ], temperature=0.3, max_tokens=min(16000, max(2000, target_total * 2)))
+                condensed = condensed.strip()
+                if "#" not in condensed:
+                    break
+                condensed_chars = len(re.sub(r"[#*_`>\-\[\]]", "", condensed))
+                # 只在压缩结果确实更短且没有失控缩水（不低于目标七成）时才采用
+                if not output_chars > condensed_chars >= round(target_total * 0.7):
+                    break
+                markdown = condensed
+                output_chars = condensed_chars
+                overrun_condensed = True
+            except HTTPException:
+                break  # 模型服务不可用时保留原稿，仅在下方的长度检查中提示
+    model_metadata = {"provider_name": settings.get("provider_name", ""), "base_url": settings.get("base_url", ""), "model_name": settings.get("model_name", ""), "generated_at": now_iso(), "style_profile": style_profile, "transform_mode": transform_mode, "scenario": scenario, "target_duration": target_duration, "web_research_mode": web_research_mode, "quality_rules": SCENARIO_QUALITY_RULES.get(scenario, []), "output_floor": floor, "source_chars": source_chars, "output_chars": output_chars, "target_total_words": target_total, "overrun_condensed": overrun_condensed, "floor_status": "pass" if not floor or output_chars >= floor else "review"}
     return markdown, section_sources, model_metadata
 
 
@@ -3594,8 +3629,11 @@ def build_audio_script(markdown: str, title: str, scenario: str, target_duration
         text = text.replace("**", "").replace("__", "").replace("`", "")
         text = re.sub(r"\[(\d+)\]", "", text)
         clean_lines.append(text)
+    # 开场白里的时长按实际正文估算（每分钟约 240 字），而不是硬编码目标时长：
+    # 模型经常超出目标篇幅，照抄目标会导出“预计 5 分钟”实听 15 分钟的音频。
+    estimated_minutes = max(1, round(sum(len(line) for line in clean_lines) / 240))
     intro_map = {
-        "daily_brief": f"下面是《{title}》的速听，预计 {target_duration} 分钟。",
+        "daily_brief": f"下面是《{title}》的速听，大约需要 {estimated_minutes} 分钟。",
         "topic_learning": f"下面开始本期主题学习：《{title}》。",
         "speaking_note": f"下面是一份关于《{title}》的培训讲稿口播版。",
         "legal_podcast": f"欢迎收听本期法律科普：《{title}》。",
@@ -3623,7 +3661,8 @@ def create_audio_script(project_id: str, payload: AudioScriptRequest):
         if not section_markdown:
             raise HTTPException(status_code=404, detail="讲稿中未找到该章节，可能已被修改；请刷新后重试。")
         script_source = "## {}\n\n{}".format(section_heading, section_markdown)
-        audio_title = "{} · {}".format(base_title, section_heading)
+        # 章节标题与整篇标题相同时不再拼接，避免出现“X · X”的重复命名
+        audio_title = section_heading if section_heading == base_title else "{} · {}".format(base_title, section_heading)
     else:
         script_source = content["markdown"]
         audio_title = base_title

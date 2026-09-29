@@ -239,6 +239,12 @@
 .update-notice .icon-button { position: absolute; right: 0; }
 
 /* 音频脚本审阅：改为与讲稿编辑器一致的输入外观，替换浏览器默认边框。 */
+.audio-group-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin: 16px 0 2px; }
+.audio-group-head:first-child { margin-top: 0; }
+.audio-group-head b { font: 500 15px/1.5 "Noto Serif SC", serif; color: #3f382a; }
+.audio-group-head small { color: #83795f; font-size: 12px; }
+.audio-chapter-chip { padding: 2px 8px; border: 1px solid #d9d1bd; border-radius: 999px; color: #6f7d54; font-size: 12px; }
+.audio-chapter-chip.done { border-color: rgba(111, 125, 84, .45); background: #eef2e4; }
 .audio-output-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 20px; padding: 18px 20px; border: 1px solid #e2ddd2; border-radius: 12px; background: #fdfcf9; }
 .audio-output-main { min-width: 0; }
 .audio-output-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }

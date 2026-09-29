@@ -93,11 +93,12 @@ class AiChapterProposalTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 app_main.ai_chapter_proposal(make_blocks())
 
-    def test_single_chapter_output_raises_value_error(self):
+    def test_single_chapter_output_is_accepted(self):
+        # 短材料只有一个主题时，模型只返回一章也是合法划分，不应回退到规则切分。
         model_output = json.dumps({"chapters": [{"heading_id": "h1", "question": "q"}]}, ensure_ascii=False)
         with patch.object(app_main, "model_chat", return_value=model_output):
-            with self.assertRaises(ValueError):
-                app_main.ai_chapter_proposal(make_blocks())
+            picked, _ = app_main.ai_chapter_proposal(make_blocks())
+        self.assertEqual([hid for hid, _ in picked], ["h1"])
 
     def test_missing_question_falls_back_to_template(self):
         model_output = json.dumps({"chapters": [

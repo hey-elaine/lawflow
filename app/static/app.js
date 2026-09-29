@@ -248,12 +248,26 @@ async function loadDemoProject(event) {
   } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); }
 }
 
+function defaultTabForProject(data) {
+  // 打开项目时落在第一个未完成的环节，与 renderWorkflowHint 的“下一步”逻辑保持一致；
+  // 避免沿用上一个项目停留的页签（例如点进刚建的项目却直接落在“音频与导出”）。
+  const state = projectStepState(data);
+  if (!state.hasDocument) return 'materials';
+  if (state.hasDirectAudio && !state.hasStructure) return 'audio';
+  if (!state.hasStructure) return 'structure';
+  if (state.needsExternalVerification && !state.verificationReady) return 'tasks';
+  if (!state.confirmed) return 'narrative';
+  return data.project.audio_enabled ? 'audio' : 'narrative';
+}
+
 async function openProject(projectId) {
   try {
     appState.selectedProjectId = projectId;
     appState.selectedProject = await request('/api/projects/' + projectId);
     appState.selectedDocument = null;
     appState.activePlan = appState.selectedProject.plans[0] || null;
+    appState.activeTab = defaultTabForProject(appState.selectedProject);
+    appState.openAudioScript = null;
     $('#project-detail').classList.remove('hidden');
     document.body.classList.add('in-project', 'in-shelf');
     renderProjectDetail();
@@ -880,7 +894,7 @@ function renderStructurePanel() {
   panel.innerHTML = planPanel + '<section class="panel-card"><p class="eyebrow">第二步 · 生成写作大纲</p><h3>章节确认后自动生成大纲</h3>' +
     '<p class="form-note">' + (currentPlan?.status === 'confirmed' ? '已根据你确认的章节自动生成写作大纲，下方可直接检查。' : '确认上方章节后会自动生成写作大纲，通常无需手动操作。') + '</p>' +
     '<details class="outline-advanced" id="outline-advanced"><summary>生成前调整参数（可选）</summary>' +
-    '<div class="narrative-form"><div class="field"><label>讲稿标题</label><input id="narrative-title" value="' + escapeHtml(defaultChapter?.title?.replace(/^第\d+章\s*·\s*/, '') || defaultDocument.original_name.replace(/\.[^.]+$/, '')) + '" /></div>' +
+    '<div class="narrative-form"><div class="field"><label>讲稿标题</label><input id="narrative-title" value="' + escapeHtml(defaultDocument.original_name.replace(/\.[^.]+$/, '')) + '" />' + (defaultChapter ? '<small class="field-hint">默认为素材标题；整份讲稿不要沿用某一章的标题。</small>' : '') + '</div>' +
     '<div class="field"><label>目标听众</label><input id="narrative-audience" value="' + escapeHtml(scenario.audience) + '" /></div>' +
     '<div class="field full"><label>目标成稿字数（可选）</label><input id="narrative-target-words" type="number" min="400" max="8000" step="100" value="' + defaultWords + '"/>' +
       '<small class="field-hint" id="narrative-word-hint"></small></div>' +
@@ -1039,7 +1053,8 @@ async function saveReadingProgress(contentId, sectionId, completed, jumpToSectio
     const saved = await request('/api/narrative-contents/' + contentId + '/progress', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     const content = appState.selectedProject.narrative_contents.find(item => item.id === contentId);
     if (content) content.reading_progress = saved;
-    renderNarrativeOutputPanel();
+    // 音频页的“标记已学”也走这里；按当前所在页签刷新，避免改了状态界面却不更新
+    if (appState.activeTab === 'audio') renderAudioPanel(); else renderNarrativeOutputPanel();
     if (jumpToSection) document.getElementById('read-' + contentId + '-' + sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (error) { showMessage(error.message, true); }
 }
@@ -1281,6 +1296,10 @@ function renderNarrativeContentCard(content) {
   } else {
     bodyContent = '<div class="narrative-article">' + renderNarrativeHtml(content.markdown, content.id) + '</div>';
   }
+  // 目录列：查看/单章聚焦时始终可见；编辑模式或单节内容不显示
+  if (!isEditing && reading.length > 1) {
+    bodyContent = '<div class="reading-layout">' + toc + '<div class="reading-main">' + bodyContent + '</div></div>';
+  }
 
   const model = content.model || {};
   const floorText = model.output_floor ? ('长度检查：' + model.output_chars + ' / ' + model.output_floor + ' 字 · ' + (model.floor_status === 'pass' ? '通过' : '建议复核')) : '长度检查：未启用';
@@ -1322,13 +1341,14 @@ function renderAudioPanel() {
   const mobileGuide = outputs.some(item => item.audio_available) ? '<details class="panel-card audio-extra"><summary>如何在 iPhone 收听？</summary><p>希望在“图书”中按章收听：先在 Mac“图书”中通过“文件 → 导入”添加 M4B，再连接 iPhone，在访达中选择有声书同步。首次同步前请核对访达提示。</p><p>只想快速带到手机：导出 MP3，通过隔空投送或 iCloud 云盘存入 iPhone“文件”后播放。声息目前不会同步两端的播放进度。</p></details>' : '';
   const sourceCard = contents.length ? '<details class="panel-card audio-extra"' + (outputs.length ? '' : ' open') + '><summary>从已确认讲稿制作新音频</summary><p>可制作整篇音频，也可逐章制作。未确认的讲稿可先整理脚本试听。</p><label class="audio-naturalize"><input type="checkbox" id="naturalize-audio"/><span>使用文本模型改善口语节奏<span class="audio-naturalize-note">额外调用一次模型；生成后仍需核对事实</span></span></label><div class="audio-source-list">' + contents.map(renderAudioSourceRow).join('') + '</div></details>' : '';
   const empty = contents.length ? '请在下方选择讲稿，先生成音频脚本。' : '还没有音频。返回“素材”可选择原文朗读。';
-  panel.innerHTML = '<section class="panel-card audio-intro"><p class="eyebrow">收听与导出</p><h3>先试听，再保存音频</h3><p>已有音频可直接播放和导出。原文朗读保留文章内容；整理后的讲稿可以制作整篇或分章音频。</p></section><section class="panel-card"><h3>我的音频</h3><div class="audio-output-list">' + (outputs.length ? outputs.map(renderAudioOutput).join('') : '<p class="form-note">' + empty + '</p>') + '</div></section>' + mobileGuide + sourceCard + audiobookCard;
+  panel.innerHTML = '<section class="panel-card audio-intro"><p class="eyebrow">收听与导出</p><h3>先试听，再保存音频</h3><p>已有音频可直接播放和导出。原文朗读保留文章内容；整理后的讲稿可以制作整篇或分章音频。</p></section><section class="panel-card"><h3>我的音频</h3><div class="audio-output-list">' + (outputs.length ? renderAudioGroups(outputs) : '<p class="form-note">' + empty + '</p>') + '</div></section>' + mobileGuide + sourceCard + audiobookCard;
   $$('[data-save-audio]').forEach(button => button.addEventListener('click', () => saveAudioScript(button.dataset.saveAudio, button)));
   $$('[data-preview-audio]').forEach(button => button.addEventListener('click', () => previewAudio(button.dataset.previewAudio, button)));
   $$('[data-create-audio-script]').forEach(button => button.addEventListener('click', () => createAudioScript(button.dataset.createAudioScript, button)));
   $$('[data-speak-script]').forEach(button => button.addEventListener('click', () => speakAudioScript(button.dataset.speakScript, button)));
   $$('[data-synthesize-audio]').forEach(button => button.addEventListener('click', () => synthesizeAudio(button.dataset.synthesizeAudio, button)));
   $$('[data-export-audio]').forEach(button => button.addEventListener('click', () => exportAudioOutput(button.dataset.exportAudio, button)));
+  $$('[data-audio-toggle-complete]').forEach(button => button.addEventListener('click', () => saveReadingProgress(button.dataset.audioToggleComplete, button.dataset.sectionId, button.dataset.completed !== 'true', false)));
   $$('[data-export-direct-audiobook]').forEach(button => button.addEventListener('click', () => exportDirectAudiobook(button.dataset.exportDirectAudiobook, button)));
   $$('audio[data-output-player]').forEach(player => {
     player.addEventListener('play', () => stopOtherAudio(player));
@@ -1358,6 +1378,43 @@ function sortAudioOutputs(outputs, contents) {
   return [...outputs].sort((a, b) => (orderOf.has(a.title) ? orderOf.get(a.title) : 999) - (orderOf.has(b.title) ? orderOf.get(b.title) : 999) || a.title.localeCompare(b.title, 'zh'));
 }
 
+function audioChapterIndexMap(content) {
+  // 与 sortAudioOutputs 的标题约定保持一致：整篇 = content.title；分章 = content.title + ' · ' + 章节标题。
+  const map = new Map();
+  let index = 0;
+  (content.markdown || '').split(/\r?\n/).forEach(line => {
+    if (line.startsWith('## ')) { index += 1; map.set(content.title + ' · ' + line.slice(3).trim(), index); }
+  });
+  if (!index) (content.section_sources || []).forEach((section, i) => map.set(content.title + ' · ' + section.heading, i + 1));
+  return map;
+}
+
+function renderAudioGroups(outputs) {
+  // 音频按讲稿分组展示：原文朗读、各讲稿的整篇与逐章音频，而不是混杂的平铺列表。
+  const contents = appState.selectedProject.narrative_contents || [];
+  const direct = outputs.filter(item => !item.narrative_content_id);
+  let html = '';
+  if (direct.length) html += '<div class="audio-group-head"><b>原文朗读</b><small>保留原文写法、未经改写的音频</small></div>' + direct.map(output => renderAudioOutput(output)).join('');
+  contents.forEach(content => {
+    const items = outputs.filter(item => item.narrative_content_id === content.id);
+    if (!items.length) return;
+    const chapterMap = audioChapterIndexMap(content);
+    const sections = readingSections(content.markdown || '');
+    const completed = new Set((content.reading_progress || {}).completed_section_ids || []);
+    const doneCount = sections.filter(section => completed.has(section.id)).length;
+    html += '<div class="audio-group-head"><b>' + escapeHtml(content.title) + '</b><small>' + (sections.length > 1 ? '已学 ' + doneCount + ' / ' + sections.length + ' 节' : '整篇讲稿音频') + '</small></div>';
+    html += items.map(output => {
+      const index = chapterMap.get(output.title);
+      const section = index ? sections[index - 1] : null;
+      return renderAudioOutput(output, index ? { content, index, section, completed: !!(section && completed.has(section.id)) } : null);
+    }).join('');
+  });
+  // 讲稿被删除后残留的音频也保留展示，不丢失入口
+  const unmatched = outputs.filter(item => item.narrative_content_id && !contents.some(content => content.id === item.narrative_content_id));
+  if (unmatched.length) html += unmatched.map(output => renderAudioOutput(output)).join('');
+  return html;
+}
+
 function stopOtherAudio(exceptPlayer) {
   $$('audio').forEach(player => { if (player !== exceptPlayer) player.pause(); });
   if (listenState.audio && listenState.audio !== exceptPlayer) listenState.audio.pause();
@@ -1375,13 +1432,16 @@ function renderAudioSourceRow(content) {
   return '<div class="doc-row audio-source-row"><div><b>' + escapeHtml(content.title) + '</b><small>' + status + '</small>' + chapterList + '</div><button class="button button-primary button-small" data-create-audio-script="' + content.id + '">生成整篇脚本</button></div>';
 }
 
-function renderAudioOutput(output) {
+function renderAudioOutput(output, chapter = null) {
   const player = '<audio controls data-output-player="' + output.id + '" ' + (output.audio_available ? 'src="/api/audio-outputs/' + output.id + '/stream?v=' + encodeURIComponent(output.updated_at) + '"' : 'data-no-audio="1"') + '></audio>';
   const source = (appState.selectedProject.narrative_contents || []).find(content => content.id === output.narrative_content_id);
   const readyForMp3 = !output.narrative_content_id || source?.status === 'confirmed';
   const mp3Hint = readyForMp3 || !output.narrative_content_id ? '' : '<small class="audio-gate-hint">确认对应讲稿后可生成完整 MP3</small>';
   const synthesizing = appState.synthesizingAudio === output.id && output.status !== 'ready'; // 已就绪的音频不再显示合成中（防止请求失败后状态残留）
   const statusLabel = synthesizing ? '正在合成音频…' : output.status === 'source_changed' ? '源讲稿已更新，请重新整理脚本' : output.status === 'ready' ? 'MP3 已生成 · ' + output.duration_seconds + ' 秒' : '脚本待校对';
+  // 分章音频显示章节序号和学习状态；完成标记与阅读进度共用同一份数据
+  const chapterChip = chapter ? '<span class="audio-chapter-chip' + (chapter.completed ? ' done' : '') + '">' + (chapter.completed ? '第 ' + chapter.index + ' 章 · 已学' : '第 ' + chapter.index + ' 章') + '</span>' : '';
+  const completeToggle = chapter && chapter.section ? '<button class="button button-outline button-small" data-audio-toggle-complete="' + chapter.content.id + '" data-section-id="' + chapter.section.id + '" data-completed="' + chapter.completed + '">' + (chapter.completed ? '取消已学' : '标记已学') + '</button>' : '';
   const script = output.script || '';
   const mediaMinutes = script.length ? Math.max(1, Math.round(script.length / 240)) : 0;
   const stats = script.length ? '共 ' + script.length + ' 字 · 预计朗读约 ' + mediaMinutes + ' 分钟' : '脚本为空';
@@ -1389,7 +1449,7 @@ function renderAudioOutput(output) {
   const primaryAction = output.audio_available
     ? '<button class="button button-primary button-small" data-export-audio="' + output.id + '">导出 MP3</button>' + (!output.narrative_content_id ? '<button class="button button-outline button-small" data-export-direct-audiobook="' + output.id + '">导出有声书 M4B</button>' : '')
     : '<button class="button button-primary button-small" data-synthesize-audio="' + output.id + '" ' + (readyForMp3 && !synthesizing ? '' : 'disabled') + '>' + (synthesizing ? '合成中…' : '生成 MP3') + '</button>' + mp3Hint;
-  return '<article class="audio-output-card"><div class="audio-output-main"><div class="audio-output-head"><span class="tag">' + statusLabel + '</span><h4>' + escapeHtml(output.title) + '</h4></div><details class="audio-tools"><summary>脚本、试听与更多操作</summary><details class="audio-script-details" data-audio-id="' + output.id + '"' + opened + '><summary>查看 / 编辑完整口播脚本</summary><div class="audio-script-body"><textarea class="audio-script-editor" data-audio-editor="' + output.id + '">' + escapeHtml(script) + '</textarea><div class="audio-script-meta"><span class="audio-script-stats">' + stats + '</span><button class="button button-outline button-small" data-save-audio="' + output.id + '">保存脚本</button></div><p class="audio-script-hint">修改脚本后，原有 MP3 会失效，需要重新生成。</p></div></details><div class="audio-tool-actions">' + (output.audio_available ? '' : player) + '<button class="button button-outline button-small" data-speak-script="' + output.id + '">浏览器校对朗读</button><button class="button button-outline button-small" data-preview-audio="' + output.id + '">合成短片试听</button>' + (output.audio_available ? '<button class="button button-outline button-small" data-synthesize-audio="' + output.id + '" ' + (readyForMp3 ? '' : 'disabled') + '>重新生成 MP3</button>' : '<button class="button button-outline button-small" data-export-audio="' + output.id + '">仅导出脚本</button>') + '</div></details></div><div class="audio-actions">' + (output.audio_available ? player : '') + primaryAction + '</div></article>';
+  return '<article class="audio-output-card"><div class="audio-output-main"><div class="audio-output-head">' + chapterChip + '<span class="tag">' + statusLabel + '</span><h4>' + escapeHtml(output.title) + '</h4></div><details class="audio-tools"><summary>脚本、试听与更多操作</summary><details class="audio-script-details" data-audio-id="' + output.id + '"' + opened + '><summary>查看 / 编辑完整口播脚本</summary><div class="audio-script-body"><textarea class="audio-script-editor" data-audio-editor="' + output.id + '">' + escapeHtml(script) + '</textarea><div class="audio-script-meta"><span class="audio-script-stats">' + stats + '</span><button class="button button-outline button-small" data-save-audio="' + output.id + '">保存脚本</button></div><p class="audio-script-hint">修改脚本后，原有 MP3 会失效，需要重新生成。</p></div></details><div class="audio-tool-actions">' + (output.audio_available ? '' : player) + '<button class="button button-outline button-small" data-speak-script="' + output.id + '">浏览器校对朗读</button><button class="button button-outline button-small" data-preview-audio="' + output.id + '">合成短片试听</button>' + (output.audio_available ? '<button class="button button-outline button-small" data-synthesize-audio="' + output.id + '" ' + (readyForMp3 ? '' : 'disabled') + '>重新生成 MP3</button>' : '<button class="button button-outline button-small" data-export-audio="' + output.id + '">仅导出脚本</button>') + '</div></details></div><div class="audio-actions">' + (output.audio_available ? player : '') + primaryAction + completeToggle + '</div></article>';
 }
 
 async function saveAudioScript(id, button) {
