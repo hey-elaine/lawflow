@@ -626,6 +626,36 @@ class ImprovementsTest(unittest.TestCase):
         blocked = self.client.get('/api/web-page-title', params={'url': 'http://127.0.0.1:8080/'})
         self.assertEqual(blocked.status_code, 400)
 
+    def test_quick_link_preview_does_not_create_project_before_confirmation(self):
+        url = 'https://mp.weixin.qq.com/s/example'
+        article = '这是公众号文章的正文。' * 30
+        before = len(self.client.get('/api/projects').json())
+        with patch.object(self.main, 'fetch_article', return_value=('测试文章', article)):
+            preview = self.client.get('/api/link-preview', params={'url': url})
+            self.assertEqual(preview.status_code, 200)
+            self.assertEqual(preview.json()['title'], '测试文章')
+            self.assertGreater(preview.json()['character_count'], 200)
+            self.assertEqual(len(self.client.get('/api/projects').json()), before)
+            created = self.client.post('/api/projects/from-link', json={'url': url, 'scenario': 'daily_brief'})
+        self.assertEqual(created.status_code, 201)
+        detail = self.client.get('/api/projects/' + created.json()['project_id']).json()
+        self.assertEqual(detail['project']['name'], '测试文章')
+        self.assertEqual(detail['project']['scenario'], 'daily_brief')
+        self.assertEqual(detail['documents'][0]['source_url'], url)
+        shelf_item = next(item for item in self.client.get('/api/projects').json() if item['id'] == created.json()['project_id'])
+        self.assertEqual(shelf_item['document_count'], 1)
+        self.assertFalse(shelf_item['production_stage'].get('has_confirmed_outline', False))
+        self.assertEqual(shelf_item['learning_progress'], {'done': 0, 'total': 0})
+
+    def test_quick_link_rejects_short_or_private_page_without_empty_project(self):
+        before = len(self.client.get('/api/projects').json())
+        with patch.object(self.main, 'fetch_article', return_value=('验证页面', '请登录')):
+            short = self.client.post('/api/projects/from-link', json={'url': 'https://example.com/paywall'})
+        self.assertEqual(short.status_code, 422)
+        private = self.client.get('/api/link-preview', params={'url': 'http://127.0.0.1:8080/private'})
+        self.assertEqual(private.status_code, 400)
+        self.assertEqual(len(self.client.get('/api/projects').json()), before)
+
     def test_web_search_requires_explicit_import_and_preserves_source(self):
         import httpx
         project = self.client.post('/api/projects', json={'name': '人工智能治理', 'scenario': 'topic_learning'}).json()

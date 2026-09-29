@@ -685,13 +685,14 @@ body { background-color: var(--linen); background-image: url("data:image/svg+xml
 .start-note { display: block; text-align: center; margin: 18px 0 0; color: #a2957a; font-size: 12px; letter-spacing: 0.08em; }
 @media (max-width: 850px) { .start-body { grid-template-columns: 1fr; gap: 28px; } }
 .tag-edit-btn:hover { border-color: var(--moss); color: var(--moss-dark); }
-.listen-chapters { list-style: none; margin: 0; padding: 0 0 0 30px; border-left: 1px solid #e0d9c6; display: grid; gap: 6px; align-content: center; max-height: 300px; overflow-y: auto; }
+.listen-chapters { min-width: 0; list-style: none; margin: 0; padding: 0 0 0 30px; border-left: 1px solid #e0d9c6; display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; align-content: center; max-height: 300px; overflow-y: auto; }
+.listen-chapters li { min-width: 0; }
 .listen-chapter { display: flex; width: 100%; align-items: center; gap: 12px; padding: 12px; border: 0; border-radius: 4px; background: transparent; text-align: left; color: #4a4334; }
 .listen-chapter:hover { background: #f1ecdd; }
 .listen-chapter.active { background: #ebe4d0; }
 .listen-no { font: 500 11px "DM Mono", monospace; color: #a89a76; }
 .listen-name { flex: 1; min-width: 0; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.listen-duration { font: 500 11px "DM Mono", monospace; color: #8d8264; }
+.listen-duration { flex: none; font: 500 11px "DM Mono", monospace; color: #8d8264; }
 .listen-empty { margin: 42px 0 0; color: #8d8264; text-align: center; letter-spacing: 0.08em; }
 
 /* 三步与可信段的色彩统一 */
@@ -714,3 +715,36 @@ body { background-color: var(--linen); background-image: url("data:image/svg+xml
   .hero-note { margin-inline: auto; text-align: center; }
   .hero-note-stroke { margin-inline: auto; }
 }
+
+/* 书架入口：先核对文章，再决定如何整理。 */
+.quick-import { display: grid; grid-template-columns: minmax(200px, .8fr) minmax(340px, 1.4fr) minmax(150px, .48fr); gap: 26px; align-items: start; margin: 22px 0 26px; padding: 30px; border: 1px solid #e4dccb; border-radius: 6px; background: #fbf9f2; box-shadow: 0 12px 32px rgba(76, 64, 38, .06); }
+body.in-project #quick-import { display: none; }
+body.in-shelf #quick-import .eyebrow { display: block; margin: 0 0 8px; }
+.quick-import h3 { margin: 0 0 9px; color: #3f382a; font: 500 clamp(18px, 2vw, 24px)/1.45 "Noto Serif SC", serif; }
+.quick-import-copy > p:last-child { margin: 0; color: #766c59; font-size: 13px; line-height: 1.8; }
+.quick-link-entry { display: flex; gap: 8px; }
+.quick-link-entry input { flex: 1; min-width: 0; min-height: 42px; padding: 10px 14px; border: 1px solid #d9d1bd; border-radius: 4px; background: #fffefa; color: #3f382a; font: 14px "Noto Sans SC", -apple-system, sans-serif; }
+.quick-link-entry input:focus { outline: 2px solid rgba(111, 125, 84, .35); outline-offset: 1px; }
+.quick-link-entry .button { white-space: nowrap; }
+.quick-link-status { min-height: 22px; margin: 9px 0 0; color: #6d6450; font-size: 12px; line-height: 1.6; }
+.quick-link-preview { margin-top: 12px; padding: 17px 18px; border: 1px solid #e0d7c3; border-radius: 4px; background: #f7f3e8; }
+.quick-link-preview.hidden { display: none; }
+.quick-preview-label { color: var(--moss-dark); font-size: 11px; letter-spacing: .14em; }
+.quick-link-preview h4 { margin: 6px 0 7px; font: 500 17px/1.5 "Noto Serif SC", serif; }
+.quick-link-preview p { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 3; -webkit-box-orient: vertical; margin: 0 0 8px; color: #665d4a; font-size: 12.5px; line-height: 1.75; }
+.quick-link-preview small { color: #817661; }
+.quick-link-preview fieldset { display: flex; flex-wrap: wrap; gap: 12px; margin: 15px 0; padding: 0; border: 0; }
+.quick-link-preview legend { margin-bottom: 8px; color: #5f5543; font-size: 12px; }
+.quick-link-preview label { color: #5f5543; font-size: 12px; }
+.quick-link-preview input { accent-color: var(--moss); }
+.quick-upload { position: relative; display: grid; align-content: center; min-height: 42px; padding: 9px 14px; border: 1px dashed #bfb49b; border-radius: 4px; color: #4e5f3e; cursor: pointer; font-size: 13px; }
+.quick-upload span { display: block; margin-top: 3px; color: #8d8264; font: 10px "DM Mono", monospace; }
+.quick-upload input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.quick-upload:focus-within { outline: 2px solid rgba(111, 125, 84, .35); }
+body.empty-shelf .quick-import { grid-template-columns: minmax(200px, .8fr) minmax(340px, 1.4fr); }
+body.empty-shelf .quick-upload { display: none; }
+.listen-empty p { margin: 0 0 14px; }
+.listen-empty [role="status"] { margin: 12px 0 0; font-size: 12px; }
+@media (max-width: 1100px) { .quick-import { grid-template-columns: 1fr 1.5fr; } .quick-upload { grid-column: 2; } }
+@media (max-width: 720px) { .quick-import, body.empty-shelf .quick-import { grid-template-columns: 1fr; padding: 22px; } .quick-upload { grid-column: auto; } .quick-link-entry { flex-direction: column; } }
+@media (max-width: 560px) { .hero h1 { font-size: clamp(26px, 7.8vw, 32px); letter-spacing: 0.01em; } }

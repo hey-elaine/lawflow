@@ -1,4 +1,5 @@
 const appState = { projects: [], selectedProjectId: null, selectedProject: null, selectedDocument: null, activeTab: 'materials', activePlan: null, editingContentId: null, collectionFilter: '' };
+let quickLinkPreview = null;
 const SCENARIOS = {
   daily_brief: { name: '晨间 / 晚间速听', description: '单篇资讯或收藏文章的短时精炼收听', transform: 'condense', verification: 'source_only', duration: 5, audio: true, audience: '个人学习', narrativeLabel: '速听讲稿' },
   topic_learning: { name: '专题学习与表达', description: '围绕选定材料形成分章节学习内容', transform: 'adapt', verification: 'material_check', duration: 10, audio: true, audience: '法律从业者与企业法务', narrativeLabel: '主题讲稿' },
@@ -100,12 +101,27 @@ function renderCollectionBar() {
   $$('.collection-chip', bar).forEach(chip => chip.addEventListener('click', () => { appState.collectionFilter = chip.dataset.collection; renderProjectList(); }));
 }
 
+function projectCardStatus(project, progress) {
+  const stage = project.production_stage || {};
+  if (stage.has_ready_audio) {
+    if (progress.total && progress.done >= progress.total) return '<span class="card-status status-done">✓ 已听完</span>';
+    if (progress.done) return '<span class="card-status status-listening">▶ 听到第 ' + (progress.done + 1) + ' 章</span>';
+    return '<span class="card-status status-listening">▶ 可收听</span>';
+  }
+  if (stage.has_confirmed_content) return '<span class="card-status">' + (project.audio_enabled ? '待制作音频' : '可阅读') + '</span>';
+  if (stage.has_content) return '<span class="card-status">待审阅讲稿</span>';
+  if (project.verification_mode === 'external_verify' && stage.has_open_tasks) return '<span class="card-status">待核验要点</span>';
+  if (stage.has_confirmed_outline) return '<span class="card-status">待生成讲稿</span>';
+  return '<span class="card-status">' + (project.document_count ? '待确认大纲' : '待导入素材') + '</span>';
+}
+
 function renderProjectList() {
   const list = $('#project-list');
   if (!document.body.classList.contains('in-shelf')) return;
+  document.body.classList.toggle('empty-shelf', appState.projects.length === 0);
   renderCollectionBar();
   if (!appState.projects.length) {
-    list.innerHTML = '<section class="empty-state onboarding start-page"><div class="start-hero"><h3>从一篇文字，到一段路上的声音。</h3><p>上传文章、报告、笔记或收藏内容。声息会先帮你看见它的结构，再把它拆成适合收听的小段。</p></div><div class="start-body"><label class="upload-zone paper-drop start-drop" id="shelf-drop"><input type="file" id="shelf-upload" accept=".docx,.txt,.md,.pdf" /><div class="paper-drop-inner"><b>放下一篇你想带走的文字</b><span>DOCX · PDF · TXT · Markdown</span><small>点选文件，或直接拖进来；也可以在下面贴链接</small></div></label><ol class="start-timeline"><li><i>01</i><div><b>来处</b><span>看见这篇文字的起点</span></div></li><li><i>02</i><div><b>要点</b><span>提炼值得记住的内容</span></div></li><li><i>03</i><div><b>留给路上</b><span>拆成适合收听的小段</span></div></li></ol></div><div class="start-link"><input id="start-link-input" type="url" placeholder="贴一篇文章链接（公众号 / 网页），一键开始" /><button class="button button-primary" id="start-link-go">开始整理 →</button></div><small class="start-note">材料与学习记录都只存在这台电脑里。</small></section>';
+    list.innerHTML = '<section class="empty-state onboarding start-page"><div class="start-hero"><h3>从一篇文字，到一段路上的声音。</h3><p>上方可预览公众号文章；也可以上传文件。确认原文和大纲后，再制作讲稿与音频。</p></div><div class="start-body"><label class="upload-zone paper-drop start-drop" id="shelf-drop"><input type="file" id="shelf-upload" accept=".docx,.txt,.md,.pdf" /><div class="paper-drop-inner"><b>放下一篇你想带走的文字</b><span>DOCX · PDF · TXT · Markdown</span><small>点选文件，或直接拖进来</small></div></label><ol class="start-timeline"><li><i>01</i><div><b>导入</b><span>先检查文章是否读取完整</span></div></li><li><i>02</i><div><b>确认大纲</b><span>决定要留下哪些内容</span></div></li><li><i>03</i><div><b>收听</b><span>审阅讲稿后制作音频</span></div></li></ol></div></section>';
     bindStartPage();
     return;
   }
@@ -116,7 +132,7 @@ function renderProjectList() {
     return !filter || tag === filter;
   });
   if (!visible.length) { list.innerHTML = '<div class="empty-state"><b>这个收藏夹还是空的</b><p>换一个标签看看，或点卡片上的「＋ 收藏夹」把它归到这。</p></div>'; return; }
-  list.innerHTML = visible.map(project => { const scenario = SCENARIOS[project.scenario] || SCENARIOS.topic_learning; const progress = project.learning_progress || { done: 0, total: 0 }; const percent = progress.total ? Math.round(progress.done / progress.total * 100) : 0; const progressHtml = progress.total ? '<div class="card-progress"><div class="card-progress-bar"><i style="width:' + percent + '%"></i></div><span>已学 ' + progress.done + ' / ' + progress.total + ' 节</span></div>' : ''; const tag = (project.collection || '').trim(); const tagBtn = '<button type="button" class="card-tag-btn' + (tag ? '' : ' untagged') + '" data-tag-project="' + project.id + '">' + (tag ? escapeHtml(tag) : '＋ 收藏夹') + '</button>'; const status = progress.total === 0 || progress.done === 0 ? '<span class="card-status status-not-start">▷ 未开始</span>' : progress.done >= progress.total ? '<span class="card-status status-done">✓ 已听完</span>' : '<span class="card-status status-listening">▶ 听到第 ' + (progress.done + 1) + ' 章</span>'; return '<div class="project-card" role="button" tabindex="0" data-project-id="' + project.id + '"><div class="card-cover"><img src="' + coverForProject(project.id) + '" alt="" loading="lazy" />' + status + '</div><div class="project-card-top"><span class="tag">' + escapeHtml(scenario.name) + '</span><small>' + formatDate(project.updated_at) + '</small></div><h3>' + escapeHtml(project.name) + '</h3><p>' + escapeHtml(project.description || project.client_name || scenario.name) + '</p>' + progressHtml + '<div class="meta">' + tagBtn + '<span>' + project.document_count + ' 份素材</span><span>' + (project.verification_mode === 'source_only' ? '无需核验' : project.task_count + ' 项核验') + '</span><span>' + project.target_duration + ' 分钟</span></div></div>'; }).join('');
+  list.innerHTML = visible.map(project => { const scenario = SCENARIOS[project.scenario] || SCENARIOS.topic_learning; const progress = project.learning_progress || { done: 0, total: 0 }; const percent = progress.total ? Math.round(progress.done / progress.total * 100) : 0; const progressHtml = progress.total ? '<div class="card-progress"><div class="card-progress-bar"><i style="width:' + percent + '%"></i></div><span>已学 ' + progress.done + ' / ' + progress.total + ' 节</span></div>' : ''; const tag = (project.collection || '').trim(); const tagBtn = '<button type="button" class="card-tag-btn' + (tag ? '' : ' untagged') + '" data-tag-project="' + project.id + '">' + (tag ? escapeHtml(tag) : '＋ 收藏夹') + '</button>'; const status = projectCardStatus(project, progress); return '<div class="project-card" role="button" tabindex="0" data-project-id="' + project.id + '"><div class="card-cover"><img src="' + coverForProject(project.id) + '" alt="" loading="lazy" />' + status + '</div><div class="project-card-top"><span class="tag">' + escapeHtml(scenario.name) + '</span><small>' + formatDate(project.updated_at) + '</small></div><h3>' + escapeHtml(project.name) + '</h3><p>' + escapeHtml(project.description || project.client_name || scenario.name) + '</p>' + progressHtml + '<div class="meta">' + tagBtn + '<span>' + project.document_count + ' 份素材</span><span>' + (project.verification_mode === 'source_only' ? '仅依据原文' : project.task_count + ' 项核验') + '</span><span>' + '目标 ' + project.target_duration + ' 分钟</span></div></div>'; }).join('');
   $$('.project-card', list).forEach(card => {
     card.addEventListener('click', () => openProject(card.dataset.projectId));
     card.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openProject(card.dataset.projectId); } });
@@ -132,8 +148,6 @@ function bindStartPage() {
     drop.addEventListener('dragleave', () => drop.classList.remove('dragover'));
     drop.addEventListener('drop', event => { event.preventDefault(); drop.classList.remove('dragover'); const file = event.dataTransfer?.files?.[0]; if (file) startFromFile(file); });
   }
-  $('#start-link-go')?.addEventListener('click', startFromLink);
-  $('#start-link-input')?.addEventListener('keydown', event => { if (event.key === 'Enter') startFromLink(); });
 }
 
 async function startFromFile(file) {
@@ -149,19 +163,59 @@ async function startFromFile(file) {
   } catch (error) { showMessage(error.message, true); }
 }
 
-async function startFromLink() {
-  const url = $('#start-link-input')?.value.trim();
-  if (url === '') { showMessage('先贴一个文章链接。', true); return; }
-  showMessage('正在抓取文章内容…');
-  try {
-    const project = await request('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: '路上新读' }) });
+function resetQuickLinkPreview() {
+  quickLinkPreview = null;
+  $('#quick-link-preview')?.classList.add('hidden');
+  $('#quick-link-status').textContent = '';
+}
+
+function bindQuickImport() {
+  const form = $('#quick-link-form');
+  const input = $('#quick-link-input');
+  const status = $('#quick-link-status');
+  input.addEventListener('input', resetQuickLinkPreview);
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    const url = input.value.trim();
+    if (!url) return;
+    const button = $('#quick-link-submit');
     try {
-      const source = await request('/api/projects/' + project.id + '/link-sources', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) });
-      const title = (source?.original_name || '').trim();
-      if (title) { try { await request('/api/projects/' + project.id + '/name', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: title.slice(0, 120) }) }); } catch (_) {} }
-      await loadProjects(); openProject(project.id); showMessage('文章已导入并完成解析。');
-    } catch (error) { await loadProjects(); openProject(project.id); showMessage(error.message, true); }
-  } catch (error) { showMessage(error.message, true); }
+      setBusy(button, true, '正在读取…');
+      status.textContent = '正在读取文章标题和正文…';
+      const preview = await request('/api/link-preview?url=' + encodeURIComponent(url));
+      if (input.value.trim() !== url) return;
+      quickLinkPreview = preview;
+      $('#quick-preview-title').textContent = preview.title;
+      $('#quick-preview-excerpt').textContent = preview.excerpt;
+      $('#quick-preview-length').textContent = '已读取约 ' + preview.character_count.toLocaleString('zh-CN') + ' 字，请核对是否为要导入的文章。';
+      $('#quick-link-preview').classList.remove('hidden');
+      status.textContent = '已读取文章。请核对预览，再加入书架。';
+    } catch (error) {
+      resetQuickLinkPreview();
+      status.textContent = readableError(error) + ' 也可以上传文件，或打开文章复制正文后粘贴导入。';
+    } finally { setBusy(button, false); }
+  });
+  $('#quick-link-create').addEventListener('click', async event => {
+    if (!quickLinkPreview || quickLinkPreview.url !== input.value.trim()) return;
+    const button = event.currentTarget;
+    const scenario = form.elements.quick_scenario.value;
+    try {
+      setBusy(button, true, '正在加入书架…');
+      status.textContent = '正在保存文章并解析结构…';
+      const result = await request('/api/projects/from-link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: quickLinkPreview.url, scenario }) });
+      input.value = '';
+      resetQuickLinkPreview();
+      await loadProjects();
+      await openProject(result.project_id);
+      showMessage('文章已导入。请先查看原文，再确认大纲。');
+    } catch (error) { status.textContent = readableError(error) + ' 请重试，或改用文件和粘贴正文。'; }
+    finally { setBusy(button, false); }
+  });
+  $('#quick-upload-input').addEventListener('change', event => {
+    const file = event.currentTarget.files?.[0];
+    if (file) startFromFile(file);
+    event.currentTarget.value = '';
+  });
 }
 async function loadDemoProject(event) {
   const button = event.currentTarget;
@@ -265,11 +319,11 @@ function renderProjectDetail() {
     '<button data-tab="' + key + '" class="' + (appState.activeTab === key ? 'active ' : '') + (status || '') + '"' + (status === 'current' ? ' aria-current="step"' : '') + '>' +
     '<span class="step-mark">' + (status === 'done' ? '✓' : status === 'current' ? '●' : '○') + '</span>' + label + '</button>'
   ).join('');
-  detail.innerHTML = '<div class="detail-header"><div><p class="eyebrow">' + escapeHtml(scenario.name) + '</p><h2>' + escapeHtml(data.project.name) + '</h2><p>' + escapeHtml(data.project.client_name || data.project.description || scenario.description) + '</p><div class="task-preferences"><button type="button" class="tag-edit-btn" id="edit-collection" title="归类到某个收藏夹">🏷 ' + ((data.project.collection || '').trim() ? escapeHtml(data.project.collection.trim()) : '未归类 · 点此归类') + '</button><span>' + TRANSFORM_NAMES[data.project.transform_mode] + '</span><span>' + VERIFICATION_NAMES[data.project.verification_mode] + '</span><span>' + data.project.target_duration + ' 分钟目标时长</span></div></div><div class="detail-actions">' + (data.documents.length && (!(data.narrative_contents || []).length || !(data.audio_outputs || []).some(item => item.audio_available)) ? '<button class="button button-primary button-small" id="one-click-generate">⚡ 一键生成</button>' : '') + '<button class="button button-outline button-small" id="back-to-projects">← 全部项目</button><button class="button button-outline button-small" id="export-project">导出至本机目录</button><button class="button button-outline button-small" id="reload-project">刷新任务</button><button class="button button-danger button-small" id="delete-project">删除任务</button></div></div>' + '<div class="tabbar">' + tabHtml + '</div>' + renderWorkflowHint(data, state) + '<div id="detail-panel" class="detail-panel"></div>';
+  detail.innerHTML = '<div class="detail-header"><div><p class="eyebrow">' + escapeHtml(scenario.name) + '</p><h2>' + escapeHtml(data.project.name) + '</h2><p>' + escapeHtml(data.project.client_name || data.project.description || scenario.description) + '</p><div class="task-preferences"><button type="button" class="tag-edit-btn" id="edit-collection" title="归类到某个收藏夹">🏷 ' + ((data.project.collection || '').trim() ? escapeHtml(data.project.collection.trim()) : '未归类 · 点此归类') + '</button><span>' + TRANSFORM_NAMES[data.project.transform_mode] + '</span><span>' + VERIFICATION_NAMES[data.project.verification_mode] + '</span><span>' + data.project.target_duration + ' 分钟目标时长</span></div></div><div class="detail-actions">' + '<button class="button button-outline button-small" id="back-to-projects">← 全部项目</button><button class="button button-outline button-small" id="export-project">导出至本机目录</button><button class="button button-outline button-small" id="reload-project">刷新任务</button><button class="button button-danger button-small" id="delete-project">删除任务</button></div></div>' + '<div class="tabbar">' + tabHtml + '</div>' + renderWorkflowHint(data, state) + '<div id="detail-panel" class="detail-panel"></div>';
   $('#edit-collection')?.addEventListener('click', () => openCollectionDialog(data.project.id));
   $$('.tabbar button', detail).forEach(button => button.addEventListener('click', () => { appState.activeTab = button.dataset.tab; renderProjectDetail(); }));
   $$('[data-workflow-next]', detail).forEach(button => button.addEventListener('click', () => { appState.activeTab = button.dataset.workflowNext; renderProjectDetail(); $('#detail-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }));
-  $('#reload-project').addEventListener('click', () => openProject(data.project.id)); $('#back-to-projects').addEventListener('click', closeProject); $('#export-project').addEventListener('click', exportProject); $('#delete-project').addEventListener('click', deleteProject); const oneClickBtn = $('#one-click-generate'); if (oneClickBtn) oneClickBtn.addEventListener('click', () => oneClickGenerate()); renderActivePanel();
+  $('#reload-project').addEventListener('click', () => openProject(data.project.id)); $('#back-to-projects').addEventListener('click', closeProject); $('#export-project').addEventListener('click', exportProject); $('#delete-project').addEventListener('click', deleteProject); renderActivePanel();
 }
 let collectionDialogProjectId = null;
 
@@ -1237,7 +1291,11 @@ function renderAudioPanel() {
   $$('[data-speak-script]').forEach(button => button.addEventListener('click', () => speakAudioScript(button.dataset.speakScript, button)));
   $$('[data-synthesize-audio]').forEach(button => button.addEventListener('click', () => synthesizeAudio(button.dataset.synthesizeAudio, button)));
   $$('[data-export-audio]').forEach(button => button.addEventListener('click', () => exportAudioOutput(button.dataset.exportAudio, button)));
-  $$('audio[data-output-player]').forEach(player => player.addEventListener('play', () => stopOtherAudio(player)));
+  $$('audio[data-output-player]').forEach(player => {
+    player.addEventListener('play', () => stopOtherAudio(player));
+    const output = outputs.find(item => item.id === player.dataset.outputPlayer);
+    if (output?.audio_available) rememberAudioPosition(player, () => output);
+  });
   const audiobookButton = $('#export-audiobook');
   if (audiobookButton) audiobookButton.addEventListener('click', () => exportAudiobook(audiobookButton));
   $$('.audio-script-details').forEach(details => details.addEventListener('toggle', () => {
@@ -1263,6 +1321,7 @@ function sortAudioOutputs(outputs, contents) {
 
 function stopOtherAudio(exceptPlayer) {
   $$('audio').forEach(player => { if (player !== exceptPlayer) player.pause(); });
+  if (listenState.audio && listenState.audio !== exceptPlayer) listenState.audio.pause();
   if ('speechSynthesis' in window) window.speechSynthesis.cancel();
 }
 
@@ -1405,116 +1464,6 @@ function renderTasksPanel() {
   $$('[data-task-evidence]').forEach(button => button.addEventListener('click', async () => { const doc = currentDocument(); if (!doc) return; await ensureDocumentLoaded(doc.id); const ids = button.dataset.taskEvidence.split(',').filter(Boolean); const blocks = appState.selectedDocument.blocks.filter(block => ids.includes(block.id)); showSourceOverlay('表述的原文依据', blocks.map(block => '<h4>' + escapeHtml(block.source_locator) + '</h4><pre>' + escapeHtml(block.text) + '</pre>').join('')); }));
 }
 async function saveTask(card, status) { status = status || $('.status-pill.active', card)?.dataset.taskStatus || 'open'; try { await request('/api/tasks/' + card.dataset.taskId, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status, owner: ($('.task-owner', card)?.value || '').trim(), due_date: $('.task-due', card)?.value || '' }) }); appState.selectedProject = await request('/api/projects/' + appState.selectedProject.project.id); renderProjectDetail(); showMessage('已保存。'); } catch (error) { showMessage(error.message, true); } }
-async function oneClickGenerate() {
-  const button = $('#one-click-generate');
-  const projectId = appState.selectedProject.project.id;
-  const project = appState.selectedProject.project;
-  try {
-    if (!appState.selectedProject.documents.length) throw new Error('请先导入素材，再一键生成。');
-    if (project.verification_mode === 'external_verify') {
-      const open = (appState.selectedProject.tasks || []).some(task => task.status === 'open' || task.status === 'in_progress');
-      if (open) throw new Error('本项目为对外核验模式：请先在「核验与来源」完成或关闭全部核验事项，再一键生成。');
-    }
-    const scenario = SCENARIOS[project.scenario] || SCENARIOS.topic_learning;
-    let prefs = {};
-    try { prefs = JSON.parse(localStorage.getItem('shengxi-oneclick-prefs') || '{}') || {}; } catch (_) { prefs = {}; }
-    const audience = ($('#narrative-audience')?.value.trim()) || prefs.audience || scenario.audience;
-    const wordsInput = Number($('#narrative-target-words')?.value);
-    const sourceChars = appState.selectedProject.documents.reduce((sum, doc) => sum + Number(doc.source_chars || 0), 0);
-    const proportionalWords = sourceChars ? Math.round(sourceChars * 0.45) : 0;
-    const targetWords = Math.max(400, Math.min(8000, wordsInput || prefs.targetWords || proportionalWords || Math.min(project.target_duration <= 5 ? Math.min(1800, project.target_duration * 240) : 3800, 8000)));
-    localStorage.setItem('shengxi-oneclick-prefs', JSON.stringify({ audience, targetWords }));
-    // 第一步：章节方案（已确认则复用）
-    let planId = '';
-    const confirmedPlan = appState.selectedProject.plans.find(item => item.status === 'confirmed');
-    if (!confirmedPlan) {
-      const doc = appState.selectedProject.documents[0];
-      setBusy(button, true, 'AI 正在划分章节…');
-      const plan = await request('/api/projects/' + projectId + '/plans', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source_document_id: doc.id, selected_heading_ids: [], audience, output_type: project.scenario === 'speaking_note' ? 'client_brief' : 'lexcast', style_name: '深入浅出、适合朗读', include_audio: !!project.audio_enabled, auto_split: true, split_mode: 'ai' }) });
-      setBusy(button, true, '确认章节结构…');
-      await request('/api/plans/' + plan.id + '/confirm', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chapters: plan.chapters }) });
-      planId = plan.id;
-      appState.selectedProject = await request('/api/projects/' + projectId);
-    } else {
-      planId = confirmedPlan.id;
-    }
-    // 第二步：写作大纲（已有则复用）
-    let outlineId = '';
-    const outlines = appState.selectedProject.narrative_outlines || [];
-    const usableOutline = outlines.find(item => item.status === 'confirmed') || outlines.find(item => item.status === 'draft');
-    if (usableOutline) {
-      outlineId = usableOutline.id;
-      if (usableOutline.status !== 'confirmed') {
-        setBusy(button, true, '确认大纲…');
-        await request('/api/narrative-outlines/' + outlineId + '/confirm', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outline: usableOutline.outline }) });
-      }
-    } else {
-      const doc = appState.selectedProject.documents[0];
-      const docLoaded = await ensureDocumentLoaded(doc.id);
-      // 已确认章节方案时，沿用章节的材料块（含标题块），避免与后端校验不一致
-      const activePlan = appState.selectedProject.plans.find(item => item.id === planId);
-      const chapterBlocks = activePlan ? [...new Set((activePlan.chapters || []).filter(chapter => chapter.enabled !== false).flatMap(chapter => chapter.source_block_ids || []))] : [];
-      const sourceBlockIds = chapterBlocks.length ? chapterBlocks : docLoaded.blocks.filter(block => block.kind === 'paragraph').map(block => block.id);
-      if (!sourceBlockIds.length) throw new Error('素材里没有可用的正文段落。');
-      const profiles = (appState.profiles && appState.profiles.length) ? appState.profiles : await request('/api/narrative/profiles');
-      const profileId = (profiles[0] && profiles[0].id) || 'law_podcast_v4';
-      setBusy(button, true, '生成写作大纲…');
-      const outline = await request('/api/projects/' + projectId + '/narrative-outlines', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ document_id: doc.id, source_plan_id: planId, title: (doc.original_name || '学习笔记').replace(/\.[^.]+$/, '').slice(0, 120) || '学习笔记', source_block_ids: sourceBlockIds, audience, style_profile: profileId, target_length: lengthOfWords(targetWords), target_words: targetWords, transform_mode: project.transform_mode, minimum_output_mode: project.minimum_output_mode || 'auto', minimum_output_ratio: Number(project.minimum_output_ratio || 0.3), web_research_mode: 'off' }) });
-      setBusy(button, true, '确认大纲…');
-      await request('/api/narrative-outlines/' + outline.id + '/confirm', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ outline: outline.outline }) });
-      outlineId = outline.id;
-    }
-    // 第三步：逐节写作（轮询进度）
-    let content = (appState.selectedProject.narrative_contents || [])[0];
-    if (!content) {
-      let pollTimer = null;
-      try {
-        setBusy(button, true, '逐节写作中（较耗时）…');
-        pollTimer = setInterval(async () => {
-          try {
-            const progress = await request('/api/narrative-outlines/' + outlineId + '/progress');
-            if (progress.status === 'running' && progress.current > 0) setBusy(button, true, '正在写第 ' + progress.current + ' / ' + progress.total + ' 节…');
-          } catch (_) { /* 进度查询失败不影响生成 */ }
-        }, 4000);
-        content = await request('/api/narrative-outlines/' + outlineId + '/contents', { method: 'POST' });
-      } finally { if (pollTimer) clearInterval(pollTimer); }
-    }
-    // 第四步：音频脚本 + MP3（轻量模式自动确认讲稿；严格模式停下等人工确认）
-    if (content.status !== 'confirmed') {
-      if (project.verification_mode === 'source_only') {
-        await request('/api/narrative-contents/' + content.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ markdown: content.markdown, review_note: '一键生成：轻量模式自动确认。', status: 'confirmed' }) });
-        content = { ...content, status: 'confirmed' };
-      } else {
-        appState.selectedProject = await request('/api/projects/' + projectId);
-        appState.activeTab = 'narrative';
-        renderProjectDetail();
-        showMessage('讲稿已生成（待确认）。请在「讲稿」页快速过一遍并点确认，之后回到音频页即可合成 MP3。');
-        return;
-      }
-    }
-    if (project.audio_enabled) {
-      const existingOutput = (appState.selectedProject.audio_outputs || []).find(item => item.narrative_content_id === content.id);
-      let script;
-      if (existingOutput) { script = existingOutput; }
-      else {
-        setBusy(button, true, '整理音频脚本…');
-        script = await request('/api/projects/' + projectId + '/audio-scripts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ narrative_content_id: content.id, naturalize: false }) });
-      }
-      if (!script.audio_available) {
-        setBusy(button, true, '合成 MP3…');
-        await request('/api/audio-outputs/' + script.id + '/synthesize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
-      }
-    }
-    appState.selectedProject = await request('/api/projects/' + projectId);
-    appState.activePlan = appState.selectedProject.plans.find(item => item.id === planId) || null;
-    appState.activeTab = project.audio_enabled ? 'audio' : 'narrative';
-    renderProjectDetail();
-    showMessage('一键生成完成：章节、大纲、讲稿' + (project.audio_enabled ? '和 MP3 音频' : '') + '都已就绪，可以开始收听了。');
-  } catch (error) {
-    showMessage(error.message, true);
-  } finally { setBusy(button, false); }
-}
-
 async function exportProject() { const button = $('#export-project'); try { setBusy(button, true, '正在导出…'); const output = await request('/api/projects/' + appState.selectedProject.project.id + '/exports', { method: 'POST' }); showMessage('成果包已写入：' + output.output_dir); } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); } }
 async function deleteProject() { const project = appState.selectedProject?.project; if (!project) return; const confirmed = window.confirm('删除项目“' + project.name + '”？\n\n项目中的原始材料、章节方案、讲稿、音频和任务记录将从本机工作目录删除。已经导出的成果包不会删除。'); if (!confirmed) return; const button = $('#delete-project'); try { setBusy(button, true, '删除中…'); await request('/api/projects/' + project.id, { method: 'DELETE' }); appState.selectedProjectId = null; appState.selectedProject = null; appState.selectedDocument = null; appState.activePlan = null; $('#project-detail').classList.add('hidden'); $('#project-detail').innerHTML = ''; document.body.classList.remove('in-project'); await loadProjects(); showShelf(); showMessage('项目及本地派生音频已删除。'); } catch (error) { showMessage(error.message, true); } finally { if (button?.isConnected) setBusy(button, false); } }
 function showSourceOverlay(title, html) { const overlay = document.createElement('div'); overlay.className = 'source-modal'; overlay.innerHTML = '<div class="source-modal-card"><div class="source-modal-top"><div><p class="eyebrow">原始材料依据</p><h3>' + escapeHtml(title) + '</h3></div><button class="icon-button" aria-label="关闭">×</button></div><div>' + html + '</div></div>'; $('.icon-button', overlay).addEventListener('click', () => overlay.remove()); overlay.addEventListener('click', event => { if (event.target === overlay) overlay.remove(); }); document.body.appendChild(overlay); }
@@ -1753,11 +1702,13 @@ async function checkForUpdates(manual = false) {
 }
 async function boot() {
   bindDialogs();
+  bindQuickImport();
+  $('#listen-load-demo')?.addEventListener('click', prepareListenDemo);
   enhanceSelects();
   new MutationObserver(() => { enhanceSelects(); $$('.select-box select').forEach(syncSelectBox); }).observe(document.body, { childList: true, subtree: true });
   $('#nav-shelf')?.addEventListener('click', event => { event.preventDefault(); showShelf(); });
   $('#back-home')?.addEventListener('click', goHome);
-  $('#hero-open-shelf')?.addEventListener('click', event => { event.preventDefault(); showShelf(true); });
+  $('#hero-open-shelf')?.addEventListener('click', event => { event.preventDefault(); showShelf(); $('#quick-link-input')?.focus(); });
   $('.brand')?.addEventListener('click', event => { event.preventDefault(); goHome(); });
   if (window.location.protocol === 'file:') {
     showMessage('你正在打开源码页面。请打开已安装的声息 app 使用完整功能。', true);
@@ -1771,7 +1722,30 @@ async function boot() {
 document.addEventListener('DOMContentLoaded', boot);
 
 /* ===== 首页试听段：用真实音频数据驱动播放器 ===== */
-let listenState = { tracks: [], index: 0, audio: null };
+let listenState = { tracks: [], index: 0, audio: null, projectId: '' };
+
+function audioPositionKey(output) {
+  return 'shengxi-audio-position:' + output.id + ':' + output.updated_at;
+}
+
+function rememberAudioPosition(player, getOutput) {
+  player.addEventListener('loadedmetadata', () => {
+    const output = getOutput();
+    if (!output) return;
+    const saved = Number(localStorage.getItem(audioPositionKey(output)));
+    if (saved > 2 && saved < player.duration - 2) player.currentTime = saved;
+  });
+  player.addEventListener('timeupdate', () => {
+    const output = getOutput();
+    if (output && player.duration && player.currentTime > 2) {
+      localStorage.setItem(audioPositionKey(output), String(Math.floor(player.currentTime)));
+    }
+  });
+  player.addEventListener('ended', () => {
+    const output = getOutput();
+    if (output) localStorage.removeItem(audioPositionKey(output));
+  });
+}
 
 function formatListenTime(seconds) {
   if (!Number.isFinite(seconds)) return '0:00';
@@ -1785,37 +1759,71 @@ async function initListenSection() {
   if (!player) return;
   try {
     const projects = appState.projects?.length ? appState.projects : await request('/api/projects');
-    for (const item of projects.slice(0, 8)) {
-      const detail = await request('/api/projects/' + item.id);
-      const ready = (detail.audio_outputs || []).filter(output => output.audio_available);
-      if (!ready.length) continue;
-      listenState.tracks = ready;
-      renderListenPlayer(detail.project.name);
-      return;
+    const demo = projects.find(item => item.name === '示例：五分钟把收藏变成声音');
+    if (demo) {
+      const detail = await request('/api/projects/' + demo.id);
+      const tracks = orderedListenTracks(detail);
+      if (tracks.length) {
+        listenState.tracks = tracks;
+        renderListenPlayer(detail.project.name, detail.project.id);
+        player.classList.remove('hidden');
+        empty?.classList.add('hidden');
+        return;
+      }
     }
     player.classList.add('hidden');
     empty?.classList.remove('hidden');
   } catch (error) { player.classList.add('hidden'); empty?.classList.remove('hidden'); }
 }
 
-function renderListenPlayer(projectName) {
+async function prepareListenDemo(event) {
+  const button = event.currentTarget;
+  const status = $('#listen-empty-status');
+  try {
+    setBusy(button, true, '正在准备…');
+    status.textContent = '正在准备示例和音频…';
+    const result = await request('/api/demo-project', { method: 'POST' });
+    await loadProjects();
+    await initListenSection();
+    if ($('#listen-player').classList.contains('hidden')) status.textContent = result.audio_error || '示例已加入书架，音频暂未就绪。可以先查看讲稿。';
+  } catch (error) { status.textContent = readableError(error); }
+  finally { setBusy(button, false); }
+}
+
+function orderedListenTracks(detail) {
+  const content = (detail.narrative_contents || []).find(item => item.status === 'confirmed');
+  if (!content) return [];
+  const ready = (detail.audio_outputs || []).filter(output => output.audio_available && output.narrative_content_id === content.id);
+  const headings = [...(content.markdown || '').matchAll(/^##[ \t]+(.+?)\s*$/gm)].map(match => match[1].trim());
+  const chapters = headings.map(heading => ready.find(output => output.title === content.title + ' · ' + heading));
+  if (chapters.length && chapters.every(Boolean)) return chapters;
+  const full = ready.find(output => output.title === content.title);
+  return full ? [full] : chapters.filter(Boolean);
+}
+
+function renderListenPlayer(projectName, projectId) {
   const list = $('#listen-chapters');
   if (!list) return;
+  listenState.audio?.pause();
+  listenState.projectId = projectId;
+  const lastTrack = localStorage.getItem('shengxi-last-track:' + projectId);
+  listenState.index = Math.max(0, listenState.tracks.findIndex(track => track.id === lastTrack));
   list.innerHTML = listenState.tracks.map((track, index) =>
     '<li><button type="button" class="listen-chapter" data-listen-index="' + index + '"><span class="listen-no">' + String(index + 1).padStart(2, '0') + '</span><span class="listen-name">' + escapeHtml(track.title || ('第 ' + (index + 1) + ' 章')) + '</span><span class="listen-duration" data-listen-duration="' + track.id + '">' + (track.duration_seconds ? formatListenTime(track.duration_seconds) : '') + '</span></button></li>'
   ).join('');
   $$('#listen-chapters .listen-chapter').forEach(button => button.addEventListener('click', () => playListenTrack(Number(button.dataset.listenIndex))));
   $('#listen-meta').textContent = '共 ' + listenState.tracks.length + ' 段 · ' + projectName;
-  listenState.audio = new Audio('/api/audio-outputs/' + listenState.tracks[0].id + '/stream');
+  listenState.audio = new Audio('/api/audio-outputs/' + listenState.tracks[listenState.index].id + '/stream');
   const audio = listenState.audio;
+  rememberAudioPosition(audio, () => listenState.tracks[listenState.index]);
   audio.playbackRate = getListenRate();
   syncListenRateButtons();
-  $$('#listen-rate .listen-rate-btn').forEach(button => button.addEventListener('click', () => {
+  $$('#listen-rate .listen-rate-btn').forEach(button => button.onclick = () => {
     const rate = Number(button.dataset.rate);
     localStorage.setItem('shengxi-listen-rate', String(rate));
     audio.playbackRate = rate;
     syncListenRateButtons();
-  }));
+  });
   audio.addEventListener('loadedmetadata', () => { $('#listen-total').textContent = formatListenTime(audio.duration); });
   audio.addEventListener('timeupdate', () => {
     const ratio = audio.duration ? (audio.currentTime / audio.duration) * 100 : 0;
@@ -1823,12 +1831,12 @@ function renderListenPlayer(projectName) {
     $('#listen-current').textContent = formatListenTime(audio.currentTime);
   });
   audio.addEventListener('ended', () => { if (listenState.index < listenState.tracks.length - 1) playListenTrack(listenState.index + 1); else setListenToggle(false); });
-  audio.addEventListener('play', () => setListenToggle(true));
+  audio.addEventListener('play', () => { stopOtherAudio(audio); setListenToggle(true); });
   audio.addEventListener('pause', () => setListenToggle(false));
   syncListenUi();
-  $('#listen-toggle')?.addEventListener('click', () => { if (audio.paused) audio.play().catch(() => {}); else audio.pause(); });
-  $('#listen-prev')?.addEventListener('click', () => playListenTrack((listenState.index - 1 + listenState.tracks.length) % listenState.tracks.length));
-  $('#listen-next')?.addEventListener('click', () => playListenTrack((listenState.index + 1) % listenState.tracks.length));
+  $('#listen-toggle').onclick = () => { if (audio.paused) audio.play().catch(() => {}); else audio.pause(); };
+  $('#listen-prev').onclick = () => playListenTrack((listenState.index - 1 + listenState.tracks.length) % listenState.tracks.length);
+  $('#listen-next').onclick = () => playListenTrack((listenState.index + 1) % listenState.tracks.length);
 }
 
 function setListenToggle(playing) {
@@ -1849,6 +1857,7 @@ function syncListenRateButtons() {
 function playListenTrack(index) {
   if (!listenState.tracks.length) return;
   listenState.index = index;
+  localStorage.setItem('shengxi-last-track:' + listenState.projectId, listenState.tracks[index].id);
   listenState.audio.src = '/api/audio-outputs/' + listenState.tracks[index].id + '/stream';
   syncListenUi();
   listenState.audio.play().catch(() => {});

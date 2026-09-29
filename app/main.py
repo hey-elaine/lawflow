@@ -2111,11 +2111,26 @@ def app_version():
 def list_projects():
     conn = db()
     rows = [serialise_project(row) for row in conn.execute("SELECT * FROM projects ORDER BY updated_at DESC").fetchall()]
-    # 聚合每个项目的学习进度：总节数来自讲稿的 H2 拆分，已完成数来自学习进度表
+    stages: dict[str, dict[str, bool]] = {}
+    for row in conn.execute("SELECT project_id, status FROM narrative_outlines").fetchall():
+        if row["status"] == "confirmed":
+            stages.setdefault(row["project_id"], {})["has_confirmed_outline"] = True
+    for row in conn.execute("SELECT project_id, status FROM narrative_contents").fetchall():
+        stage = stages.setdefault(row["project_id"], {})
+        stage["has_content"] = True
+        if row["status"] == "confirmed":
+            stage["has_confirmed_content"] = True
+    for row in conn.execute("SELECT project_id, audio_path, status FROM audio_outputs").fetchall():
+        if row["status"] == "ready" and row["audio_path"] and Path(row["audio_path"]).is_file():
+            stages.setdefault(row["project_id"], {})["has_ready_audio"] = True
+    for row in conn.execute("SELECT project_id, COUNT(*) AS open_count FROM tasks WHERE status NOT IN ('done', 'dismissed') GROUP BY project_id").fetchall():
+        stages.setdefault(row["project_id"], {})["has_open_tasks"] = row["open_count"] > 0
+    # 只把已确认讲稿计入学习进度；草稿还不能收听。
     progress: dict[str, dict[str, int]] = {}
     for row in conn.execute(
         """SELECT nc.project_id AS project_id, nc.markdown AS markdown, lp.completed_section_ids_json AS completed_json
-           FROM narrative_contents AS nc LEFT JOIN learning_progress AS lp ON lp.content_id = nc.id"""
+           FROM narrative_contents AS nc LEFT JOIN learning_progress AS lp ON lp.content_id = nc.id
+           WHERE nc.status = 'confirmed'"""
     ).fetchall():
         total = len(reading_section_ids(row["markdown"] or ""))
         done = len({section_id for section_id in parse_json(row["completed_json"], [])})
@@ -2124,6 +2139,7 @@ def list_projects():
         agg["done"] += min(done, total)
     conn.close()
     for item in rows:
+        item["production_stage"] = stages.get(item["id"], {})
         item["learning_progress"] = progress.get(item["id"], {"done": 0, "total": 0})
     return rows
 
@@ -2222,7 +2238,8 @@ def create_demo_project():
             pass  # 旧示例清理失败不影响新示例创建
     existing = next((project for project in list_projects() if project["name"] == DEMO_PROJECT_NAME), None)
     if existing is not None:
-        return {"project_id": existing["id"], "created": False}
+        audio_ready, audio_error = prepare_demo_audio(existing["id"])
+        return {"project_id": existing["id"], "created": False, "audio_ready": audio_ready, "audio_error": audio_error}
     project = create_project(ProjectCreate(
         name=DEMO_PROJECT_NAME,
         description="演示从收藏文章、结构确认到音频脚本与导出的完整本地流程。",
@@ -2262,12 +2279,33 @@ def create_demo_project():
     conn.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (now_iso(), project["id"]))
     conn.commit()
     conn.close()
+    audio_ready, audio_error = prepare_demo_audio(project["id"])
+    return {"project_id": project["id"], "created": True, "audio_ready": audio_ready, "audio_error": audio_error}
+
+
+def prepare_demo_audio(project_id: str) -> tuple[bool, str]:
+    """优先使用 macOS 本机语音补齐示例；失败时保留可查看的示例素材。"""
+    conn = db()
+    output = conn.execute("SELECT * FROM audio_outputs WHERE project_id = ? ORDER BY created_at LIMIT 1", (project_id,)).fetchone()
+    content = conn.execute("SELECT id FROM narrative_contents WHERE project_id = ? AND status = 'confirmed' ORDER BY created_at LIMIT 1", (project_id,)).fetchone()
+    conn.close()
+    if output and output["status"] == "ready" and output["audio_path"] and Path(output["audio_path"]).is_file():
+        return True, ""
+    if content is None:
+        return False, "示例讲稿尚未确认。"
     try:
-        audio_id = create_audio_script(project["id"], AudioScriptRequest(narrative_content_id=content["id"]))["id"]
-        synthesize_audio_output(audio_id, AudioSynthesisRequest())
-    except HTTPException:
-        pass  # TTS 未就绪时示例仍可创建，音频可稍后在应用内生成
-    return {"project_id": project["id"], "created": True}
+        if output is None:
+            audio_id = create_audio_script(project_id, AudioScriptRequest(narrative_content_id=content["id"]))["id"]
+            conn = db()
+            output = conn.execute("SELECT * FROM audio_outputs WHERE id = ?", (audio_id,)).fetchone()
+            conn.close()
+        settings = get_internal_provider_settings()
+        if sys.platform == "darwin" and shutil.which("say"):
+            settings.update({"tts_provider": "macos_say", "tts_voice": ""})
+        finish_audio_output(output, settings)
+        return True, ""
+    except HTTPException as error:
+        return False, str(error.detail)
 
 
 @app.delete("/api/projects/{project_id}", status_code=204)
@@ -2402,15 +2440,42 @@ class LinkSourceCreate(BaseModel):
     title: str = ""
 
 
+class QuickLinkCreate(BaseModel):
+    url: str
+    scenario: Literal["daily_brief", "topic_learning"] = "daily_brief"
+
+
+def read_link_article(url: str) -> tuple[str, str, str]:
+    address = valid_public_url(url)
+    title, text = fetch_article(address)
+    if len(clean_text(text)) < 200:
+        raise HTTPException(status_code=422, detail="这个链接没抓到足够的正文。可能是图片排版、需要登录，或链接已失效。请打开文章复制正文，再用「粘贴文本」导入。")
+    return address, title.strip() or "网页文章", text
+
+
+@app.get("/api/link-preview")
+def preview_link(url: str):
+    address, title, text = read_link_article(url)
+    readable = clean_text(text)
+    return {"url": address, "title": title, "character_count": len(readable), "excerpt": readable[:180]}
+
+
+@app.post("/api/projects/from-link", status_code=201)
+def create_project_from_link(payload: QuickLinkCreate):
+    address, title, text = read_link_article(payload.url)
+    if payload.scenario == "daily_brief":
+        options = {"scenario": "daily_brief", "transform_mode": "condense", "verification_mode": "source_only", "target_duration": 5}
+    else:
+        options = {"scenario": "topic_learning", "transform_mode": "adapt", "verification_mode": "material_check", "target_duration": 10}
+    project = create_project(ProjectCreate(name=title[:120], web_research_mode="off", **options))
+    source = save_text_source(project["id"], title, text, address)
+    return {"project_id": project["id"], "source": source}
+
+
 @app.post("/api/projects/{project_id}/link-sources", status_code=201)
 def create_link_source(project_id: str, payload: LinkSourceCreate):
     project_or_404(project_id)
-    url = payload.url.strip()
-    if not url.startswith(("http://", "https://")):
-        raise HTTPException(status_code=400, detail="请粘贴 http(s) 开头的链接。")
-    fetched_title, text = fetch_article(url)
-    if len(clean_text(text)) < 200:
-        raise HTTPException(status_code=422, detail="这个链接没抓到足够的正文。可能是图片/设计排版的文章（正文是图片），需要会员，或链接已失效。可以打开文章全选复制，用「粘贴文本」导入。")
+    url, fetched_title, text = read_link_article(payload.url)
     return save_text_source(project_id, payload.title.strip() or fetched_title or "网页文章", text, url)
 
 
@@ -3689,6 +3754,11 @@ def synthesize_audio_output(audio_id: str, payload: AudioSynthesisRequest):
     if payload.preview:
         audio, _ = speech_chunk(output["script"][:180], settings)
         return Response(audio, media_type="audio/mpeg")
+    return finish_audio_output(output, settings)
+
+
+def finish_audio_output(output: sqlite3.Row, settings: dict):
+    audio_id = output["id"]
     output_path, provider, duration_seconds = synthesize_audio(output["script"], output["title"], settings)
     timestamp = now_iso()
     conn = db()

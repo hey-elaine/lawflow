@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>声息｜把没有时间读完的东西，带到路上</title>
-  <link rel="stylesheet" href="/styles.css?v=20260928-34" />
+  <link rel="stylesheet" href="/styles.css?v=20260929-35" />
 </head>
 <body>
   <header class="nav shell">
@@ -19,7 +19,7 @@
       <div class="hero-copy">
         <p class="eyebrow">声息 · 把稍后读，真的读完</p>
         <h1>把没有时间读完的东西，<br/><em>带到路上。</em></h1>
-        <p class="hero-description">好文章存进收藏夹，就慢慢变成了「等有空再看」。只是这个「有空」，常常并不会真的出现。丢进声息：长文拆成一节一节的小课，地铁上读一节，睡觉前听一节。读到哪儿，它都替你记着。</p>
+        <p class="hero-description">把收藏的文章、报告和笔记带进来。先看清原文结构，再决定要读的要点和章节；完成音频后，从上次停下的地方继续听。</p>
         <div class="hero-actions"><a href="#top" class="button button-primary" id="hero-open-shelf">开始整理 <span class="button-arrow">→</span></a><a href="#listen" class="listen-link">听一个示例 <span class="listen-link-play" aria-hidden="true">▶</span></a></div>
       </div>
       <div class="hero-visual" aria-label="一篇文章拆成三个可听章节的示意">
@@ -64,23 +64,32 @@
           </div>
           <ol class="listen-chapters" id="listen-chapters"></ol>
         </div>
-        <p class="listen-empty hidden" id="listen-empty">还没有可试听的章节——在书架里生成音频后，会出现在这里。</p>
+        <div class="listen-empty hidden" id="listen-empty"><p>先听一段完整示例，再决定要不要整理自己的文章。</p><button type="button" class="button button-outline" id="listen-load-demo">准备试听示例</button><p id="listen-empty-status" role="status"></p></div>
       </div>
     </section>
 
     <section id="workflow" class="section shell">
       <div class="section-heading"><p class="eyebrow">使用方式</p><h2>三步，把「等有空再看」，<br/>变成「路上就听完」。</h2></div>
       <div class="workflow-grid">
-        <article><span>01</span><h3>丢进来</h3><p>公众号链接、网页、PDF、Word，或者一堆复制来的文字，都行。不用整理，丢进来就好。</p></article>
-        <article><span>02</span><h3>拆成小课</h3><p>四十分钟的长文，拆成四个十分钟。不用一次读完——今天一节，明天一节，剩下的留给去机场的路上。</p></article>
-        <article><span>03</span><h3>带上路</h3><p>通勤、骑车、高铁驶进山区、飞机起飞以后——眼睛忙不过来，耳朵还空着。戴上耳机，听完今天这一节。</p></article>
+        <article><span>01</span><h3>丢进来</h3><p>粘贴公众号或网页链接，也可以上传 PDF、Word 或粘贴正文。导入前先核对文章标题和抓取结果。</p></article>
+        <article><span>02</span><h3>确认结构</h3><p>先看大纲，决定哪些内容值得留下、如何分节；确认后再生成讲稿。</p></article>
+        <article><span>03</span><h3>带上路</h3><p>审阅讲稿并制作音频。完成后按章节收听，今天听一点，明天从停下的地方继续。</p></article>
       </div>
     </section>
 
-    <section id="trust" class="trust-section"><div class="shell trust-grid"><div><p class="eyebrow light">为什么可信</p><h2>它不替你读书，<br/>只给阅读换一种发生的方式。</h2></div><div class="trust-points"><div><b>它不编</b><p>每个说法都能回到原文那一段；材料里没有的，它不会悄悄补上自己的想象。</p></div><div><b>它记得</b><p>存疑的地方标得清清楚楚，你标记过「存疑」的表述，转译时会特意谨慎处理。</p></div><div><b>它在你电脑里</b><p>材料、进度和学习记录都存在本地，不上传，不共享。</p></div></div></div></section>
+    <section id="trust" class="trust-section"><div class="shell trust-grid"><div><p class="eyebrow light">如何放心使用</p><h2>先看原文，<br/>再决定听什么。</h2></div><div class="trust-points"><div><b>可以核对</b><p>生成内容保留原文依据；重要表述请在确认大纲和讲稿时核对。</p></div><div><b>保留疑点</b><p>存疑的地方会标出，避免在转成讲稿时把尚未确认的内容写成定论。</p></div><div><b>保存在本机</b><p>材料和进度保存在这台电脑。选择外部模型生成内容时，所选材料会发送给该模型服务。</p></div></div></div></section>
 
     <section id="workspace" class="workspace shell">
-      <div class="workspace-top"><div><button type="button" class="back-home" id="back-home">← 回主页</button><p class="eyebrow">我的书架</p><h2>把存下来的东西，再遇见一次。</h2><p>把链接、PDF 或长文丢进来，拆成一节一节的小课。支持公众号链接、网页、PDF、DOCX、TXT 和 Markdown。</p></div><div class="workspace-actions"><button class="button button-outline" id="open-daily-brief">设置每日速听</button><button class="button button-primary" id="new-project">丢一篇进来</button></div></div>
+      <div class="workspace-top"><div><button type="button" class="back-home" id="back-home">← 回主页</button><p class="eyebrow">我的书架</p><h2>把存下来的东西，再遇见一次。</h2><p>新文章先核对原文；已经整理过的，从上次停下的地方继续。</p></div><div class="workspace-actions"><button class="button button-outline" id="open-daily-brief">每日速听订阅</button><button class="button button-outline" id="new-project">自定义整理任务</button></div></div>
+      <section class="quick-import" id="quick-import" aria-labelledby="quick-import-title">
+        <div class="quick-import-copy"><p class="eyebrow">新的一篇</p><h3 id="quick-import-title">粘贴文章链接，先看抓取结果。</h3><p>支持公众号和公开网页；读取失败时，可以改用文件或粘贴正文。</p></div>
+        <form id="quick-link-form">
+          <div class="quick-link-entry"><input id="quick-link-input" type="url" required aria-label="公众号或网页链接" placeholder="粘贴公众号或网页链接" /><button type="submit" class="button button-primary" id="quick-link-submit">预览文章</button></div>
+          <p class="quick-link-status" id="quick-link-status" role="status" aria-live="polite"></p>
+          <div class="quick-link-preview hidden" id="quick-link-preview"><span class="quick-preview-label">抓取预览</span><h4 id="quick-preview-title"></h4><p id="quick-preview-excerpt"></p><small id="quick-preview-length"></small><fieldset><legend>这次想怎么整理？</legend><label><input type="radio" name="quick_scenario" value="daily_brief" checked /> 先听要点 · 约 5 分钟</label><label><input type="radio" name="quick_scenario" value="topic_learning" /> 分章节学习 · 先确认大纲</label></fieldset><button type="button" class="button button-primary" id="quick-link-create">加入书架并查看素材 →</button></div>
+        </form>
+        <label class="quick-upload">或上传文件 <span>PDF · DOCX · TXT · Markdown</span><input id="quick-upload-input" type="file" accept=".docx,.txt,.md,.pdf" /></label>
+      </section>
       <div id="collection-bar" class="collection-bar"></div>
       <div id="workspace-message" class="message hidden"></div>
       <div id="daily-brief-list" class="daily-brief-list"></div>
@@ -91,7 +100,7 @@
     <section id="skill" class="skill-home shell">
       <div class="section-heading"><div><p class="eyebrow">AI 协作</p><h2>选择适合你的 AI 方式，<br/>成果始终回到本地审阅。</h2></div><span class="tag" id="home-skill-status">检测本地服务中</span></div>
       <div class="skill-home-grid">
-        <article><span class="skill-index">A</span><h3>使用自己的模型</h3><p>连接 DeepSeek、OpenAI 或企业网关，在本地完成大纲、讲稿与 DOCX 导出。</p><small>适合需要批量处理或团队统一模型策略的场景。</small></article>
+        <article><span class="skill-index">A</span><h3>使用自己的模型</h3><p>连接 DeepSeek、OpenAI 或企业网关生成大纲和讲稿，再回到本机审阅与导出。所选材料会发送给该模型服务。</p><small>适合需要批量处理或团队统一模型策略的场景。</small></article>
         <article><span class="skill-index">B</span><h3>使用本机 Agent</h3><p>通过 Codex 或 CatPaw 读取受控材料块、生成内容并回写声息，继续审阅和导出。</p><small>无需在声息中再配置额外模型 Key。</small></article>
         <article><span class="skill-index">C</span><h3>使用 ChatGPT Plus</h3><p>复制当前材料包到 ChatGPT App 生成 Markdown，再粘贴回声息审阅。</p><small>适合个人按需生成；不需要 OpenAI API 余额。</small></article>
         <article class="skill-invoke"><p class="eyebrow">安装与调用</p><code>$lawflow</code><p>先将本仓库的独立 Skill 安装到任意支持 Codex Skill 的 Agent，再在对话中输入 <code>$lawflow</code> 加你的任务。</p><a class="button button-outline button-small" href="https://github.com/hey-elaine/lawflow/tree/main/skills/lawflow" target="_blank" rel="noreferrer">打开 GitHub Skill</a><button class="button button-outline button-small" id="copy-skill-invoke">复制调用示例</button></article>
@@ -139,6 +148,6 @@
 
   <dialog id="daily-brief-dialog" class="dialog"><form id="daily-brief-form"><div class="dialog-header"><h2>每日速听</h2><button type="button" aria-label="关闭" class="icon-button" data-close-dialog="daily-brief-dialog">×</button></div><p class="form-note">订阅公开 RSS 或 Atom 源。系统每天只收集新文章并建立待审速听任务；不会自动发布，也不会自动生成最终 MP3。</p><label>订阅名称<input required name="name" maxlength="120" placeholder="例如：数据合规资讯" /></label><label>RSS / Atom 地址<input required name="feed_url" type="url" placeholder="https://example.com/feed.xml" /></label><div class="plan-settings"><div class="field"><label>每日运行时间<input name="daily_time" type="time" value="08:00" /></label></div><div class="field"><label>每次最多收集<input name="max_items" type="number" min="1" max="10" value="3" /> 篇</label></div></div><label class="check-label"><input type="checkbox" name="auto_generate" /> 允许自动生成待审速听稿与音频脚本（仅在模型已配置且允许发送素材时）</label><div class="dialog-actions"><button type="button" class="button button-outline" data-close-dialog="daily-brief-dialog">取消</button><button type="submit" class="button button-primary">保存订阅</button></div></form></dialog>
 
-  <script src="/app.js?v=20260928-34"></script>
+  <script src="/app.js?v=20260929-35"></script>
 </body>
 </html>
