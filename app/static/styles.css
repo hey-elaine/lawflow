@@ -777,3 +777,6 @@ body.empty-shelf .quick-upload { display: none; }
 .audio-output-card .audio-actions { align-content: start; }
 .audio-output-card .audio-actions > .button { width: 100%; }
 @media (max-width: 720px) { .listening-choice-actions .button { width: 100%; } }
+
+/* 还没有可播放音频时的占位播放器不显示，避免点击无反应的假控件 */
+audio[data-no-audio="1"] { display: none; }

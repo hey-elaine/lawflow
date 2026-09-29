@@ -1393,6 +1393,7 @@ async function previewAudio(id, button) {
     if (player.src.startsWith('blob:')) URL.revokeObjectURL(player.src);
     stopOtherAudio(player);
     player.src = URL.createObjectURL(await response.blob());
+    player.removeAttribute('data-no-audio'); // 占位播放器现在有真实音频了，恢复显示
     player.play();
     showMessage('正在播放试听片段（已保存脚本的前 180 字）；点「重新生成 MP3」可恢复完整版。');
   } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); }
