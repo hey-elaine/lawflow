@@ -802,7 +802,7 @@ def parse_text(path: Path) -> tuple[list[dict], dict]:
             "heading_level": level, "kind": "heading" if level else "paragraph", "text": line,
             "source_locator": f"段落 {sequence}" + (f" · {heading_path}" if heading_path else ""),
         })
-    return blocks, {"parser": "plain-text-v1", "paragraph_count": len(blocks), "heading_count": sum(1 for b in blocks if b["kind"] == "heading"), "headings": []}
+    return blocks, {"parser": "plain-text-v1", "paragraph_count": sum(1 for b in blocks if b["kind"] == "paragraph"), "heading_count": sum(1 for b in blocks if b["kind"] == "heading"), "headings": []}
 
 
 def parse_pdf(path: Path) -> tuple[list[dict], dict]:
@@ -1079,7 +1079,7 @@ def strip_heading_numbering(text: str) -> str:
         r"^[一二三四五六七八九十百]+[、.．:：]\s*",
         r"^[0-9]+[、.．]\s*",
         r"^[A-Za-z][、.．]\s*",
-        r"^第[一二三四五六七八九十百0-9]+[章节部分][、.．:：]?\s*",
+        r"^第[一二三四五六七八九十百0-9]+[章节][、.．:：]?\s*",
     ):
         result = re.sub(pattern, "", result)
     return result or original
@@ -1655,7 +1655,6 @@ def normalize_narrative_outline(raw: dict, request: NarrativeOutlineRequest, blo
     if not isinstance(raw_sections, list) or not minimum <= len(raw_sections) <= 12:
         raise HTTPException(status_code=400, detail=f"大纲章节数须在 {minimum}–12 节之间。")
     allowed_ids = {block["id"] for block in blocks}
-    section_words = NARRATIVE_LENGTHS[request.target_length]["section_words"]
     sections = []
     for index, section in enumerate(raw_sections, start=1):
         if not isinstance(section, dict) or not clean_text(str(section.get("heading", ""))):
@@ -1672,24 +1671,24 @@ def normalize_narrative_outline(raw: dict, request: NarrativeOutlineRequest, blo
             "purpose": clean_text(str(section.get("purpose", "")))[:300],
             "key_points": [clean_text(str(point))[:240] for point in points[:5] if clean_text(str(point))],
             "source_block_ids": source_ids,
-            "target_words": section_words,
+            "target_words": 0,
         })
     if len(sections) < minimum:
         raise HTTPException(status_code=502, detail="模型未生成足够的大纲章节，请重试。")
     total_words = request.target_words if request.target_words is not None else min(NARRATIVE_LENGTHS[request.target_length]["total_words"], request.target_duration * 240)
-    # 篇幅以素材量为准：每节目标 = 该节素材字数 × 处理方式比例（转译≥原文），不再平均拆分固定总字数
-    ratio = TRANSFORM_OUTPUT_RATIOS.get(request.transform_mode, 1.0)
+    # 用户填写的目标篇幅应当与各节展示和实际生成指令一致。
     block_text = {block["id"]: len(block.get("text", "")) for block in blocks}
-    source_based_total = 0
-    for section in sections:
-        section_chars = sum(block_text.get(block_id, 0) for block_id in section["source_block_ids"])
-        section["target_words"] = max(100, min(5000, round(section_chars * ratio)))
-        source_based_total += section["target_words"]
-    # 用户指定的目标字数作为保底：高于素材测算总量时按比例放大（每节上限 5000）
-    if total_words > source_based_total and source_based_total > 0:
-        factor = total_words / source_based_total
-        for section in sections:
-            section["target_words"] = min(5000, max(100, round(section["target_words"] * factor)))
+    source_sizes = [sum(block_text.get(block_id, 0) for block_id in section["source_block_ids"]) for section in sections]
+    source_total = sum(source_sizes) or len(sections)
+    remaining = total_words
+    minimum_section_words = min(100, max(1, total_words // len(sections)))
+    for index, section in enumerate(sections):
+        if index == len(sections) - 1:
+            section["target_words"] = remaining
+        else:
+            allocation = round(total_words * (source_sizes[index] or 1) / source_total)
+            section["target_words"] = max(minimum_section_words, min(allocation, remaining - minimum_section_words * (len(sections) - index - 1)))
+            remaining -= section["target_words"]
     return {
         "title": clean_text(str(raw.get("title") or request.title))[:200],
         "opening_angle": clean_text(str(raw.get("opening_angle", "")))[:400],
@@ -1748,6 +1747,19 @@ def create_narrative_outline(request: NarrativeOutlineRequest, blocks: list[dict
     return normalize_narrative_outline(parse_model_json(raw), request, blocks)
 
 
+def extract_outline_points(paragraphs: list[str], limit: int = 4) -> list[str]:
+    """取不同位置的原文句子作为可核对的关键点，不替用户编造结论。"""
+    candidates = []
+    for paragraph in paragraphs:
+        sentence = re.split(r"(?<=[。！？!?])", paragraph, maxsplit=1)[0].strip()
+        if len(sentence) >= 18 and sentence not in candidates:
+            candidates.append(shorten(sentence, 96))
+    if len(candidates) <= limit:
+        return candidates
+    indices = [round(i * (len(candidates) - 1) / (limit - 1)) for i in range(limit)]
+    return [candidates[index] for index in indices]
+
+
 def outline_from_confirmed_plan(request: NarrativeOutlineRequest, chapters: list[dict], blocks: list[dict]) -> dict:
     """Carry the lawyer-edited chapter structure into writing without re-planning it."""
     selected = {block["id"]: block for block in blocks}
@@ -1763,12 +1775,14 @@ def outline_from_confirmed_plan(request: NarrativeOutlineRequest, chapters: list
         source_dossier([selected[block_id] for block_id in source_ids], max_total_chars=SOURCE_BUDGET_CHARS)
         heading = re.sub(r"^(?:决策速览：|法律简报：|法声解读：)?第\d+章\s*·\s*", "", chapter.get("title", "")).strip()
         purpose = clean_text(chapter.get("question", ""))
-        # 关键点用章内小节标题，不重复问题本身
-        block_by_id = {block["id"]: block for block in blocks}
+        # 有小标题时沿用目录；平铺文章则从不同位置摘取原文句子，避免把标题当成唯一关键点。
         subheads = [clean_text(selected[block_id]["text"]) for block_id in primary_ids
-                    if block_id in selected and selected[block_id]["kind"] == "heading" and selected[block_id]["text"] != chapter.get("title", "")]
+                    if block_id in selected and selected[block_id]["kind"] == "heading" and clean_text(selected[block_id]["text"]) != heading]
+        paragraphs = [clean_text(selected[block_id]["text"]) for block_id in primary_ids
+                      if block_id in selected and selected[block_id]["kind"] == "paragraph"]
+        key_points = subheads[:5] if subheads else extract_outline_points(paragraphs)
         sections.append({"heading": heading or chapter.get("title", ""), "purpose": purpose,
-                         "key_points": subheads[:5], "source_block_ids": source_ids})
+                         "key_points": key_points, "source_block_ids": source_ids})
     if not sections:
         raise HTTPException(400, "请先在内容结构中启用至少一个章节。")
     return normalize_narrative_outline({"title": request.title, "sections": sections}, request, blocks)
@@ -1883,6 +1897,9 @@ def generate_narrative_markdown(outline: dict, blocks: list[dict], audience: str
     settings = get_internal_provider_settings()
     source_chars = sum(len(block.get("text", "")) for block in blocks)
     floor = output_floor(source_chars, transform_mode, outline.get("minimum_output_mode", "auto"), float(outline.get("minimum_output_ratio", 0.3)))
+    # 用户主动指定较短目标时，不再用默认原文比例把合理的短讲稿误标为过短。
+    if outline.get("minimum_output_mode", "auto") == "auto":
+        floor = min(floor, round(outline.get("target_total_words", source_chars) * 0.8))
     output_chars = len(re.sub(r"[#*_`>\-\[\]]", "", markdown))
     model_metadata = {"provider_name": settings.get("provider_name", ""), "base_url": settings.get("base_url", ""), "model_name": settings.get("model_name", ""), "generated_at": now_iso(), "style_profile": style_profile, "transform_mode": transform_mode, "scenario": scenario, "target_duration": target_duration, "web_research_mode": web_research_mode, "quality_rules": SCENARIO_QUALITY_RULES.get(scenario, []), "output_floor": floor, "source_chars": source_chars, "output_chars": output_chars, "floor_status": "pass" if not floor or output_chars >= floor else "review"}
     return markdown, section_sources, model_metadata
@@ -2120,7 +2137,9 @@ def list_projects():
         stage["has_content"] = True
         if row["status"] == "confirmed":
             stage["has_confirmed_content"] = True
-    for row in conn.execute("SELECT project_id, audio_path, status FROM audio_outputs").fetchall():
+    for row in conn.execute("SELECT project_id, narrative_content_id, script, audio_path, status FROM audio_outputs").fetchall():
+        if row["narrative_content_id"] is None and row["script"]:
+            stages.setdefault(row["project_id"], {})["has_direct_audio_script"] = True
         if row["status"] == "ready" and row["audio_path"] and Path(row["audio_path"]).is_file():
             stages.setdefault(row["project_id"], {})["has_ready_audio"] = True
     for row in conn.execute("SELECT project_id, COUNT(*) AS open_count FROM tasks WHERE status NOT IN ('done', 'dismissed') GROUP BY project_id").fetchall():
@@ -2631,16 +2650,13 @@ def valid_public_url(value: str) -> str:
 
 
 def search_terms(query: str) -> list[str]:
-    terms = [part.strip() for part in re.split(r"[\s,，、;；]+", query) if len(part.strip()) >= 3]
     expanded = []
-    for term in terms or [query]:
-        cjk = re.findall(r"[\u4e00-\u9fff]", term)
-        if len(cjk) >= 4:
-            # 中文长词组整串很难在标题中连续出现，拆成二字词提高命中率
+    for term in re.findall(r"[\u4e00-\u9fff]+|[A-Za-z0-9]{2,}", query):
+        if re.fullmatch(r"[\u4e00-\u9fff]{4,}", term):
             expanded.extend(term[i:i + 2] for i in range(len(term) - 1))
         else:
             expanded.append(term)
-    return expanded or [query]
+    return list(dict.fromkeys(expanded)) or [query]
 
 
 def _unwrap_ddg_url(url: str) -> str:
@@ -2673,13 +2689,13 @@ def _parse_ddg_results(html: str, limit: int) -> list[dict]:
 
 
 def _search_ddg(query: str, limit: int) -> list[dict]:
-    response = httpx.post("https://html.duckduckgo.com/html/", data={"q": query}, headers={"User-Agent": BROWSER_UA}, follow_redirects=True, timeout=20.0)
+    response = httpx.post("https://html.duckduckgo.com/html/", data={"q": query}, headers={"User-Agent": BROWSER_UA}, follow_redirects=True, timeout=8.0)
     response.raise_for_status()
     return _parse_ddg_results(response.text, limit)
 
 
 def _search_bing_rss(query: str, limit: int) -> list[dict]:
-    response = httpx.get("https://www.bing.com/search", params={"q": query, "format": "rss"}, headers={"User-Agent": BROWSER_UA}, follow_redirects=True, timeout=20.0)
+    response = httpx.get("https://www.bing.com/search", params={"q": query, "format": "rss"}, headers={"User-Agent": BROWSER_UA}, follow_redirects=True, timeout=8.0)
     response.raise_for_status()
     root = ET.fromstring(response.content)
     results = []
@@ -2723,30 +2739,32 @@ def search_web_sources(payload: WebSearchRequest):
     query = clean_text(payload.query)
     terms = search_terms(query)
     errors = []
-    raw_results = []
+    results = []
+    seen_urls = set()
     for backend in (_search_ddg, _search_bing_rss):
         try:
             raw_results = backend(query, payload.max_results * 2)
         except (httpx.HTTPError, ET.ParseError) as error:
-            errors.append(f"{backend.__name__}: {error}")
+            errors.append(str(error))
             continue
-        if raw_results:
+        for item in raw_results:
+            url = item["url"]
+            if url in seen_urls:
+                continue
+            searchable = (item["title"] + " " + item["summary"]).lower()
+            if not any(term.lower() in searchable for term in terms):
+                continue
+            seen_urls.add(url)
+            results.append(item)
+            if len(results) >= payload.max_results:
+                break
+        if results:
             break
-    if not raw_results and errors:
-        raise HTTPException(502, "联网检索暂时不可用，请稍后重试或手动粘贴公开材料。")
-    results = []
-    seen_urls = set()
-    for item in raw_results:
-        url = item["url"]
-        if url in seen_urls:
-            continue
-        if not any(term.lower() in (item["title"] + " " + item["summary"]).lower() for term in terms):
-            continue
-        seen_urls.add(url)
-        results.append(item)
-        if len(results) >= payload.max_results:
-            break
-    return {"query": query, "results": results, "notice": "搜索结果仅供发现公开材料；请逐条确认来源后再导入，系统不会自动将结果写入讲稿。未显示与主题词不匹配的结果。"}
+    status = "ok" if results else "limited" if errors else "no_match"
+    notice = ("搜索结果仅供发现公开材料；请逐条确认来源后再导入。" if results else
+              "检索服务本次未返回可靠结果。可以稍后重试，或直接粘贴文章链接导入。" if errors else
+              "检索服务已响应，但没有匹配的公开网页。可以缩短关键词，或直接粘贴文章链接导入。")
+    return {"query": query, "results": results, "status": status, "notice": notice}
 
 
 @app.post("/api/projects/{project_id}/web-sources", status_code=201)

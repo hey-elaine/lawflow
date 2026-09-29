@@ -272,6 +272,7 @@ class ImprovementsTest(unittest.TestCase):
         outline = response.json()['outline']
         self.assertEqual(outline['sections'][0]['heading'], '我确认的学习章节')
         self.assertEqual(outline['target_total_words'], 1200)
+        self.assertEqual(sum(section['target_words'] for section in outline['sections']), 1200)
         self.assertEqual(outline['transform_mode'], 'enrich')
         self.assertTrue(set(public_ids).issubset(outline['sections'][0]['source_block_ids']))
         self.assertEqual(self.client.put(f"/api/narrative-outlines/{response.json()['id']}/confirm", json={'outline': outline}).status_code, 200)
@@ -281,6 +282,30 @@ class ImprovementsTest(unittest.TestCase):
         self.assertIn('公开资料补充背景知识', model.call_args.args[0][-1]['content'])
         self.assertIn('我确认的学习章节', generated.json()['markdown'])
         self.assertEqual(self.client.post(f"/api/projects/{project['id']}/narrative-outlines", json={**request_body, 'web_research_mode': 'off'}).status_code, 400)
+
+    def test_flat_article_outline_uses_distinct_source_sentences_and_respects_length(self):
+        request = self.main.NarrativeOutlineRequest(document_id='doc', title='原文主题', source_block_ids=['h', 'p1', 'p2', 'p3', 'p4'], target_words=1000)
+        blocks = [{'id': 'h', 'document_id': 'doc', 'kind': 'heading', 'text': '原文主题'},
+                  *[{'id': f'p{i}', 'document_id': 'doc', 'kind': 'paragraph', 'text': f'第{i}个不同的事实说明了这篇文章在实际场景中的核心情况和限制条件。'} for i in range(1, 5)]]
+        chapter = {'title': '第01章 · 原文主题', 'question': '这篇文章说明了什么？', 'source_block_ids': [block['id'] for block in blocks], 'enabled': True}
+        with patch.object(self.main, 'source_dossier', return_value='素材'):
+            outline = self.main.outline_from_confirmed_plan(request, [chapter], blocks)
+        section = outline['sections'][0]
+        self.assertEqual(outline['target_total_words'], 1000)
+        self.assertEqual(section['target_words'], 1000)
+        self.assertGreaterEqual(len(section['key_points']), 2)
+        self.assertNotIn('原文主题', section['key_points'])
+        self.assertTrue(all('事实说明' in point for point in section['key_points']))
+
+    def test_web_search_reports_provider_failure_separately_from_no_match(self):
+        import httpx
+        with patch.object(self.main, '_search_ddg', side_effect=httpx.ConnectTimeout('timeout')), \
+             patch.object(self.main, '_search_bing_rss', return_value=[{'title': '当的汉语解释', 'summary': '', 'url': 'https://example.com/dictionary'}]):
+            result = self.client.post('/api/web-search', json={'query': '当中国AI企业走上安理会讲台'})
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.json()['status'], 'limited')
+        self.assertEqual(result.json()['results'], [])
+        self.assertIn('检索服务', result.json()['notice'])
 
     def test_heading_selection_uses_full_section_and_rejects_overlap(self):
         blocks = [
@@ -899,6 +924,9 @@ class ImprovementsTest(unittest.TestCase):
         self.assertEqual(created.status_code, 200)
         data = created.json()
         self.assertEqual(data['status'], 'script_ready')
+        shelf = self.client.get('/api/projects').json()
+        listed = next(item for item in shelf if item['id'] == project['id'])
+        self.assertTrue(listed['production_stage']['has_direct_audio_script'])
         # 不经过任何改写：脚本与原文逐字一致
         output = self.client.get(f"/api/audio-outputs/{data['id']}").json()
         self.assertIn('不需要改写', output['script'])

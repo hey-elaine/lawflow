@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>声息｜把没有时间读完的东西，带到路上</title>
-  <link rel="stylesheet" href="/styles.css?v=20260929-36" />
+  <link rel="stylesheet" href="/styles.css?v=20260929-37" />
 </head>
 <body>
   <header class="nav shell">
@@ -19,7 +19,7 @@
       <div class="hero-copy">
         <p class="eyebrow">声息 · 把稍后读，真的读完</p>
         <h1>把没有时间读完的东西，<br/><em>带到路上。</em></h1>
-        <p class="hero-description">把收藏的文章、报告和笔记带进来。先看清原文结构，再决定要读的要点和章节；完成音频后，从上次停下的地方继续听。</p>
+        <p class="hero-description">把收藏的文章、报告和笔记带进来。喜欢原文，就直接听；想听得更短，再整理要点和章节。</p>
         <div class="hero-actions"><a href="#top" class="button button-primary" id="hero-open-shelf">开始整理 <span class="button-arrow">→</span></a><a href="#listen" class="listen-link">听一个示例 <span class="listen-link-play" aria-hidden="true">▶</span></a></div>
       </div>
       <div class="hero-visual" aria-label="一篇文章拆成三个可听章节的示意">
@@ -72,8 +72,8 @@
       <div class="section-heading"><p class="eyebrow">使用方式</p><h2>三步，把「等有空再看」，<br/>变成「路上就听完」。</h2></div>
       <div class="workflow-grid">
         <article><span>01</span><h3>丢进来</h3><p>粘贴公众号或网页链接，也可以上传 PDF、Word 或粘贴正文。导入前先核对文章标题和抓取结果。</p></article>
-        <article><span>02</span><h3>确认结构</h3><p>先看大纲，决定哪些内容值得留下、如何分节；确认后再生成讲稿。</p></article>
-        <article><span>03</span><h3>带上路</h3><p>审阅讲稿并制作音频。完成后按章节收听，今天听一点，明天从停下的地方继续。</p></article>
+        <article><span>02</span><h3>选收听方式</h3><p>原文朗读可以直接生成音频；要听更短的版本，再确认大纲并整理讲稿。</p></article>
+        <article><span>03</span><h3>带上路</h3><p>试听后保存 MP3。分章节内容还可以按顺序收听，今天听一点，明天接着听。</p></article>
       </div>
     </section>
 
@@ -86,7 +86,7 @@
         <form id="quick-link-form">
           <div class="quick-link-entry"><input id="quick-link-input" type="url" required aria-label="公众号或网页链接" placeholder="粘贴公众号或网页链接" /><button type="submit" class="button button-primary" id="quick-link-submit">预览文章</button></div>
           <p class="quick-link-status" id="quick-link-status" role="status" aria-live="polite"></p>
-          <div class="quick-link-preview hidden" id="quick-link-preview"><span class="quick-preview-label">抓取预览</span><h4 id="quick-preview-title"></h4><p id="quick-preview-excerpt"></p><small id="quick-preview-length"></small><details class="quick-preview-details" id="quick-preview-details"><summary><span class="quick-preview-open">展开全文检查</span><span class="quick-preview-close">收起全文</span></summary><div class="quick-preview-full" tabindex="0" aria-label="抓取到的完整正文"><pre id="quick-preview-full"></pre><div class="quick-preview-ending"><b>正文结尾</b><p id="quick-preview-ending"></p></div></div></details><fieldset><legend>确认正文完整后，这次想怎么整理？</legend><label><input type="radio" name="quick_scenario" value="daily_brief" checked /> 先听要点 · 约 5 分钟</label><label><input type="radio" name="quick_scenario" value="topic_learning" /> 分章节学习 · 先确认大纲</label></fieldset><button type="button" class="button button-primary" id="quick-link-create">确认无误，加入书架 →</button></div>
+          <div class="quick-link-preview hidden" id="quick-link-preview"><span class="quick-preview-label">抓取预览</span><h4 id="quick-preview-title"></h4><p id="quick-preview-excerpt"></p><small id="quick-preview-length"></small><details class="quick-preview-details" id="quick-preview-details"><summary><span class="quick-preview-open">展开全文检查</span><span class="quick-preview-close">收起全文</span></summary><div class="quick-preview-full" tabindex="0" aria-label="抓取到的完整正文"><pre id="quick-preview-full"></pre><div class="quick-preview-ending"><b>正文结尾</b><p id="quick-preview-ending"></p></div></div></details><fieldset><legend>确认正文完整后，选择收听方式</legend><label><input type="radio" name="quick_scenario" value="direct_audio" checked /> 原文朗读 · 不改写，直接生成音频</label><label><input type="radio" name="quick_scenario" value="daily_brief" /> 先听要点 · 约 5 分钟</label><label><input type="radio" name="quick_scenario" value="topic_learning" /> 分章节学习 · 先确认大纲</label></fieldset><button type="button" class="button button-primary" id="quick-link-create">确认正文并继续 →</button></div>
         </form>
         <label class="quick-upload">或上传文件 <span>PDF · DOCX · TXT · Markdown</span><input id="quick-upload-input" type="file" accept=".docx,.txt,.md,.pdf" /></label>
       </section>
@@ -148,6 +148,6 @@
 
   <dialog id="daily-brief-dialog" class="dialog"><form id="daily-brief-form"><div class="dialog-header"><h2>每日速听</h2><button type="button" aria-label="关闭" class="icon-button" data-close-dialog="daily-brief-dialog">×</button></div><p class="form-note">订阅公开 RSS 或 Atom 源。系统每天只收集新文章并建立待审速听任务；不会自动发布，也不会自动生成最终 MP3。</p><label>订阅名称<input required name="name" maxlength="120" placeholder="例如：数据合规资讯" /></label><label>RSS / Atom 地址<input required name="feed_url" type="url" placeholder="https://example.com/feed.xml" /></label><div class="plan-settings"><div class="field"><label>每日运行时间<input name="daily_time" type="time" value="08:00" /></label></div><div class="field"><label>每次最多收集<input name="max_items" type="number" min="1" max="10" value="3" /> 篇</label></div></div><label class="check-label"><input type="checkbox" name="auto_generate" /> 允许自动生成待审速听稿与音频脚本（仅在模型已配置且允许发送素材时）</label><div class="dialog-actions"><button type="button" class="button button-outline" data-close-dialog="daily-brief-dialog">取消</button><button type="submit" class="button button-primary">保存订阅</button></div></form></dialog>
 
-  <script src="/app.js?v=20260929-36"></script>
+  <script src="/app.js?v=20260929-37"></script>
 </body>
 </html>
