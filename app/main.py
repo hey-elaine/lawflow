@@ -3694,6 +3694,18 @@ def _ffmetadata_escape(value: str) -> str:
     return value.replace("\\", "\\\\").replace("=", "\\=").replace(";", "\\;").replace("#", "\\#").replace("\n", "\\n")
 
 
+def _patch_m4b_brand(path: Path) -> None:
+    """把 ffmpeg 写出的 M4A/isom 容器品牌改成 M4B，iPhone 图书 App 才会当作有声书接收。"""
+    try:
+        with open(path, "r+b") as handle:
+            head = handle.read(64)
+            if len(head) >= 12 and head[4:8] == b"ftyp":
+                handle.seek(8)
+                handle.write(b"M4B ")
+    except OSError:
+        pass
+
+
 def merge_audiobook(chapters: list[tuple[str, Path]], cover: Path | None, title: str, output_path: Path) -> Path:
     """把多段音频按顺序合并为带章节标记（可选封面）的 m4b 有声书。"""
     if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
@@ -3725,6 +3737,7 @@ def merge_audiobook(chapters: list[tuple[str, Path]], cover: Path | None, title:
         subprocess.run(command, check=True, capture_output=True, timeout=600)
     if not output_path.is_file():
         raise HTTPException(502, "有声书合并失败，未生成文件。")
+    _patch_m4b_brand(output_path)
     return output_path
 
 

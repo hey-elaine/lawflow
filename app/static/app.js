@@ -1712,10 +1712,10 @@ async function initHomeSkillSection() {
   if (!tag) return;
   try {
     const status = await request('/api/skill/status');
-    tag.textContent = status.app_api_ready ? 'App API 已就绪 · 宿主模型可用' : '宿主模型模式可用';
+    tag.textContent = status.app_api_ready ? '应用内模型已配置' : '应用内模型待配置';
     tag.className = 'tag ' + (status.app_api_ready ? 'skill-ready' : '');
   } catch (error) {
-    tag.textContent = '本地服务未连接';
+    tag.textContent = '暂时无法检查模型配置';
   }
   const copy = $('#copy-skill-invoke');
   if (copy) copy.addEventListener('click', async () => { const example = '请读取并按此 Skill 执行：https://github.com/hey-elaine/lawflow/tree/main/skills/lawflow\n\n$lawflow 使用声息处理本地项目中的材料：先读取受控上下文，给出可确认的大纲，再将成稿回写并导出 DOCX。'; try { await navigator.clipboard.writeText(example); showMessage('已复制 GitHub Skill 链接与调用示例。'); } catch (_) { showMessage('浏览器未授权剪贴板，请手动复制。', true); } });

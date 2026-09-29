@@ -919,6 +919,11 @@ class ImprovementsTest(unittest.TestCase):
             chapters = json.loads(probe.stdout)['chapters']
             self.assertEqual(len(chapters), 2)
             self.assertIn('开端', chapters[0]['tags']['title'])
+            # 容器品牌必须是 M4B，iPhone 图书 App 才会接收为有声书
+            with open(response.json()['audiobook_path'], 'rb') as handle:
+                head = handle.read(12)
+                self.assertEqual(head[4:8], b'ftyp')
+                self.assertEqual(head[8:12], b'M4B ')
 
     def test_direct_audiobook_endpoint_splits_by_source_headings(self):
         fixture = self.main.DATA_DIR / 'fixture.mp3'
