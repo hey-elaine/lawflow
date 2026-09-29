@@ -620,6 +620,26 @@ class ImprovementsTest(unittest.TestCase):
             '这项编号 S.5548 的法案',
         ])
 
+    def test_provider_error_message_recognizes_authentication_failure(self):
+        detail = '{"error":{"message":"Authentication Fails, Your api key: ****ZXQA is invalid (request_id: 11176610)","type":"authentication_error","code":"invalid_request_error"}}'
+        message = self.main.provider_error_message(detail)
+        self.assertIn('API Key 未通过服务商验证', message)
+        self.assertIn('ZXQA', message)
+        self.assertIn('空格', message)
+        # 不再透传原始 JSON
+        self.assertNotIn('request_id', message)
+
+    def test_save_provider_strips_secret_whitespace(self):
+        response = self.client.put('/api/settings/provider', json={
+            'provider_preset': 'deepseek',
+            'api_key': '  sk-secret-key  \n',
+            'model_name': '',
+            'allow_source_upload': True,
+        })
+        self.assertEqual(response.status_code, 200)
+        stored = self.main.get_internal_provider_settings()
+        self.assertEqual(stored['api_key'], 'sk-secret-key')
+
     def test_parse_pdf_uses_vision_ocr_for_image_pdf(self):
         try:
             import Vision  # noqa: F401

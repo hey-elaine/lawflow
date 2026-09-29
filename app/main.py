@@ -1488,8 +1488,14 @@ def provider_error_message(detail: str) -> str:
     normalized = detail.lower()
     if "credit_balance_exhausted" in normalized or "insufficient_quota" in normalized or "no credits remaining" in normalized:
         return "OpenAI API 额度不足。该 API Key 已被服务端识别，但所属组织没有可用 API 额度。请在 OpenAI Platform 的 Billing 页面充值或切换到有额度的 API 项目后重试。"
-    if "invalid_api_key" in normalized or "incorrect api key" in normalized or "invalid authentication" in normalized:
-        return "API Key 无效或已失效。请在所选服务商控制台重新创建 Key，并确认没有复制到多余空格。"
+    if "invalid_api_key" in normalized or "incorrect api key" in normalized or "invalid authentication" in normalized \
+            or "authentication fails" in normalized or "authentication_error" in normalized \
+            or ("invalid_request_error" in normalized and "api key" in normalized):
+        masked = ""
+        match = re.search(r"[*]{2,}([A-Za-z0-9]{2,8})", detail)
+        if match:
+            masked = "（服务端收到的 Key 结尾是 " + match.group(1) + "）"
+        return "API Key 未通过服务商验证" + masked + "。请依次检查：① Key 是否复制完整、首尾没有多余空格或换行；② Key 与所选服务商是否匹配（例如 DeepSeek 的 Key 不能配在 OpenAI 预设下）；③ Key 是否已过期或被吊销，必要时到服务商控制台重新生成。"
     if "model_not_found" in normalized or "does not exist" in normalized or "not have access to model" in normalized:
         return "当前 API Key 无权使用所选模型。请更换为该账号可用的模型，或在服务商控制台确认模型权限。"
     if "rate_limit" in normalized or "rate limit" in normalized:
@@ -3989,6 +3995,11 @@ def get_provider():
 def save_provider(payload: ProviderSettings):
     timestamp = now_iso()
     value = payload.model_dump()
+    # 复制粘贴的 Key 常带首尾空格/换行，直接导致鉴权失败；统一清理
+    for key in ("api_key", "tts_api_key", "asr_api_key"):
+        value[key] = str(value.get(key, "")).strip()
+    for key in ("base_url", "model_name", "provider_name", "tts_base_url", "tts_model", "tts_voice", "asr_base_url", "asr_model"):
+        value[key] = str(value.get(key, "")).strip()
     preset = MODEL_PRESETS[value["provider_preset"]]
     if value["provider_preset"] != "custom":
         value["provider_name"] = preset["provider_name"]
