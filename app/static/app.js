@@ -503,12 +503,18 @@ async function directDocumentAudio(documentId, button) {
   try {
     setBusy(button, true, '转音频中…');
     const created = await request('/api/projects/' + appState.selectedProject.project.id + '/documents/' + documentId + '/direct-audio', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({}) });
-    await request('/api/audio-outputs/' + created.id + '/synthesize', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({}) });
+    // 合成需要一两分钟：先切到音频标签让用户看到卡片和脚本，再后台合成
     appState.activeTab = 'audio';
+    appState.synthesizingAudio = created.id;
+    appState.selectedProject = await request('/api/projects/' + appState.selectedProject.project.id);
+    renderProjectDetail();
+    showMessage('正在按原文合成音频，约需一两分钟；可以先展开卡片核对脚本。');
+    await request('/api/audio-outputs/' + created.id + '/synthesize', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({}) });
+    appState.synthesizingAudio = null;
     appState.selectedProject = await request('/api/projects/' + appState.selectedProject.project.id);
     renderProjectDetail();
     showMessage('原文音频已生成，可直接播放或导出。');
-  } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); }
+  } catch (error) { appState.synthesizingAudio = null; showMessage(error.message, true); } finally { setBusy(button, false); }
 }
 
 async function deleteDocument(documentId, button) {
@@ -1355,14 +1361,15 @@ function renderAudioOutput(output) {
   const source = (appState.selectedProject.narrative_contents || []).find(content => content.id === output.narrative_content_id);
   const readyForMp3 = !output.narrative_content_id || source?.status === 'confirmed';
   const mp3Hint = readyForMp3 || !output.narrative_content_id ? '' : '<small class="audio-gate-hint">确认对应讲稿后可生成完整 MP3</small>';
-  const statusLabel = output.status === 'source_changed' ? '源讲稿已更新，请重新整理脚本' : output.status === 'ready' ? 'MP3 已生成 · ' + output.duration_seconds + ' 秒' : '脚本待校对';
+  const synthesizing = appState.synthesizingAudio === output.id;
+  const statusLabel = synthesizing ? '正在合成音频…' : output.status === 'source_changed' ? '源讲稿已更新，请重新整理脚本' : output.status === 'ready' ? 'MP3 已生成 · ' + output.duration_seconds + ' 秒' : '脚本待校对';
   const script = output.script || '';
   const mediaMinutes = script.length ? Math.max(1, Math.round(script.length / 240)) : 0;
   const stats = script.length ? '共 ' + script.length + ' 字 · 预计朗读约 ' + mediaMinutes + ' 分钟' : '脚本为空';
   const opened = appState.openAudioScript === output.id ? ' open' : '';
   const primaryAction = output.audio_available
     ? '<button class="button button-primary button-small" data-export-audio="' + output.id + '">导出 MP3</button>'
-    : '<button class="button button-primary button-small" data-synthesize-audio="' + output.id + '" ' + (readyForMp3 ? '' : 'disabled') + '>生成 MP3</button>' + mp3Hint;
+    : '<button class="button button-primary button-small" data-synthesize-audio="' + output.id + '" ' + (readyForMp3 && !synthesizing ? '' : 'disabled') + '>' + (synthesizing ? '合成中…' : '生成 MP3') + '</button>' + mp3Hint;
   return '<article class="audio-output-card"><div class="audio-output-main"><div class="audio-output-head"><span class="tag">' + statusLabel + '</span><h4>' + escapeHtml(output.title) + '</h4></div><details class="audio-tools"><summary>脚本、试听与更多操作</summary><details class="audio-script-details" data-audio-id="' + output.id + '"' + opened + '><summary>查看 / 编辑完整口播脚本</summary><div class="audio-script-body"><textarea class="audio-script-editor" data-audio-editor="' + output.id + '">' + escapeHtml(script) + '</textarea><div class="audio-script-meta"><span class="audio-script-stats">' + stats + '</span><button class="button button-outline button-small" data-save-audio="' + output.id + '">保存脚本</button></div><p class="audio-script-hint">修改脚本后，原有 MP3 会失效，需要重新生成。</p></div></details><div class="audio-tool-actions">' + (output.audio_available ? '' : player) + '<button class="button button-outline button-small" data-speak-script="' + output.id + '">浏览器校对朗读</button><button class="button button-outline button-small" data-preview-audio="' + output.id + '">合成短片试听</button>' + (output.audio_available ? '<button class="button button-outline button-small" data-synthesize-audio="' + output.id + '" ' + (readyForMp3 ? '' : 'disabled') + '>重新生成 MP3</button>' : '<button class="button button-outline button-small" data-export-audio="' + output.id + '">仅导出脚本</button>') + '</div></details></div><div class="audio-actions">' + (output.audio_available ? player : '') + primaryAction + '</div></article>';
 }
 
