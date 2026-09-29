@@ -26,6 +26,8 @@ pyinstaller \
   --collect-all mcp \
   --collect-all edge_tts \
   --collect-all webview \
+  --hidden-import qrcode \
+  --hidden-import qrcode.image.svg \
   scripts/lawflow_desktop.py
 
 # 保留内部可执行文件名，面向用户的应用包使用产品名称。
