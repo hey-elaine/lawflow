@@ -29,7 +29,7 @@ def error_page(message: str) -> str:
     safe = message.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     return LOADING_PAGE.replace(
         "正在启动本地服务，请稍候…",
-        f"启动失败：{safe}<br/>请关闭窗口后重新打开 LawFlow。",
+        f"启动失败：{safe}<br/>请关闭窗口后重新打开声息。",
     ).replace(".bar{", ".bar-hidden{")
 
 def project_count(db_path: Path) -> int:
@@ -68,7 +68,7 @@ def choose_port() -> int:
                 return port
             except OSError:
                 continue
-    raise RuntimeError("LawFlow 无法找到可用的本地端口，请关闭占用 8080–8089 的程序后重试。")
+    raise RuntimeError("声息无法找到可用的本地端口，请关闭占用 8080–8089 的程序后重试。")
 
 
 def main() -> None:

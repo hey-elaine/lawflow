@@ -99,7 +99,7 @@ jobs:
       - name: Verify architecture
         run: |
           test "$(uname -m)" = "${{ matrix.architecture }}"
-          file dist/LawFlow.app/Contents/MacOS/LawFlow
+          file dist/声息.app/Contents/MacOS/LawFlow
       - uses: actions/upload-artifact@v4
         with:
           name: lawflow-macos-${{ matrix.architecture }}
