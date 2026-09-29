@@ -920,6 +920,52 @@ class ImprovementsTest(unittest.TestCase):
             self.assertEqual(len(chapters), 2)
             self.assertIn('开端', chapters[0]['tags']['title'])
 
+    def test_direct_audiobook_endpoint_splits_by_source_headings(self):
+        fixture = self.main.DATA_DIR / 'fixture.mp3'
+        subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-y', str(fixture)], check=True)
+        project = self.client.post('/api/projects', json={'name': '直读有声书', 'verification_mode': 'source_only'}).json()
+        source = self.client.post(f"/api/projects/{project['id']}/text-sources", json={
+            'title': '直读素材',
+            'content': '## 第一节 背景\n\n' + '背景段落，交代来龙去脉，铺陈事件的时间线与关键人物。' * 3 + '\n\n## 第二节 结论\n\n' + '结论段落，给出具体建议，并说明理由与适用范围。' * 3,
+        }).json()
+        direct = self.client.post(f"/api/projects/{project['id']}/documents/{source['id']}/direct-audio", json={})
+        self.assertEqual(direct.status_code, 200)
+        with tempfile.TemporaryDirectory() as temp:
+            def fake_synthesize(script, title, settings):
+                copy = Path(temp) / f'chapter-{abs(hash(title))}.mp3'
+                copy.write_bytes(fixture.read_bytes())
+                return copy, 'fixture', 1
+            with patch.object(self.main, 'synthesize_audio', side_effect=fake_synthesize), \
+                 patch.object(self.main, 'get_configured_export_directory', return_value=Path(temp)):
+                response = self.client.post(f"/api/projects/{project['id']}/audiobook/direct")
+            self.assertEqual(response.status_code, 201)
+            data = response.json()
+            self.assertEqual(data['chapters'], 2)
+            audiobook = Path(data['audiobook_path'])
+            self.assertTrue(audiobook.name.endswith('（原文朗读）.m4b'))
+            probe = subprocess.run(['ffprobe', '-v', 'error', '-show_chapters', '-of', 'json', str(audiobook)], check=True, capture_output=True, text=True)
+            chapters = json.loads(probe.stdout)['chapters']
+            self.assertEqual(len(chapters), 2)
+            self.assertIn('第一节 背景', chapters[0]['tags']['title'])
+            self.assertIn('第二节 结论', chapters[1]['tags']['title'])
+        # 逐章合成的中间文件应已清理，只留下 m4b
+        leftovers = [p.name for p in Path(temp).glob('chapter-*.mp3')]
+        self.assertEqual(leftovers, [])
+
+    def test_direct_audiobook_chapters_merges_preamble_into_first_heading(self):
+        blocks = [
+            {'id': 'b0', 'kind': 'paragraph', 'text': '导语内容。', 'sequence_no': 1, 'heading_path': '', 'heading_level': 0, 'source_locator': ''},
+            {'id': 'b1', 'kind': 'heading', 'text': '第一章', 'sequence_no': 2, 'heading_path': '', 'heading_level': 2, 'source_locator': ''},
+            {'id': 'b2', 'kind': 'paragraph', 'text': '第一章正文。', 'sequence_no': 3, 'heading_path': '', 'heading_level': 0, 'source_locator': ''},
+            {'id': 'b3', 'kind': 'heading', 'text': '第二章', 'sequence_no': 4, 'heading_path': '', 'heading_level': 2, 'source_locator': ''},
+            {'id': 'b4', 'kind': 'paragraph', 'text': '第二章正文。', 'sequence_no': 5, 'heading_path': '', 'heading_level': 0, 'source_locator': ''},
+        ]
+        with patch.object(self.main, 'read_blocks', return_value=blocks):
+            chapters = self.main.direct_audiobook_chapters('doc-1', '直读素材')
+        self.assertEqual([title for title, _ in chapters], ['直读素材', '第一章', '第二章'])
+        self.assertTrue(chapters[0][1].startswith('导语内容。'))
+        self.assertTrue(chapters[1][1].startswith('第一章'))
+
     def test_material_map_extracts_generic_topic_signals(self):
         text = '收藏夹里的长文章越积越多。长文章需要整块时间，而碎片时间只能读短内容。' \
                '其实读完长文章的关键是换个方式遇见它：把长文章拆成小节，用碎片时间逐节消化。' \

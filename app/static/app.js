@@ -1311,6 +1311,7 @@ function renderAudioPanel() {
   $$('[data-speak-script]').forEach(button => button.addEventListener('click', () => speakAudioScript(button.dataset.speakScript, button)));
   $$('[data-synthesize-audio]').forEach(button => button.addEventListener('click', () => synthesizeAudio(button.dataset.synthesizeAudio, button)));
   $$('[data-export-audio]').forEach(button => button.addEventListener('click', () => exportAudioOutput(button.dataset.exportAudio, button)));
+  $$('[data-export-direct-audiobook]').forEach(button => button.addEventListener('click', () => exportDirectAudiobook(button.dataset.exportDirectAudiobook, button)));
   $$('audio[data-output-player]').forEach(player => {
     player.addEventListener('play', () => stopOtherAudio(player));
     const output = outputs.find(item => item.id === player.dataset.outputPlayer);
@@ -1368,7 +1369,7 @@ function renderAudioOutput(output) {
   const stats = script.length ? '共 ' + script.length + ' 字 · 预计朗读约 ' + mediaMinutes + ' 分钟' : '脚本为空';
   const opened = appState.openAudioScript === output.id ? ' open' : '';
   const primaryAction = output.audio_available
-    ? '<button class="button button-primary button-small" data-export-audio="' + output.id + '">导出 MP3</button>'
+    ? '<button class="button button-primary button-small" data-export-audio="' + output.id + '">导出 MP3</button>' + (!output.narrative_content_id ? '<button class="button button-outline button-small" data-export-direct-audiobook="' + output.id + '">导出有声书 m4b</button>' : '')
     : '<button class="button button-primary button-small" data-synthesize-audio="' + output.id + '" ' + (readyForMp3 && !synthesizing ? '' : 'disabled') + '>' + (synthesizing ? '合成中…' : '生成 MP3') + '</button>' + mp3Hint;
   return '<article class="audio-output-card"><div class="audio-output-main"><div class="audio-output-head"><span class="tag">' + statusLabel + '</span><h4>' + escapeHtml(output.title) + '</h4></div><details class="audio-tools"><summary>脚本、试听与更多操作</summary><details class="audio-script-details" data-audio-id="' + output.id + '"' + opened + '><summary>查看 / 编辑完整口播脚本</summary><div class="audio-script-body"><textarea class="audio-script-editor" data-audio-editor="' + output.id + '">' + escapeHtml(script) + '</textarea><div class="audio-script-meta"><span class="audio-script-stats">' + stats + '</span><button class="button button-outline button-small" data-save-audio="' + output.id + '">保存脚本</button></div><p class="audio-script-hint">修改脚本后，原有 MP3 会失效，需要重新生成。</p></div></details><div class="audio-tool-actions">' + (output.audio_available ? '' : player) + '<button class="button button-outline button-small" data-speak-script="' + output.id + '">浏览器校对朗读</button><button class="button button-outline button-small" data-preview-audio="' + output.id + '">合成短片试听</button>' + (output.audio_available ? '<button class="button button-outline button-small" data-synthesize-audio="' + output.id + '" ' + (readyForMp3 ? '' : 'disabled') + '>重新生成 MP3</button>' : '<button class="button button-outline button-small" data-export-audio="' + output.id + '">仅导出脚本</button>') + '</div></details></div><div class="audio-actions">' + (output.audio_available ? player : '') + primaryAction + '</div></article>';
 }
@@ -1450,6 +1451,16 @@ async function exportAudiobook(button) {
     setBusy(button, true, '合成中…');
     const result = await request('/api/projects/' + appState.selectedProject.project.id + '/audiobook', { method: 'POST' });
     await revealExportedFile(result.audiobook_path);
+  } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); }
+}
+
+async function exportDirectAudiobook(outputId, button) {
+  if (!window.confirm('导出有声书会按原文标题分章、逐章重新合成音频（约需几分钟），然后打包成 m4b。继续吗？')) return;
+  try {
+    setBusy(button, true, '合成有声书…');
+    const result = await request('/api/projects/' + appState.selectedProject.project.id + '/audiobook/direct', { method: 'POST' });
+    await revealExportedFile(result.audiobook_path);
+    showMessage('有声书已生成（' + result.chapters + ' 章），已在访达中定位；AirDrop 到手机选择「图书」即可逐章收听。');
   } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); }
 }
 

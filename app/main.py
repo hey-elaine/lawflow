@@ -3787,6 +3787,72 @@ def export_project_audiobook(project_id: str):
     return {"audiobook_path": str(output_path), "chapters": len(chapter_files), "title": project["name"]}
 
 
+def direct_audiobook_chapters(document_id: str, fallback_title: str) -> list[tuple[str, str]]:
+    """按素材的标题块把原文分成章节；返回 (章节标题, 章节朗读文本)，至少一段。
+
+    只有标题、没有正文的章（如紧跟二级标题的文章主标题）并入下一章开头。
+    """
+    chapters: list[tuple[str, list[str]]] = []
+    for block in read_blocks(document_id):
+        text = clean_text(block["text"])
+        if not text:
+            continue
+        if block["kind"] == "heading":
+            chapters.append((text, [text]))
+        elif chapters:
+            chapters[-1][1].append(text)
+        else:
+            chapters.append((fallback_title, [text]))
+    resolved: list[tuple[str, list[str]]] = []
+    pending_prefix: list[str] = []
+    for title, lines in chapters:
+        body_lines = lines[1:] if lines and lines[0] == title else lines
+        if not body_lines:
+            pending_prefix.extend(lines)  # 空章节，等下一章开头
+            continue
+        resolved.append((title, pending_prefix + lines))
+        pending_prefix = []
+    if pending_prefix and resolved:
+        last_title, last_lines = resolved[-1]
+        resolved[-1] = (last_title, last_lines + pending_prefix)
+    return [(title, "\n\n".join(lines)) for title, lines in resolved if "\n\n".join(lines).strip()]
+
+
+@app.post("/api/projects/{project_id}/audiobook/direct", status_code=201)
+def export_direct_audiobook(project_id: str):
+    """把原文直读音频按素材标题分章，逐章合成后打成带章节标记的 m4b（iPhone 图书 app 可逐章收听）。"""
+    project = project_or_404(project_id)
+    conn = db()
+    output = conn.execute(
+        "SELECT * FROM audio_outputs WHERE project_id = ? AND narrative_content_id IS NULL ORDER BY updated_at DESC",
+        (project_id,),
+    ).fetchone()
+    documents = conn.execute("SELECT * FROM source_documents WHERE project_id = ? ORDER BY created_at", (project_id,)).fetchall()
+    conn.close()
+    if output is None:
+        raise HTTPException(400, "这个项目还没有原文朗读音频；请先在素材页生成一份。")
+    document = next((doc for doc in documents if clean_text(doc["original_name"]) == output["title"]), documents[0] if documents else None)
+    if document is None:
+        raise HTTPException(400, "项目中没有可分章的素材。")
+    chapters = direct_audiobook_chapters(document["id"], clean_text(document["original_name"]) or "开篇")
+    if not chapters:
+        raise HTTPException(400, "这份素材没有可朗读的正文。")
+    settings = get_internal_provider_settings()
+    chapter_files: list[tuple[str, Path]] = []
+    try:
+        for index, (heading, text) in enumerate(chapters, start=1):
+            audio_path, _, _ = synthesize_audio(text, f"{output['title']}·{index:02d}·{heading}", settings)
+            chapter_files.append((heading, audio_path))
+        output_root = get_configured_export_directory()
+        safe_title = re.sub(r"[\\/:*?\"<>|]", "_", project["name"]).strip() or "shengxi-audiobook"
+        output_path = output_root / f"{safe_title}（原文朗读）.m4b"
+        merge_audiobook(chapter_files, pick_audiobook_cover(project_id), project["name"], output_path)
+    finally:
+        for _, audio_path in chapter_files:
+            audio_path.unlink(missing_ok=True)
+    return {"audiobook_path": str(output_path), "chapters": len(chapter_files), "title": project["name"]}
+
+
 class RevealPathRequest(BaseModel):
     path: str
 
