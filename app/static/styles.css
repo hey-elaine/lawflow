@@ -803,3 +803,10 @@ body.empty-shelf .quick-upload { display: none; }
 
 /* 还没有可播放音频时的占位播放器不显示，避免点击无反应的假控件 */
 audio[data-no-audio="1"] { display: none; }
+
+/* 发送到手机：二维码与领取链接卡片。 */
+.mobile-share-result { margin-top: 14px; display: grid; justify-items: start; gap: 8px; }
+.mobile-share-result:empty { display: none; }
+.mobile-share-qr { width: 180px; height: 180px; padding: 10px; border: 1px solid #e2ddd2; border-radius: 12px; background: #fff; }
+.mobile-share-url { margin: 0; font: 13px/1.5 "DM Mono", monospace; word-break: break-all; }
+.mobile-share-warn { color: #a05a1f; }

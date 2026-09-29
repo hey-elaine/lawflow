@@ -1339,9 +1339,12 @@ function renderAudioPanel() {
   const audiobookReady = contents.some(item => item.status === 'confirmed' && ((item.markdown || '').match(/^##\s+/gm) || []).length >= 2);
   const audiobookCard = audiobookReady ? '<details class="panel-card audio-extra"><summary>需要把多章音频合成一本有声书？</summary><p>有声书（M4B）把已确认讲稿的各章合为一个文件，并保留章节标记。单篇原文朗读直接导出 MP3 即可。</p><button class="button button-outline button-small" id="export-audiobook">合成有声书 M4B</button></details>' : '';
   const mobileGuide = outputs.some(item => item.audio_available) ? '<details class="panel-card audio-extra"><summary>如何在 iPhone 收听？</summary><p>希望在“图书”中按章收听：先在 Mac“图书”中通过“文件 → 导入”添加 M4B，再连接 iPhone，在访达中选择有声书同步。首次同步前请核对访达提示。</p><p>只想快速带到手机：导出 MP3，通过隔空投送或 iCloud 云盘存入 iPhone“文件”后播放。声息目前不会同步两端的播放进度。</p></details>' : '';
+  const sendMobile = outputs.some(item => item.audio_available) ? '<details class="panel-card audio-extra" id="mobile-share-card"><summary>发送到手机收听</summary><p>生成一次性领取链接后，用手机相机扫码，即可在同一 Wi-Fi 下按章收听和下载。链接只在声息运行时可访问，可随时吊销。</p><div class="audio-tool-actions"><button class="button button-outline button-small" id="create-mobile-share">生成二维码</button><button class="button button-quiet button-small" id="revoke-mobile-share">吊销已生成的链接</button></div><div id="mobile-share-result" class="mobile-share-result"></div></details>' : '';
   const sourceCard = contents.length ? '<details class="panel-card audio-extra"' + (outputs.length ? '' : ' open') + '><summary>从已确认讲稿制作新音频</summary><p>可制作整篇音频，也可逐章制作。未确认的讲稿可先整理脚本试听。</p><label class="audio-naturalize"><input type="checkbox" id="naturalize-audio"/><span>使用文本模型改善口语节奏<span class="audio-naturalize-note">额外调用一次模型；生成后仍需核对事实</span></span></label><div class="audio-source-list">' + contents.map(renderAudioSourceRow).join('') + '</div></details>' : '';
   const empty = contents.length ? '请在下方选择讲稿，先生成音频脚本。' : '还没有音频。返回“素材”可选择原文朗读。';
-  panel.innerHTML = '<section class="panel-card audio-intro"><p class="eyebrow">收听与导出</p><h3>先试听，再保存音频</h3><p>已有音频可直接播放和导出。原文朗读保留文章内容；整理后的讲稿可以制作整篇或分章音频。</p></section><section class="panel-card"><h3>我的音频</h3><div class="audio-output-list">' + (outputs.length ? renderAudioGroups(outputs) : '<p class="form-note">' + empty + '</p>') + '</div></section>' + mobileGuide + sourceCard + audiobookCard;
+  panel.innerHTML = '<section class="panel-card audio-intro"><p class="eyebrow">收听与导出</p><h3>先试听，再保存音频</h3><p>已有音频可直接播放和导出。原文朗读保留文章内容；整理后的讲稿可以制作整篇或分章音频。</p></section><section class="panel-card"><h3>我的音频</h3><div class="audio-output-list">' + (outputs.length ? renderAudioGroups(outputs) : '<p class="form-note">' + empty + '</p>') + '</div></section>' + sendMobile + mobileGuide + sourceCard + audiobookCard;
+  const createShare = $('#create-mobile-share'); if (createShare) createShare.addEventListener('click', () => createMobileShare(createShare));
+  const revokeShare = $('#revoke-mobile-share'); if (revokeShare) revokeShare.addEventListener('click', () => revokeMobileShare(revokeShare));
   $$('[data-save-audio]').forEach(button => button.addEventListener('click', () => saveAudioScript(button.dataset.saveAudio, button)));
   $$('[data-preview-audio]').forEach(button => button.addEventListener('click', () => previewAudio(button.dataset.previewAudio, button)));
   $$('[data-create-audio-script]').forEach(button => button.addEventListener('click', () => createAudioScript(button.dataset.createAudioScript, button)));
@@ -1507,6 +1510,39 @@ async function speakAudioScript(audioId, button) {
     button.textContent = '⏹ 停止朗读';
     synth.speak(utterance);
   } catch (error) { showMessage(error.message, true); }
+}
+
+async function createMobileShare(button) {
+  try {
+    setBusy(button, true, '生成中…');
+    const lan = await request('/api/settings/mobile-share');
+    const share = await request('/api/projects/' + appState.selectedProject.project.id + '/mobile-share', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+    const url = 'http://' + share.lan_ip + ':' + window.location.port + share.path;
+    const result = $('#mobile-share-result');
+    const expiry = new Date(share.expires_at).toLocaleString();
+    let html = '<img class="mobile-share-qr" alt="手机收听二维码" src="/api/projects/' + appState.selectedProject.project.id + '/mobile-share/qr?url=' + encodeURIComponent(url) + '" />';
+    html += '<p class="mobile-share-url"><a href="' + escapeHtml(url) + '">' + escapeHtml(url) + '</a></p>';
+    html += '<p class="form-note">链接 7 天内有效（至 ' + escapeHtml(expiry) + '），且只在声息运行、手机与电脑连同一个 Wi-Fi 时可访问。重新生成会自动作废旧链接。</p>';
+    if (lan.lan_enabled) {
+      html += '<p class="form-note">已开启局域网访问，扫码即可打开。</p>';
+    } else {
+      html += '<p class="form-note mobile-share-warn">声息当前只监听本机，手机暂时连不上。开启「允许手机访问」并重启声息后，再扫码。</p><button class="button button-primary button-small" id="enable-lan-share">允许手机访问（重启后生效）</button>';
+    }
+    result.innerHTML = html;
+    const enable = $('#enable-lan-share');
+    if (enable) enable.addEventListener('click', async () => {
+      try { setBusy(enable, true, '保存中…'); await request('/api/settings/mobile-share', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lan_enabled: true }) }); enable.remove(); showMessage('已允许手机访问。完全退出并重新打开声息后生效。'); } catch (error) { showMessage(error.message, true); } finally { setBusy(enable, false); }
+    });
+  } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); }
+}
+
+async function revokeMobileShare(button) {
+  try {
+    setBusy(button, true, '吊销中…');
+    await request('/api/projects/' + appState.selectedProject.project.id + '/mobile-share', { method: 'DELETE' });
+    const result = $('#mobile-share-result');
+    if (result) result.innerHTML = '<p class="form-note">已吊销。之前生成的链接立即失效。</p>';
+  } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); }
 }
 
 async function synthesizeAudio(audioId, button) {

@@ -8,7 +8,9 @@ import os
 import re
 import asyncio
 import edge_tts
+import secrets
 import shutil
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -16,7 +18,7 @@ import tempfile
 import uuid
 import zipfile
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from html import escape, unescape
 from pathlib import Path
 from typing import Literal
@@ -53,6 +55,19 @@ for directory in (DATA_DIR, PROJECTS_DIR, EXPORTS_DIR, DATA_DIR / "temp", DATA_D
     directory.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="律析 LawFlow", version=__version__)
+
+
+@app.middleware("http")
+async def restrict_non_local_requests(request: Request, call_next):
+    """服务只对本机开放完整功能；局域网设备只能访问「发送到手机」的收听页 /m/*。"""
+    client_host = request.client.host if request.client else ""
+    try:
+        is_remote_ip = not ipaddress.ip_address(client_host).is_loopback
+    except ValueError:
+        is_remote_ip = False  # 测试客户端等非 IP host 视为本机
+    if is_remote_ip and not request.url.path.startswith("/m/"):
+        return Response(status_code=403, content="声息的完整功能仅限本机访问。")
+    return await call_next(request)
 
 RELEASE_REPOSITORY = os.getenv("LAWFLOW_RELEASE_REPOSITORY", "hey-elaine/lawflow").strip()
 SCHEMA_VERSION = 2
@@ -614,6 +629,14 @@ def init_db() -> None:
             setting_key TEXT PRIMARY KEY,
             setting_value TEXT NOT NULL,
             updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS mobile_share_tokens (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            token TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            revoked_at TEXT
         );
         CREATE TABLE IF NOT EXISTS style_profiles (
             id TEXT PRIMARY KEY,
@@ -4287,6 +4310,307 @@ def get_block(document_id: str, block_id: str):
 
 
 from app.chatgpt_mcp import create_lawflow_mcp
+
+# ---------------------------------------------------------------------------
+# 发送到手机：一次性领取链接 + 手机收听页（/m/*）
+# 设计边界：链接只暴露单个项目的已合成音频；可过期、可吊销；
+# 非本机请求被中间件限制在 /m/* 路径内。
+# ---------------------------------------------------------------------------
+
+MOBILE_SHARE_TTL = timedelta(days=7)
+
+
+def local_lan_ip() -> str:
+    """探测本机局域网 IP（UDP connect 不会真正发包）。
+
+    优先返回家用/办公网段（192.168 > 10.x > 172.16-31），跳过 VPN 虚拟网段（如 198.18/15）。
+    """
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    candidates: list[str] = []
+    try:
+        probe.connect(("8.8.8.8", 80))
+        candidates.append(probe.getsockname()[0])
+    except OSError:
+        pass
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            candidates.append(info[4][0])
+    except OSError:
+        pass
+    probe.close()
+    # macOS 上默认路由可能走 VPN 虚拟网卡，UDP connect 会拿到不可达的隧道 IP；
+    # 再从默认物理网卡的地址补一个候选。
+    if sys.platform == "darwin":
+        try:
+            route = subprocess.run(["route", "-n", "get", "default"], capture_output=True, text=True, timeout=3)
+            match = re.search(r"interface:\s*(\S+)", route.stdout)
+            if match:
+                result = subprocess.run(["ipconfig", "getifaddr", match.group(1)], capture_output=True, text=True, timeout=3)
+                address = result.stdout.strip()
+                if address:
+                    candidates.append(address)
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+    def rank(ip: str) -> int:
+        try:
+            address = ipaddress.ip_address(ip)
+        except ValueError:
+            return 99
+        if not address.is_private or address.is_loopback:
+            return 99
+        if address in ipaddress.ip_network("198.18.0.0/15"):  # VPN/基准测试虚拟网段
+            return 98
+        octets = [int(part) for part in str(address).split(".")]
+        if octets[0] == 192 and octets[1] == 168:
+            return 0
+        if octets[0] == 10:
+            return 1
+        if octets[0] == 172 and 16 <= octets[1] <= 31:
+            return 2
+        return 9
+
+    best = min(candidates, key=rank, default="")
+    return best if best and rank(best) < 99 else "127.0.0.1"
+
+
+def mobile_share_setting() -> dict:
+    conn = db()
+    row = conn.execute("SELECT setting_value FROM settings WHERE setting_key = 'mobile_share'").fetchone()
+    conn.close()
+    return parse_json(row["setting_value"], {}) if row else {}
+
+
+def valid_mobile_share(conn: sqlite3.Connection, token: str):
+    row = conn.execute("SELECT * FROM mobile_share_tokens WHERE token = ?", (token,)).fetchone()
+    if row is None or row["revoked_at"] is not None or row["expires_at"] <= now_iso():
+        return None
+    return row
+
+
+def mobile_chapter_suffix(content_title: str, audio_title: str) -> str:
+    """与 Mac 端约定一致：整篇音频 = 讲稿标题；分章音频 = 讲稿标题 + ' · ' + 章节名。"""
+    prefix = content_title + " · "
+    return audio_title[len(prefix):] if audio_title.startswith(prefix) else ""
+
+
+def build_mobile_book(conn: sqlite3.Connection, project_id: str) -> dict:
+    project = conn.execute("SELECT name FROM projects WHERE id = ?", (project_id,)).fetchone()
+    if project is None:
+        raise HTTPException(404, "项目不存在或已被删除。")
+    contents = conn.execute("SELECT id, title, markdown, section_sources_json FROM narrative_contents WHERE project_id = ?", (project_id,)).fetchall()
+    audios = conn.execute("SELECT * FROM audio_outputs WHERE project_id = ? AND status = 'ready' ORDER BY created_at", (project_id,)).fetchall()
+
+    content_map = {row["id"]: row for row in contents}
+    heading_map: dict[str, list[str]] = {}
+    sources_map: dict[str, list[str]] = {}
+    completed_map: dict[str, set[str]] = {}
+    for row in contents:
+        markdown = collapse_duplicate_headings(row["markdown"])
+        heading_map[row["id"]] = re.findall(r"^##[ \t]+(.+)$", markdown, flags=re.MULTILINE)
+        sources_map[row["id"]] = [item.get("heading", "") for item in parse_json(row["section_sources_json"], [])]
+        progress = conn.execute("SELECT completed_section_ids_json FROM learning_progress WHERE content_id = ?", (row["id"],)).fetchone()
+        completed_map[row["id"]] = set(parse_json(progress["completed_section_ids_json"], [])) if progress else set()
+
+    def section_id_for(content_id: str, suffix: str) -> str:
+        headings = heading_map[content_id]
+        if suffix in headings:
+            return "section-{}".format(headings.index(suffix) + 1)
+        if suffix in sources_map[content_id]:
+            return "section-{}".format(sources_map[content_id].index(suffix) + 1)
+        return ""
+
+    def chapter_payload(audio) -> dict:
+        content = content_map.get(audio["narrative_content_id"]) if audio["narrative_content_id"] else None
+        suffix = mobile_chapter_suffix(content["title"], audio["title"]) if content else ""
+        section_id = section_id_for(content["id"], suffix) if content and suffix else ""
+        return {
+            "id": audio["id"],
+            "title": suffix or audio["title"],
+            "chapter": bool(content and suffix),
+            "duration_seconds": audio["duration_seconds"],
+            "learned": bool(section_id and section_id in completed_map[content["id"]]),
+            "content_id": content["id"] if content else "",
+            "section_id": section_id,
+        }
+
+    whole_book = [chapter_payload(a) for a in audios if not a["narrative_content_id"]]
+    chapters = [chapter_payload(a) for a in audios if a["narrative_content_id"]]
+    learned = sum(1 for c in chapters if c["learned"])
+    return {
+        "title": project["name"],
+        "whole_book": whole_book,
+        "chapters": chapters,
+        "learned_count": learned,
+        "total": len(chapters),
+    }
+
+
+def share_qr_svg(url: str) -> str:
+    try:
+        import qrcode
+        import qrcode.image.svg
+    except ImportError:
+        return ""
+    image = qrcode.make(url, image_factory=qrcode.image.svg.SvgPathImage, border=2)
+    return image.to_string()
+
+
+class MobileShareLanSettings(BaseModel):
+    lan_enabled: bool = False
+
+
+class MobileShareProgress(BaseModel):
+    audio_id: str
+    completed: bool
+
+
+@app.get("/api/settings/mobile-share")
+def get_mobile_share_settings():
+    setting = mobile_share_setting()
+    return {"lan_enabled": bool(setting.get("lan_enabled")), "lan_ip": local_lan_ip()}
+
+
+@app.put("/api/settings/mobile-share")
+def save_mobile_share_settings(payload: MobileShareLanSettings):
+    timestamp = now_iso()
+    conn = db()
+    conn.execute(
+        "INSERT INTO settings (setting_key, setting_value, updated_at) VALUES ('mobile_share', ?, ?) "
+        "ON CONFLICT(setting_key) DO UPDATE SET setting_value = excluded.setting_value, updated_at = excluded.updated_at",
+        (json.dumps({"lan_enabled": payload.lan_enabled}, ensure_ascii=False), timestamp),
+    )
+    conn.commit()
+    conn.close()
+    return {"saved": True, "lan_enabled": payload.lan_enabled, "restart_required": True, "lan_ip": local_lan_ip()}
+
+
+@app.post("/api/projects/{project_id}/mobile-share")
+def create_mobile_share(project_id: str):
+    conn = db()
+    if conn.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone() is None:
+        conn.close()
+        raise HTTPException(404, "项目不存在。")
+    timestamp = now_iso()
+    # 一个项目只保留一条有效链接：重新生成会自动吊销旧链接。
+    conn.execute("UPDATE mobile_share_tokens SET revoked_at = ? WHERE project_id = ? AND revoked_at IS NULL", (timestamp, project_id))
+    token = secrets.token_urlsafe(18)
+    expires_at = (datetime.now(timezone.utc).astimezone() + MOBILE_SHARE_TTL).isoformat(timespec="seconds")
+    conn.execute(
+        "INSERT INTO mobile_share_tokens (id, project_id, token, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
+        (str(uuid.uuid4()), project_id, token, timestamp, expires_at),
+    )
+    conn.commit()
+    conn.close()
+    return {"token": token, "path": f"/m/{token}", "expires_at": expires_at, "lan_ip": local_lan_ip()}
+
+
+@app.delete("/api/projects/{project_id}/mobile-share")
+def revoke_mobile_share(project_id: str):
+    timestamp = now_iso()
+    conn = db()
+    conn.execute("UPDATE mobile_share_tokens SET revoked_at = ? WHERE project_id = ? AND revoked_at IS NULL", (timestamp, project_id))
+    conn.commit()
+    conn.close()
+    return {"revoked": True}
+
+
+@app.get("/api/projects/{project_id}/mobile-share/qr")
+def mobile_share_qr(project_id: str, url: str):
+    conn = db()
+    share = conn.execute("SELECT token FROM mobile_share_tokens WHERE project_id = ? AND revoked_at IS NULL AND expires_at > ? ORDER BY created_at DESC LIMIT 1", (project_id, now_iso())).fetchone()
+    conn.close()
+    if share is None or url.split("/m/")[-1] != share["token"]:
+        raise HTTPException(404, "链接不存在或已失效。")
+    return Response(content=share_qr_svg(url), media_type="image/svg+xml")
+
+
+@app.get("/m/{token}")
+def mobile_listen_page(token: str):
+    conn = db()
+    share = valid_mobile_share(conn, token)
+    conn.close()
+    if share is None:
+        raise HTTPException(404, "链接不存在或已失效。")
+    return FileResponse(STATIC_DIR / "mobile.html", media_type="text/html")
+
+
+@app.get("/m/{token}/data")
+def mobile_book_data(token: str):
+    conn = db()
+    share = valid_mobile_share(conn, token)
+    if share is None:
+        conn.close()
+        raise HTTPException(404, "链接不存在或已失效。")
+    try:
+        return build_mobile_book(conn, share["project_id"])
+    finally:
+        conn.close()
+
+
+@app.get("/m/{token}/audio/{audio_id}")
+def mobile_audio_stream(token: str, audio_id: str, download: int = 0):
+    conn = db()
+    share = valid_mobile_share(conn, token)
+    if share is None:
+        conn.close()
+        raise HTTPException(404, "链接不存在或已失效。")
+    row = conn.execute("SELECT audio_path FROM audio_outputs WHERE id = ? AND project_id = ?", (audio_id, share["project_id"])).fetchone()
+    conn.close()
+    if row is None or not row["audio_path"] or not Path(row["audio_path"]).is_file():
+        raise HTTPException(404, "音频尚未生成或已被移动。")
+    path = Path(row["audio_path"])
+    if download:
+        return FileResponse(path, media_type="audio/mpeg", filename=path.name)
+    return FileResponse(path, media_type="audio/mpeg")
+
+
+@app.post("/m/{token}/progress")
+def mobile_progress(token: str, payload: MobileShareProgress):
+    """手机端「标记已学」回写，与 Mac 端共用 learning_progress。"""
+    conn = db()
+    share = valid_mobile_share(conn, token)
+    if share is None:
+        conn.close()
+        raise HTTPException(404, "链接不存在或已失效。")
+    audio = conn.execute("SELECT narrative_content_id FROM audio_outputs WHERE id = ? AND project_id = ?", (payload.audio_id, share["project_id"])).fetchone()
+    if audio is None or not audio["narrative_content_id"]:
+        conn.close()
+        raise HTTPException(404, "音频不存在。")
+    content = conn.execute("SELECT id, markdown FROM narrative_contents WHERE id = ?", (audio["narrative_content_id"],)).fetchone()
+    if content is None:
+        conn.close()
+        raise HTTPException(404, "讲稿不存在。")
+    # 音频标题里的章节名反查 section id；整篇音频无对应章节，忽略。
+    audio_title = conn.execute("SELECT title FROM audio_outputs WHERE id = ?", (payload.audio_id,)).fetchone()["title"]
+    content_title = conn.execute("SELECT title FROM narrative_contents WHERE id = ?", (audio["narrative_content_id"],)).fetchone()["title"]
+    suffix = mobile_chapter_suffix(content_title, audio_title)
+    headings = re.findall(r"^##[ \t]+(.+)$", collapse_duplicate_headings(content["markdown"]), flags=re.MULTILINE)
+    section_id = "section-{}".format(headings.index(suffix) + 1) if suffix in headings else ""
+    if not section_id:
+        conn.close()
+        return {"saved": False, "reason": "整篇音频不支持按章标记"}
+    section_ids = reading_section_ids(content["markdown"])
+    if section_id not in section_ids:
+        conn.close()
+        raise HTTPException(400, "章节信息已过期，请重新打开链接。")
+    current = conn.execute("SELECT * FROM learning_progress WHERE content_id = ?", (content["id"],)).fetchone()
+    completed = [s for s in parse_json(current["completed_section_ids_json"], []) if s in section_ids] if current else []
+    if payload.completed and section_id not in completed:
+        completed.append(section_id)
+    elif not payload.completed:
+        completed = [s for s in completed if s != section_id]
+    timestamp = now_iso()
+    conn.execute(
+        """INSERT INTO learning_progress (content_id, last_section_id, completed_section_ids_json, updated_at)
+        VALUES (?, ?, ?, ?) ON CONFLICT(content_id) DO UPDATE SET
+        last_section_id=excluded.last_section_id, completed_section_ids_json=excluded.completed_section_ids_json, updated_at=excluded.updated_at""",
+        (content["id"], section_id, json.dumps(completed, ensure_ascii=False), timestamp),
+    )
+    conn.commit()
+    conn.close()
+    return {"saved": True, "content_id": content["id"], "section_id": section_id, "completed": completed}
+
 
 chatgpt_mcp = create_lawflow_mcp(sys.modules[__name__])
 app.mount("/mcp", chatgpt_mcp.streamable_http_app(), name="chatgpt-mcp")
