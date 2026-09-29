@@ -745,7 +745,7 @@ body.in-shelf #quick-import .eyebrow { display: block; margin: 0 0 8px; }
 .quick-preview-ending b { display: block; margin-bottom: 5px; color: #6f7d54; font-size: 11px; letter-spacing: .12em; }
 .quick-link-preview .quick-preview-ending p { display: block; margin: 0; overflow: visible; color: #665d4a; font-size: 12px; -webkit-line-clamp: unset; }
 .quick-link-preview fieldset { display: flex; flex-wrap: wrap; gap: 12px; margin: 15px 0; padding: 0; border: 0; }
-.quick-link-preview legend { margin-bottom: 8px; color: #5f5543; font-size: 12px; }
+.quick-link-preview .quick-options-hint { margin: 0 0 8px; color: #5f5543; font-size: 12px; }
 .quick-link-preview label { color: #5f5543; font-size: 12px; }
 .quick-link-preview input { accent-color: var(--moss); }
 .quick-upload { position: relative; display: grid; align-content: center; min-height: 42px; padding: 9px 14px; border: 1px dashed #bfb49b; border-radius: 4px; color: #4e5f3e; cursor: pointer; font-size: 13px; }
