@@ -62,6 +62,16 @@ function statusText(status) { return ({ draft: '草稿', pending_review: '待律
 function showMessage(message, error = false) { const box = $('#workspace-message'); box.textContent = message; box.className = error ? 'message error' : 'message'; setTimeout(() => box.classList.add('hidden'), 4800); }
 function setBusy(button, busy, label = '处理中…') { if (!button) return; if (busy) { if (!button.disabled) button.dataset.label = button.textContent; button.textContent = label; button.disabled = true; } else { button.textContent = button.dataset.label || button.textContent; button.disabled = false; } }
 
+// 让大纲里的多行文本框按内容自适应高度（关键点经常不止两三行）
+function autoGrowTextarea(textarea) {
+  if (!textarea || textarea.disabled) return;
+  textarea.style.height = 'auto';
+  textarea.style.height = Math.min(Math.max(textarea.scrollHeight, 0), 420) + 'px';
+}
+document.addEventListener('input', event => {
+  if (event.target instanceof HTMLTextAreaElement && event.target.closest('.narrative-outline-section')) autoGrowTextarea(event.target);
+});
+
 async function loadProjects() { appState.projects = await request('/api/projects'); renderProjectList(); }
 async function loadDailyBriefSubscriptions() {
   const list = $('#daily-brief-list');
@@ -1062,6 +1072,7 @@ function renderNarrativeOutline(record) {
     const supplementChecks = supplementDocs.length ? '<div class="outline-supplements"><small>本节补充资料</small>' + supplementDocs.map(doc => '<label class="check-label"><input type="checkbox" data-outline-supplement="' + doc.id + '" ' + (section.source_block_ids.some(id => supplementSources[doc.id].includes(id)) ? 'checked' : '') + ' ' + disabled + '/>' + escapeHtml(doc.original_name) + '</label>').join('') + '</div>' : '';
     return '<div class="narrative-outline-section" data-section-id="' + escapeHtml(section.id) + '"><span>' + String(index + 1).padStart(2, '0') + '</span><div><label>章节标题<input class="narrative-section-heading" value="' + escapeHtml(section.heading) + '" ' + disabled + '/></label><label>这一节要解决的问题<textarea class="narrative-section-purpose" ' + disabled + '>' + escapeHtml(section.purpose || '') + '</textarea></label><label>关键点（每行一项）<textarea class="narrative-section-points" ' + disabled + '>' + escapeHtml((section.key_points || []).join('\n')) + '</textarea></label><small>' + section.source_block_ids.length + ' 个材料块 · 目标约 ' + section.target_words + ' 字</small>' + supplementChecks + (!isConfirmed ? '<div class="outline-section-actions"><button type="button" class="button button-quiet button-small" data-move-section="up" ' + (index === 0 ? 'disabled' : '') + '>上移</button><button type="button" class="button button-quiet button-small" data-move-section="down" ' + (index === sections.length - 1 ? 'disabled' : '') + '>下移</button><button type="button" class="button button-quiet button-small" data-remove-section ' + (sections.length === 1 ? 'disabled' : '') + '>删除</button></div>' : '') + '</div></div>';
   }).join('') + '</div><div class="plan-actions">' + actionButtons + '</div>';
+  $$('.narrative-section-purpose, .narrative-section-points', area).forEach(autoGrowTextarea);
 
   if (!isConfirmed) {
     $('#add-narrative-section')?.addEventListener('click', () => {

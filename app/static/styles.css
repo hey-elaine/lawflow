@@ -165,6 +165,7 @@
 .outline-header label, .narrative-outline-section label { display: grid; gap: 4px; color: #66736b; font-size: 12px; font-weight: 600; }
 .outline-header input, .narrative-outline-section textarea { width: 100%; min-width: 0; padding: 8px 10px; border: 1px solid #ddd8cd; border-radius: 7px; background: #fffefa; color: var(--ink); font: 13px/1.5 "Noto Sans SC", sans-serif; }
 .narrative-outline-section textarea { min-height: 54px; resize: vertical; }
+.narrative-outline-section .narrative-section-points { min-height: 96px; }
 .narrative-outline-section > div { min-width: 0; display: grid; gap: 10px; }
 .narrative-outline-section .outline-supplements { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding-top: 6px; border-top: 1px dashed #e2ddd2; }
 .narrative-outline-section .outline-supplements .check-label { display: flex; align-items: center; gap: 5px; }
