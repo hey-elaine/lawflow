@@ -4374,13 +4374,6 @@ def local_lan_ip() -> str:
     return best if best and rank(best) < 99 else "127.0.0.1"
 
 
-def mobile_share_setting() -> dict:
-    conn = db()
-    row = conn.execute("SELECT setting_value FROM settings WHERE setting_key = 'mobile_share'").fetchone()
-    conn.close()
-    return parse_json(row["setting_value"], {}) if row else {}
-
-
 def valid_mobile_share(conn: sqlite3.Connection, token: str):
     row = conn.execute("SELECT * FROM mobile_share_tokens WHERE token = ?", (token,)).fetchone()
     if row is None or row["revoked_at"] is not None or row["expires_at"] <= now_iso():
@@ -4394,6 +4387,35 @@ def mobile_chapter_suffix(content_title: str, audio_title: str) -> str:
     return audio_title[len(prefix):] if audio_title.startswith(prefix) else ""
 
 
+def markdown_to_plain(markdown: str) -> str:
+    """把讲稿 markdown 压成适合手机页阅读的纯文本（保留段落，去掉行内标记）。"""
+    text = re.sub(r"^#{1,6}[ \t]+", "", markdown, flags=re.MULTILINE)
+    text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
+    text = re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"\1", text)
+    text = re.sub(r"`([^`]+)`", r"\1", text)
+    text = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", text)
+    text = re.sub(r"^>[ \t]", "", text, flags=re.MULTILINE)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+def extract_section_text(markdown: str, heading: str) -> str:
+    """从讲稿里截取某一章（## 标题到下一个 ## 之间）的正文；找不到就回退全文。"""
+    lines = markdown.splitlines()
+    start = None
+    for index, line in enumerate(lines):
+        if re.match(r"^##[ \t]+" + re.escape(heading) + r"[ \t]*$", line):
+            start = index + 1
+            break
+    if start is None:
+        return markdown_to_plain(markdown)
+    end = len(lines)
+    for index in range(start, len(lines)):
+        if lines[index].startswith("## "):
+            end = index
+            break
+    return markdown_to_plain("\n".join(lines[start:end]))
+
+
 def build_mobile_book(conn: sqlite3.Connection, project_id: str) -> dict:
     project = conn.execute("SELECT name FROM projects WHERE id = ?", (project_id,)).fetchone()
     if project is None:
@@ -4402,11 +4424,13 @@ def build_mobile_book(conn: sqlite3.Connection, project_id: str) -> dict:
     audios = conn.execute("SELECT * FROM audio_outputs WHERE project_id = ? AND status = 'ready' ORDER BY created_at", (project_id,)).fetchall()
 
     content_map = {row["id"]: row for row in contents}
+    md_map: dict[str, str] = {}
     heading_map: dict[str, list[str]] = {}
     sources_map: dict[str, list[str]] = {}
     completed_map: dict[str, set[str]] = {}
     for row in contents:
         markdown = collapse_duplicate_headings(row["markdown"])
+        md_map[row["id"]] = markdown
         heading_map[row["id"]] = re.findall(r"^##[ \t]+(.+)$", markdown, flags=re.MULTILINE)
         sources_map[row["id"]] = [item.get("heading", "") for item in parse_json(row["section_sources_json"], [])]
         progress = conn.execute("SELECT completed_section_ids_json FROM learning_progress WHERE content_id = ?", (row["id"],)).fetchone()
@@ -4424,6 +4448,12 @@ def build_mobile_book(conn: sqlite3.Connection, project_id: str) -> dict:
         content = content_map.get(audio["narrative_content_id"]) if audio["narrative_content_id"] else None
         suffix = mobile_chapter_suffix(content["title"], audio["title"]) if content else ""
         section_id = section_id_for(content["id"], suffix) if content and suffix else ""
+        if content and suffix:
+            chapter_text = extract_section_text(md_map[content["id"]], suffix)
+        elif content:
+            chapter_text = markdown_to_plain(md_map[content["id"]])
+        else:
+            chapter_text = markdown_to_plain(audio["script"] or "")
         return {
             "id": audio["id"],
             "title": suffix or audio["title"],
@@ -4432,6 +4462,7 @@ def build_mobile_book(conn: sqlite3.Connection, project_id: str) -> dict:
             "learned": bool(section_id and section_id in completed_map[content["id"]]),
             "content_id": content["id"] if content else "",
             "section_id": section_id,
+            "text": chapter_text,
         }
 
     whole_book = [chapter_payload(a) for a in audios if not a["narrative_content_id"]]
@@ -4456,33 +4487,9 @@ def share_qr_svg(url: str) -> str:
     return image.to_string()
 
 
-class MobileShareLanSettings(BaseModel):
-    lan_enabled: bool = False
-
-
 class MobileShareProgress(BaseModel):
     audio_id: str
     completed: bool
-
-
-@app.get("/api/settings/mobile-share")
-def get_mobile_share_settings():
-    setting = mobile_share_setting()
-    return {"lan_enabled": bool(setting.get("lan_enabled")), "lan_ip": local_lan_ip()}
-
-
-@app.put("/api/settings/mobile-share")
-def save_mobile_share_settings(payload: MobileShareLanSettings):
-    timestamp = now_iso()
-    conn = db()
-    conn.execute(
-        "INSERT INTO settings (setting_key, setting_value, updated_at) VALUES ('mobile_share', ?, ?) "
-        "ON CONFLICT(setting_key) DO UPDATE SET setting_value = excluded.setting_value, updated_at = excluded.updated_at",
-        (json.dumps({"lan_enabled": payload.lan_enabled}, ensure_ascii=False), timestamp),
-    )
-    conn.commit()
-    conn.close()
-    return {"saved": True, "lan_enabled": payload.lan_enabled, "restart_required": True, "lan_ip": local_lan_ip()}
 
 
 @app.post("/api/projects/{project_id}/mobile-share")

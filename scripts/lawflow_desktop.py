@@ -1,7 +1,6 @@
 """macOS desktop launcher for the local LawFlow web application."""
 from __future__ import annotations
 
-import json
 import signal
 import socket
 import sqlite3
@@ -58,23 +57,6 @@ def migrate_legacy_data(data_dir: Path, legacy_dir: Path) -> bool:
     return True
 
 
-def lan_share_enabled(db_path: Path) -> bool:
-    """「发送到手机」开启后，服务监听局域网；手机仅能访问 /m/* 收听页（见 main.py 中间件）。"""
-    if not db_path.is_file():
-        return False
-    try:
-        with sqlite3.connect(db_path) as conn:
-            row = conn.execute("SELECT setting_value FROM settings WHERE setting_key = 'mobile_share'").fetchone()
-    except sqlite3.DatabaseError:
-        return False
-    if not row:
-        return False
-    try:
-        return bool(json.loads(row[0]).get("lan_enabled"))
-    except (TypeError, ValueError):
-        return False
-
-
 def choose_port() -> int:
     requested = os.getenv("LAWFLOW_PORT")
     candidates = [int(requested)] if requested else list(range(8080, 8090))
@@ -99,7 +81,9 @@ def main() -> None:
     os.environ["LAWFLOW_DATA_DIR"] = str(data_dir)
 
     port = choose_port()
-    bind_host = "0.0.0.0" if lan_share_enabled(data_dir / "app.db") else "127.0.0.1"
+    # 始终监听局域网，免去「开启手机访问要重启」的麻烦；安全由 main.py 中间件保证：
+    # 局域网客户端只能访问 /m/* 收听页（需一次性 token），其余接口一律拒绝。
+    bind_host = "0.0.0.0"
     url = f"http://127.0.0.1:{port}"
     holder: dict[str, uvicorn.Server] = {}
     try:

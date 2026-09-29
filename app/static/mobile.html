@@ -30,14 +30,20 @@ main { padding: 12px 14px; display: grid; gap: 10px; }
 .learn-btn { border: 0; background: none; color: var(--muted); font-size: 12px; padding: 6px 2px; }
 .learn-btn.done { color: var(--accent); font-weight: 600; }
 .player { position: fixed; left: 0; right: 0; bottom: 0; background: var(--card); border-top: 1px solid var(--line); padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); }
-.player .row { display: flex; align-items: center; gap: 12px; }
+.player .row { display: flex; align-items: center; gap: 8px; }
+.player .row.controls { justify-content: center; gap: 18px; margin-top: 4px; }
 .player .now { min-width: 0; flex: 1; }
 .player .now b { display: block; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .player .now small { color: var(--muted); font-size: 12px; }
 .player button { border: 0; background: none; font-size: 22px; color: var(--ink); padding: 8px; }
 .player .play { width: 52px; height: 52px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 24px; }
+.player .step { font-size: 13px; font-weight: 600; color: var(--accent); min-width: 44px; padding: 8px 2px; }
 .player .speed { font-size: 13px; color: var(--accent); font-weight: 600; }
+.player .transcript-btn { font-size: 13px; color: var(--muted); font-weight: 600; }
+.player .transcript-btn.open { color: var(--accent); }
 .player .seek { width: 100%; margin-top: 8px; accent-color: var(--accent); }
+.player .transcript { display: none; max-height: 36vh; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 12px 4px; margin-top: 8px; border-top: 1px solid var(--line); white-space: pre-wrap; font-size: 15px; line-height: 1.9; color: #2c3a33; }
+.player .transcript.open { display: block; }
 .empty { text-align: center; color: var(--muted); padding: 48px 24px; }
 .error { text-align: center; padding: 64px 24px; color: var(--muted); }
 .error b { display: block; font-size: 18px; color: var(--ink); margin-bottom: 8px; }
@@ -53,15 +59,21 @@ a.dl { color: var(--muted); font-size: 12px; text-decoration: none; }
 <main id="list"><div class="empty">正在获取章节…</div></main>
 <div class="player" id="player" hidden>
   <input class="seek" id="seek" type="range" min="0" max="1000" value="0" />
-  <div class="row">
+  <div class="row controls">
     <button id="prev" aria-label="上一章">⏮</button>
+    <button class="step" id="back" aria-label="后退15秒">−15s</button>
     <button class="play" id="play" aria-label="播放">▶</button>
+    <button class="step" id="fwd" aria-label="快进15秒">+15s</button>
     <button id="next" aria-label="下一章">⏭</button>
+  </div>
+  <div class="row">
     <div class="now"><b id="now-title"></b><small id="now-time">--:-- / --:--</small></div>
     <button class="speed" id="speed">1.0×</button>
+    <button class="transcript-btn" id="transcript-btn">文稿</button>
     <a class="dl" id="dl" download>下载</a>
   </div>
-  <audio id="audio" preload="metadata"></audio>
+  <div class="transcript" id="transcript"></div>
+  <audio id="audio" preload="metadata" playsinline></audio>
 </div>
 <script>
 (function () {
@@ -73,6 +85,9 @@ a.dl { color: var(--muted); font-size: 12px; text-decoration: none; }
   var current = -1;
   var speeds = [1, 1.25, 1.5, 2];
   var speedIndex = 0;
+  var pendingSeek = 0;
+  var seeking = false;
+  var lastUserScroll = 0;
 
   function posKey(id) { return 'sx-pos:' + token + ':' + id; }
   function fmt(sec) {
@@ -113,6 +128,16 @@ a.dl { color: var(--muted); font-size: 12px; text-decoration: none; }
     if (rows[index]) rows[index].classList.toggle('playing', index === current);
   }
 
+  function applySeek(sec) {
+    // iOS Safari：媒体未加载完（readyState 低）时设置 currentTime 会被静默忽略，
+    // 这里先记下待跳转位置，等 loadedmetadata 后再应用。
+    if (audio.readyState >= 1 && isFinite(audio.duration) && audio.duration > 0) {
+      try { audio.currentTime = Math.min(Math.max(0, sec), audio.duration - 0.5); } catch (error) { pendingSeek = sec; }
+    } else {
+      pendingSeek = sec;
+    }
+  }
+
   function play(index) {
     if (index < 0 || index >= chapters.length) return;
     var ch = chapters[index];
@@ -120,10 +145,17 @@ a.dl { color: var(--muted); font-size: 12px; text-decoration: none; }
     audio.src = api + '/audio/' + encodeURIComponent(ch.id);
     audio.playbackRate = speeds[speedIndex];
     var resume = Number(localStorage.getItem(posKey(ch.id)) || 0);
-    if (resume > 2 && (!ch.duration_seconds || resume < ch.duration_seconds - 3)) audio.currentTime = resume;
+    if (resume > 2 && (!ch.duration_seconds || resume < ch.duration_seconds - 3)) applySeek(resume);
     audio.play().catch(function () {});
     $('now-title').textContent = (index + 1) + '. ' + ch.title;
     $('dl').href = api + '/audio/' + encodeURIComponent(ch.id) + '?download=1';
+    var transcript = $('transcript');
+    transcript.textContent = ch.text || '这一章暂时没有配套文稿。';
+    transcript.scrollTop = 0;
+    var hasText = Boolean(ch.text);
+    $('transcript-btn').hidden = !hasText;
+    transcript.classList.toggle('open', hasText);
+    $('transcript-btn').classList.toggle('open', hasText);
     document.querySelectorAll('.chapter').forEach(function (row, i) { row.classList.toggle('playing', i === index); });
     if ('mediaSession' in navigator) {
       navigator.mediaSession.metadata = new MediaMetadata({ title: ch.title, artist: $('book-title').textContent, album: '声息' });
@@ -182,11 +214,15 @@ a.dl { color: var(--muted); font-size: 12px; text-decoration: none; }
   if (savedSpeed > 0 && savedSpeed < speeds.length) { speedIndex = savedSpeed; audio.playbackRate = speeds[speedIndex]; $('speed').textContent = speeds[speedIndex] + '×'; }
 
   var lastSave = 0;
+  var lastSync = 0;
+  audio.addEventListener('loadedmetadata', function () {
+    if (pendingSeek > 0) { applySeek(pendingSeek); pendingSeek = 0; }
+  });
   audio.addEventListener('timeupdate', function () {
     if (current < 0) return;
     var ch = chapters[current];
     $('now-time').textContent = fmt(audio.currentTime) + ' / ' + fmt(audio.duration || ch.duration_seconds);
-    $('seek').value = audio.duration ? String(Math.round(audio.currentTime / audio.duration * 1000)) : '0';
+    if (!seeking) $('seek').value = audio.duration ? String(Math.round(audio.currentTime / audio.duration * 1000)) : '0';
     var now = Date.now();
     if (now - lastSave > 3000) {
       lastSave = now;
@@ -198,9 +234,36 @@ a.dl { color: var(--muted); font-size: 12px; text-decoration: none; }
         if (bar) bar.style.width = pct + '%';
       }
     }
+    // 文稿随播放滚动（用户手动翻阅后 4 秒内不抢滚动位置）
+    var transcript = $('transcript');
+    if (transcript.classList.contains('open') && now - lastSync > 400 && now - lastUserScroll > 4000 && isFinite(audio.duration) && audio.duration > 0) {
+      lastSync = now;
+      var range = transcript.scrollHeight - transcript.clientHeight;
+      transcript.scrollTop = range * (audio.currentTime / audio.duration);
+    }
   });
   $('seek').addEventListener('input', function () {
-    if (audio.duration) audio.currentTime = Number($('seek').value) / 1000 * audio.duration;
+    seeking = true;
+    var duration = audio.duration;
+    if (isFinite(duration) && duration > 0) {
+      var target = Number($('seek').value) / 1000 * duration;
+      applySeek(target);
+      $('now-time').textContent = fmt(target) + ' / ' + fmt(duration);
+    }
+  });
+  function endSeek() { seeking = false; }
+  $('seek').addEventListener('change', endSeek);
+  $('seek').addEventListener('touchend', endSeek);
+  $('seek').addEventListener('pointerup', endSeek);
+  $('back').addEventListener('click', function () { applySeek(audio.currentTime - 15); });
+  $('fwd').addEventListener('click', function () { applySeek(audio.currentTime + 15); });
+  $('transcript-btn').addEventListener('click', function () {
+    var transcript = $('transcript');
+    var open = transcript.classList.toggle('open');
+    $('transcript-btn').classList.toggle('open', open);
+  });
+  ['touchstart', 'wheel'].forEach(function (name) {
+    $('transcript').addEventListener(name, function () { lastUserScroll = Date.now(); }, { passive: true });
   });
 
   if ('mediaSession' in navigator) {
@@ -208,6 +271,9 @@ a.dl { color: var(--muted); font-size: 12px; text-decoration: none; }
     navigator.mediaSession.setActionHandler('nexttrack', function () { step(1); });
     navigator.mediaSession.setActionHandler('play', function () { audio.play().catch(function () {}); });
     navigator.mediaSession.setActionHandler('pause', function () { audio.pause(); });
+    try { navigator.mediaSession.setActionHandler('seekto', function (details) { applySeek(details.seekTime || 0); }); } catch (error) {}
+    try { navigator.mediaSession.setActionHandler('seekforward', function (details) { applySeek(audio.currentTime + (details.seekOffset || 15)); }); } catch (error) {}
+    try { navigator.mediaSession.setActionHandler('seekbackward', function (details) { applySeek(audio.currentTime - (details.seekOffset || 15)); }); } catch (error) {}
   }
 })();
 </script>

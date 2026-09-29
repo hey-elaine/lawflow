@@ -69,6 +69,7 @@ class MobileShareTest(unittest.TestCase):
         self.assertEqual(chapter["title"], "第一章 测试")
         self.assertTrue(chapter["chapter"])
         self.assertFalse(chapter["learned"])
+        self.assertEqual(chapter["text"], "正文。")
         self.assertEqual(data["learned_count"], 0)
 
     def test_recreate_share_revokes_old_link(self) -> None:
@@ -102,11 +103,11 @@ class MobileShareTest(unittest.TestCase):
         self.assertEqual(stream.status_code, 200)
         self.assertIn("audio/mpeg", stream.headers["content-type"])
 
-    def test_lan_setting_roundtrip(self) -> None:
-        self.assertFalse(self.client.get("/api/settings/mobile-share").json()["lan_enabled"])
-        response = self.client.put("/api/settings/mobile-share", json={"lan_enabled": True}).json()
-        self.assertTrue(response["saved"])
-        self.assertTrue(self.client.get("/api/settings/mobile-share").json()["lan_enabled"])
+    def test_section_text_extraction_helpers(self) -> None:
+        markdown = "# 标题\n\n## 第一章 A\n\n**加粗**内容一。\n\n## 第二章 B\n\n正文二。"
+        self.assertEqual(self.main.extract_section_text(markdown, "第一章 A"), "加粗内容一。")
+        self.assertEqual(self.main.extract_section_text(markdown, "第二章 B"), "正文二。")
+        self.assertEqual(self.main.extract_section_text(markdown, "不存在的章"), self.main.markdown_to_plain(markdown))
 
     def test_local_lan_ip_returns_string(self) -> None:
         self.assertIsInstance(self.main.local_lan_ip(), str)

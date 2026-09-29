@@ -1515,24 +1515,14 @@ async function speakAudioScript(audioId, button) {
 async function createMobileShare(button) {
   try {
     setBusy(button, true, '生成中…');
-    const lan = await request('/api/settings/mobile-share');
     const share = await request('/api/projects/' + appState.selectedProject.project.id + '/mobile-share', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
     const url = 'http://' + share.lan_ip + ':' + window.location.port + share.path;
     const result = $('#mobile-share-result');
     const expiry = new Date(share.expires_at).toLocaleString();
     let html = '<img class="mobile-share-qr" alt="手机收听二维码" src="/api/projects/' + appState.selectedProject.project.id + '/mobile-share/qr?url=' + encodeURIComponent(url) + '" />';
     html += '<p class="mobile-share-url"><a href="' + escapeHtml(url) + '">' + escapeHtml(url) + '</a></p>';
-    html += '<p class="form-note">链接 7 天内有效（至 ' + escapeHtml(expiry) + '），且只在声息运行、手机与电脑连同一个 Wi-Fi 时可访问。重新生成会自动作废旧链接。</p>';
-    if (lan.lan_enabled) {
-      html += '<p class="form-note">已开启局域网访问，扫码即可打开。</p>';
-    } else {
-      html += '<p class="form-note mobile-share-warn">声息当前只监听本机，手机暂时连不上。开启「允许手机访问」并重启声息后，再扫码。</p><button class="button button-primary button-small" id="enable-lan-share">允许手机访问（重启后生效）</button>';
-    }
+    html += '<p class="form-note">链接 7 天内有效（至 ' + escapeHtml(expiry) + '），且只在声息运行、手机与电脑连同一个 Wi-Fi 时可访问。若扫码打不开，确认手机和电脑连的是同一个 Wi-Fi，或路由器未开启「设备隔离」。声息退出或电脑睡眠时，手机页会暂时不可用。重新生成会自动作废旧链接。</p>';
     result.innerHTML = html;
-    const enable = $('#enable-lan-share');
-    if (enable) enable.addEventListener('click', async () => {
-      try { setBusy(enable, true, '保存中…'); await request('/api/settings/mobile-share', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lan_enabled: true }) }); enable.remove(); showMessage('已允许手机访问。完全退出并重新打开声息后生效。'); } catch (error) { showMessage(error.message, true); } finally { setBusy(enable, false); }
-    });
   } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); }
 }
 
