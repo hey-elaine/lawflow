@@ -14,6 +14,10 @@ header { padding: calc(18px + env(safe-area-inset-top)) 18px 14px; border-bottom
 header .brand { font-size: 12px; letter-spacing: .18em; color: var(--accent); font-weight: 600; }
 header h1 { margin: 4px 0 2px; font-size: 21px; line-height: 1.35; }
 header .meta { color: var(--muted); font-size: 13px; }
+header .dl-all { margin-top: 10px; }
+header .dl-all button { width: 100%; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 10px; padding: 10px 14px; font-size: 14px; font-weight: 600; }
+header .dl-all button:active { background: var(--line); }
+header .dl-all .hint { color: var(--muted); font-size: 12px; margin-top: 6px; display: none; }
 main { padding: 12px 14px; display: grid; gap: 10px; }
 .chapter { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 13px 14px; background: var(--card); border: 1px solid var(--line); border-radius: 14px; cursor: pointer; }
 .chapter:active { background: #f1eee4; }
@@ -55,6 +59,10 @@ a.dl { color: var(--muted); font-size: 12px; text-decoration: none; }
   <div class="brand">声息 · SHENGXI</div>
   <h1 id="book-title">加载中…</h1>
   <div class="meta" id="book-meta"></div>
+  <div class="dl-all" id="dl-all" hidden>
+    <button id="dl-all-btn">⬇ 下载全部（MP3 + 讲稿）</button>
+    <div class="hint" id="dl-all-hint"></div>
+  </div>
 </header>
 <main id="list"><div class="empty">正在获取章节…</div></main>
 <div class="player" id="player" hidden>
@@ -188,9 +196,43 @@ a.dl { color: var(--muted); font-size: 12px; text-decoration: none; }
     $('book-meta').textContent = meta.join(' · ');
     chapters = data.chapters.concat(data.whole_book);
     renderList();
-    if (chapters.length) { $('player').hidden = false; current = -1; }
+    if (chapters.length) {
+      $('player').hidden = false;
+      current = -1;
+      $('dl-all').hidden = false;
+      var total = data.chapters.length || data.whole_book.length;
+      $('dl-all-btn').textContent = '⬇ 下载全部（' + total + ' 章 MP3 + 讲稿）';
+    }
   }).catch(function (error) {
     $('list').innerHTML = '<div class="error"><b>无法打开</b>链接不存在、已过期或已被吊销。请回到电脑端重新生成二维码。</div>';
+  });
+
+  $('dl-all-btn').addEventListener('click', function () {
+    var btn = $('dl-all-btn');
+    var hint = $('dl-all-hint');
+    btn.disabled = true;
+    btn.textContent = '正在打包…';
+    hint.style.display = 'block';
+    hint.textContent = '正在把整本书打包成 ZIP，章节越多耗时越长，请勿锁屏。';
+    // 用 fetch + blob 触发下载，便于展示进度与错误；Safari 会弹「下载」确认。
+    fetch(api + '/download').then(function (res) {
+      if (!res.ok) throw new Error('打包失败');
+      return res.blob();
+    }).then(function (blob) {
+      var link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = ($('book-title').textContent || '声息') + '.zip';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(function () { URL.revokeObjectURL(link.href); }, 30000);
+      btn.textContent = '✓ 已开始下载，可在「文件」App 的「下载」里查看';
+      hint.textContent = '解压后可用任意播放器离线收听；讲稿在同目录的 TXT 里。';
+    }).catch(function () {
+      btn.textContent = '⬇ 下载全部（MP3 + 讲稿）';
+      btn.disabled = false;
+      hint.textContent = '下载失败，请确认声息在电脑上仍在运行，再试一次。';
+    });
   });
 
   $('play').addEventListener('click', function () {

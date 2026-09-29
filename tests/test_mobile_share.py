@@ -103,6 +103,27 @@ class MobileShareTest(unittest.TestCase):
         self.assertEqual(stream.status_code, 200)
         self.assertIn("audio/mpeg", stream.headers["content-type"])
 
+    def test_download_bundle_zip(self) -> None:
+        import io
+        import zipfile as zf
+
+        project_id, audio_id = _create_project_with_audio(self.client, self.main)
+        share = self.client.post(f"/api/projects/{project_id}/mobile-share").json()
+        response = self.client.get(share["path"] + "/download")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("application/zip", response.headers["content-type"])
+        self.assertIn(".zip", response.headers["content-disposition"])
+        with zf.ZipFile(io.BytesIO(response.content)) as archive:
+            names = archive.namelist()
+        self.assertIn("01 第一章 测试.mp3", names)
+        self.assertTrue(any(n.endswith("讲稿.txt") for n in names))
+        # 响应完成后临时包应被清理
+        self.assertFalse(any(Path(self.main.DATA_DIR / "temp").glob("mobile-bundle-*.zip")))
+
+    def test_download_bundle_invalid_token(self) -> None:
+        response = self.client.get("/m/not-a-real-token/download")
+        self.assertEqual(response.status_code, 404)
+
     def test_section_text_extraction_helpers(self) -> None:
         markdown = "# 标题\n\n## 第一章 A\n\n**加粗**内容一。\n\n## 第二章 B\n\n正文二。"
         self.assertEqual(self.main.extract_section_text(markdown, "第一章 A"), "加粗内容一。")

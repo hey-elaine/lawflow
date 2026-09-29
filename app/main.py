@@ -17,6 +17,7 @@ import sys
 import tempfile
 import uuid
 import zipfile
+import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from html import escape, unescape
@@ -28,6 +29,7 @@ from xml.etree import ElementTree as ET
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi import Request
 from fastapi.responses import FileResponse, Response
+from starlette.background import BackgroundTask
 from fastapi.staticfiles import StaticFiles
 from docx import Document
 import pypdf
@@ -4570,6 +4572,43 @@ def mobile_audio_stream(token: str, audio_id: str, download: int = 0):
     if download:
         return FileResponse(path, media_type="audio/mpeg", filename=path.name)
     return FileResponse(path, media_type="audio/mpeg")
+
+
+@app.get("/m/{token}/download")
+def mobile_download_bundle(token: str):
+    """把整本书打包成 ZIP（逐章 MP3 + 讲稿 TXT），供手机一次性下载离线收听。"""
+    conn = db()
+    share = valid_mobile_share(conn, token)
+    if share is None:
+        conn.close()
+        raise HTTPException(404, "链接不存在或已失效。")
+    book = build_mobile_book(conn, share["project_id"])
+    rows = conn.execute("SELECT id, audio_path FROM audio_outputs WHERE project_id = ? AND status = 'ready'", (share["project_id"],)).fetchall()
+    conn.close()
+    chapters = book["chapters"] or book["whole_book"]
+    if not chapters:
+        raise HTTPException(404, "这本书还没有可下载的音频。")
+    path_map = {row["id"]: row["audio_path"] for row in rows}
+
+    safe_title = re.sub(r"[\\/:*?\"<>|]", "_", book["title"]).strip() or "声息"
+    bundle_path = DATA_DIR / "temp" / f"mobile-bundle-{token[:6]}-{int(time.time())}.zip"
+    script_lines: list[str] = []
+    with zipfile.ZipFile(bundle_path, "w", zipfile.ZIP_STORED) as archive:
+        for index, chapter in enumerate(chapters, start=1):
+            script_lines.append(f"{index}. {chapter['title']}\n{chapter['text']}\n")
+            audio_path = path_map.get(chapter["id"])
+            if audio_path and Path(audio_path).is_file():
+                archive.write(audio_path, arcname=f"{index:02d} {chapter['title']}.mp3")
+        if script_lines:
+            archive.writestr(f"{safe_title} 讲稿.txt", book["title"] + "\n\n" + "\n\n".join(script_lines))
+    # 响应发送完成后清理临时包；下载失败也不会留垃圾（下次打包文件名带时间戳，不会互相覆盖）。
+    cleanup = lambda: bundle_path.unlink(missing_ok=True)
+    return FileResponse(
+        bundle_path,
+        media_type="application/zip",
+        filename=f"{safe_title}.zip",
+        background=BackgroundTask(cleanup),
+    )
 
 
 @app.post("/m/{token}/progress")
