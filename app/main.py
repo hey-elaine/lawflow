@@ -4534,6 +4534,12 @@ def mobile_share_qr(project_id: str, url: str):
     return Response(content=share_qr_svg(url), media_type="image/svg+xml")
 
 
+@app.get("/m/icon-180.png")
+def mobile_app_icon():
+    """手机「添加到主屏幕」用的图标；不含敏感信息，无需 token。"""
+    return FileResponse(STATIC_DIR / "icon-180.png", media_type="image/png")
+
+
 @app.get("/m/{token}")
 def mobile_listen_page(token: str):
     conn = db()

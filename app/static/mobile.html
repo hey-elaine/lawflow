@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="声息" />
+<link rel="apple-touch-icon" href="/m/icon-180.png" />
 <title>声息 · 手机收听</title>
 <style>
 :root { --ink: #14251f; --muted: #6b766f; --accent: #1d5b49; --line: #e6e1d5; --bg: #f7f5ef; --card: #fffdf8; }
@@ -17,7 +19,10 @@ header .meta { color: var(--muted); font-size: 13px; }
 header .dl-all { margin-top: 10px; }
 header .dl-all button { width: 100%; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 10px; padding: 10px 14px; font-size: 14px; font-weight: 600; }
 header .dl-all button:active { background: var(--line); }
+header .dl-all button + button { margin-top: 8px; }
+header .dl-all button.cached { color: var(--accent); border-color: var(--accent); }
 header .dl-all .hint { color: var(--muted); font-size: 12px; margin-top: 6px; display: none; }
+.offline { padding: 8px 18px; background: #f3ecd7; color: #7a5b18; font-size: 13px; }
 main { padding: 12px 14px; display: grid; gap: 10px; }
 .chapter { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 13px 14px; background: var(--card); border: 1px solid var(--line); border-radius: 14px; cursor: pointer; }
 .chapter:active { background: #f1eee4; }
@@ -31,6 +36,7 @@ main { padding: 12px 14px; display: grid; gap: 10px; }
 .chapter .bar i { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 99px; }
 .chip { font-size: 11px; padding: 1px 8px; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); }
 .chip.done { background: var(--accent); border-color: var(--accent); color: #fff; }
+.chip.cached { color: var(--accent); border-color: var(--accent); }
 .learn-btn { border: 0; background: none; color: var(--muted); font-size: 12px; padding: 6px 2px; }
 .learn-btn.done { color: var(--accent); font-weight: 600; }
 .player { position: fixed; left: 0; right: 0; bottom: 0; background: var(--card); border-top: 1px solid var(--line); padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); }
@@ -60,10 +66,12 @@ a.dl { color: var(--muted); font-size: 12px; text-decoration: none; }
   <h1 id="book-title">加载中…</h1>
   <div class="meta" id="book-meta"></div>
   <div class="dl-all" id="dl-all" hidden>
+    <button id="cache-btn">☁ 离线缓存（电脑关机也能听）</button>
     <button id="dl-all-btn">⬇ 下载全部（MP3 + 讲稿）</button>
     <div class="hint" id="dl-all-hint"></div>
   </div>
 </header>
+<div class="offline" id="offline" hidden>离线模式 · 用手机缓存的内容收听，学习标记会在重新连接电脑后同步</div>
 <main id="list"><div class="empty">正在获取章节…</div></main>
 <div class="player" id="player" hidden>
   <input class="seek" id="seek" type="range" min="0" max="1000" value="0" />
@@ -96,6 +104,91 @@ a.dl { color: var(--muted); font-size: 12px; text-decoration: none; }
   var pendingSeek = 0;
   var seeking = false;
   var lastUserScroll = 0;
+  var offlineMode = false;
+  var cachedIds = {};
+  var objectURL = null;
+
+  // ---- IndexedDB 离线缓存（局域网 HTTP 无法用 Service Worker，改用 IDB 存音频与书目）----
+  var dbPromise = null;
+  function openDB() {
+    if (!dbPromise) {
+      if (!('indexedDB' in window)) { dbPromise = Promise.reject(new Error('unsupported')); return dbPromise; }
+      dbPromise = new Promise(function (resolve, reject) {
+        var req = indexedDB.open('sx-listen', 1);
+        req.onupgradeneeded = function () {
+          var db = req.result;
+          if (!db.objectStoreNames.contains('book')) db.createObjectStore('book');
+          if (!db.objectStoreNames.contains('audio')) db.createObjectStore('audio');
+        };
+        req.onsuccess = function () { resolve(req.result); };
+        req.onerror = function () { reject(req.error || new Error('idb error')); };
+      });
+    }
+    return dbPromise;
+  }
+  function idbGet(store, key) {
+    return openDB().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var get = db.transaction(store, 'readonly').objectStore(store).get(key);
+        get.onsuccess = function () { resolve(get.result); };
+        get.onerror = function () { reject(get.error); };
+      });
+    });
+  }
+  function idbPut(store, key, value) {
+    return openDB().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var put = db.transaction(store, 'readwrite').objectStore(store).put(value, key);
+        put.onsuccess = function () { resolve(); };
+        put.onerror = function () { reject(put.error); };
+      });
+    });
+  }
+  function loadCachedFlags() {
+    return openDB().then(function (db) {
+      return new Promise(function (resolve) {
+        try {
+          var cursor = db.transaction('audio', 'readonly').objectStore('audio').openCursor();
+          cursor.onsuccess = function () {
+            var row = cursor.result;
+            if (row) { cachedIds[row.key] = true; row.continue(); } else resolve();
+          };
+          cursor.onerror = function () { resolve(); };
+        } catch (error) { resolve(); }
+      });
+    }).catch(function () {});
+  }
+  function cacheAudio(ch) {
+    if (cachedIds[ch.id]) return Promise.resolve(true);
+    cachedIds[ch.id] = true;
+    return fetch(api + '/audio/' + encodeURIComponent(ch.id)).then(function (res) {
+      if (!res.ok) throw new Error('fetch fail');
+      return res.blob();
+    }).then(function (blob) {
+      return idbPut('audio', ch.id, blob);
+    }).then(function () {
+      renderList(); if (current >= 0) refreshRow(current);
+      return true;
+    }).catch(function () {
+      delete cachedIds[ch.id];
+      return false;
+    });
+  }
+  function resolveAudio(ch) {
+    return idbGet('audio', ch.id).then(function (blob) {
+      if (blob) {
+        cachedIds[ch.id] = true;
+        if (objectURL) URL.revokeObjectURL(objectURL);
+        objectURL = URL.createObjectURL(blob);
+        return objectURL;
+      }
+      if (offlineMode) return '';
+      cacheAudio(ch);
+      return api + '/audio/' + encodeURIComponent(ch.id);
+    }).catch(function () {
+      return offlineMode ? '' : api + '/audio/' + encodeURIComponent(ch.id);
+    });
+  }
 
   function posKey(id) { return 'sx-pos:' + token + ':' + id; }
   function fmt(sec) {
@@ -118,6 +211,7 @@ a.dl { color: var(--muted); font-size: 12px; text-decoration: none; }
       row.innerHTML = '<div class="num">' + (index + 1) + '</div>' +
         '<div class="info"><div class="title"></div><div class="sub"><span>' + fmt(ch.duration_seconds) + '</span>' +
         (ch.chapter ? '' : '<span class="chip">整篇</span>') +
+        (cachedIds[ch.id] ? '<span class="chip cached">已缓存</span>' : '') +
         '<span class="chip' + (ch.learned ? ' done' : '') + '" data-learn>' + (ch.learned ? '已学' : '未学') + '</span></div>' +
         '<div class="bar"><i style="width:' + pct + '%"></i></div></div>' +
         '<button class="learn-btn' + (ch.learned ? ' done' : '') + '" data-learn-btn>' + (ch.learned ? '✓ 已学' : '标记已学') + '</button>';
@@ -150,12 +244,18 @@ a.dl { color: var(--muted); font-size: 12px; text-decoration: none; }
     if (index < 0 || index >= chapters.length) return;
     var ch = chapters[index];
     current = index;
-    audio.src = api + '/audio/' + encodeURIComponent(ch.id);
-    audio.playbackRate = speeds[speedIndex];
     var resume = Number(localStorage.getItem(posKey(ch.id)) || 0);
-    if (resume > 2 && (!ch.duration_seconds || resume < ch.duration_seconds - 3)) applySeek(resume);
-    audio.play().catch(function () {});
+    var rate = speeds[speedIndex];
+    resolveAudio(ch).then(function (url) {
+      if (current !== index) return;
+      if (!url) { $('now-time').textContent = '本章未缓存 · 需连接电脑后播放'; return; }
+      audio.src = url;
+      audio.playbackRate = rate;
+      if (resume > 2 && (!ch.duration_seconds || resume < ch.duration_seconds - 3)) applySeek(resume);
+      audio.play().catch(function () {});
+    });
     $('now-title').textContent = (index + 1) + '. ' + ch.title;
+    $('dl').hidden = offlineMode;
     $('dl').href = api + '/audio/' + encodeURIComponent(ch.id) + '?download=1';
     var transcript = $('transcript');
     transcript.textContent = ch.text || '这一章暂时没有配套文稿。';
@@ -170,13 +270,51 @@ a.dl { color: var(--muted); font-size: 12px; text-decoration: none; }
     }
   }
 
+  function markLearned(index, value) {
+    var ch = chapters[index];
+    ch.learned = value;
+    renderList();
+    if (current >= 0) refreshRow(current);
+  }
+
+  function queueProgress(ch, completed) {
+    var queue = [];
+    try { queue = JSON.parse(localStorage.getItem('sx-queue:' + token) || '[]'); } catch (error) {}
+    queue = queue.filter(function (item) { return item.audio_id !== ch.id; });
+    queue.push({ audio_id: ch.id, completed: completed });
+    localStorage.setItem('sx-queue:' + token, JSON.stringify(queue));
+  }
+
+  function flushQueue() {
+    var raw = localStorage.getItem('sx-queue:' + token);
+    if (!raw) return;
+    var queue;
+    try { queue = JSON.parse(raw); } catch (error) { return; }
+    if (!queue.length) return;
+    Promise.all(queue.map(function (item) {
+      return fetch(api + '/progress', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(item) })
+        .then(function (res) { if (!res.ok) throw new Error('bad'); });
+    })).then(function () {
+      localStorage.removeItem('sx-queue:' + token);
+      $('offline').hidden = true;
+    }).catch(function () {});
+  }
+  window.addEventListener('online', flushQueue);
+  window.addEventListener('pageshow', flushQueue);
+
   function toggleLearn(index) {
     var ch = chapters[index];
-    fetch(api + '/progress', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ audio_id: ch.id, completed: !ch.learned }) })
+    var target = !ch.learned;
+    fetch(api + '/progress', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ audio_id: ch.id, completed: target }) })
       .then(function (res) { return res.json(); })
       .then(function (data) {
-        if (data.saved) { ch.learned = !ch.learned; renderList(); if (current >= 0) refreshRow(current); }
-      }).catch(function () {});
+        if (data.saved) markLearned(index, target);
+      })
+      .catch(function () {
+        // 离线：本地先生效并入队，连回电脑后自动同步
+        markLearned(index, target);
+        queueProgress(ch, target);
+      });
   }
 
   function step(delta) {
@@ -185,26 +323,84 @@ a.dl { color: var(--muted); font-size: 12px; text-decoration: none; }
     play(next);
   }
 
-  fetch(api + '/data').then(function (res) {
-    if (!res.ok) throw new Error('链接已失效');
-    return res.json();
-  }).then(function (data) {
+  function applyData(data) {
     $('book-title').textContent = data.title;
     var meta = [];
     if (data.total) meta.push('已学 ' + data.learned_count + ' / ' + data.total + ' 章');
     meta.push(data.whole_book.length ? '含整篇音频' : '共 ' + data.total + ' 章');
+    if (offlineMode) meta.push('离线');
     $('book-meta').textContent = meta.join(' · ');
     chapters = data.chapters.concat(data.whole_book);
-    renderList();
-    if (chapters.length) {
-      $('player').hidden = false;
-      current = -1;
-      $('dl-all').hidden = false;
-      var total = data.chapters.length || data.whole_book.length;
-      $('dl-all-btn').textContent = '⬇ 下载全部（' + total + ' 章 MP3 + 讲稿）';
+    loadCachedFlags().then(function () {
+      renderList();
+      if (chapters.length) {
+        $('player').hidden = false;
+        current = -1;
+        $('dl-all').hidden = false;
+        var cachedCount = chapters.filter(function (ch) { return cachedIds[ch.id]; }).length;
+        $('cache-btn').textContent = '☁ 离线缓存（' + cachedCount + ' / ' + chapters.length + ' 章）';
+        if (offlineMode) $('dl-all-btn').hidden = true;
+        else {
+          var total = data.chapters.length || data.whole_book.length;
+          $('dl-all-btn').textContent = '⬇ 下载全部（' + total + ' 章 MP3 + 讲稿）';
+        }
+      }
+    });
+  }
+
+  fetch(api + '/data').then(function (res) {
+    if (!res.ok) throw new Error('链接已失效');
+    return res.json();
+  }).then(function (data) {
+    flushQueue();
+    idbPut('book', token, data).catch(function () {});
+    applyData(data);
+  }).catch(function () {
+    // 电脑不在线：尝试用手机里缓存的书目继续（页面壳已加载时仍可播放已缓存章节）
+    idbGet('book', token).then(function (data) {
+      if (!data) throw new Error('no cache');
+      offlineMode = true;
+      $('offline').hidden = false;
+      applyData(data);
+    }).catch(function () {
+      $('list').innerHTML = '<div class="error"><b>无法打开</b>链接不存在、已过期或已被吊销；或电脑不在线且手机上没有缓存这本书。请回到电脑端重新生成二维码。</div>';
+    });
+  });
+
+  $('cache-btn').addEventListener('click', function () {
+    var btn = $('cache-btn');
+    var hint = $('dl-all-hint');
+    var todo = chapters.filter(function (ch) { return !cachedIds[ch.id]; });
+    hint.style.display = 'block';
+    if (!todo.length) {
+      btn.classList.add('cached');
+      hint.textContent = '✓ 全部章节都已缓存在手机上，电脑关机也不影响收听。';
+      return;
     }
-  }).catch(function (error) {
-    $('list').innerHTML = '<div class="error"><b>无法打开</b>链接不存在、已过期或已被吊销。请回到电脑端重新生成二维码。</div>';
+    btn.disabled = true;
+    hint.textContent = '正在把章节音频存到手机，章节越多耗时越长，请勿锁屏。';
+    var fail = 0;
+    var done = 0;
+    var total = todo.length;
+    function next() {
+      if (!todo.length) {
+        btn.disabled = false;
+        btn.classList.add('cached');
+        btn.textContent = '☁ 离线缓存（' + (chapters.length - fail) + ' / ' + chapters.length + ' 章）';
+        hint.textContent = fail
+          ? '有 ' + fail + ' 章缓存失败，可稍后再点一次补齐。'
+          : '✓ 已全部缓存。注意：重新打开页面时仍需声息在线加载页面本身，之后播放、文稿、标记都走手机缓存。';
+        return;
+      }
+      var ch = todo.shift();
+      cacheAudio(ch).then(function (ok) {
+        if (!ok) fail++;
+        done++;
+        btn.textContent = '☁ 缓存中… ' + done + ' / ' + total;
+        next();
+      });
+    }
+    next();
   });
 
   $('dl-all-btn').addEventListener('click', function () {

@@ -124,6 +124,12 @@ class MobileShareTest(unittest.TestCase):
         response = self.client.get("/m/not-a-real-token/download")
         self.assertEqual(response.status_code, 404)
 
+    def test_app_icon_route(self) -> None:
+        response = self.client.get("/m/icon-180.png")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("image/png", response.headers["content-type"])
+        self.assertGreater(len(response.content), 1000)
+
     def test_section_text_extraction_helpers(self) -> None:
         markdown = "# 标题\n\n## 第一章 A\n\n**加粗**内容一。\n\n## 第二章 B\n\n正文二。"
         self.assertEqual(self.main.extract_section_text(markdown, "第一章 A"), "加粗内容一。")
