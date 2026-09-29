@@ -41,6 +41,14 @@ set_plist_string() {
 set_plist_string CFBundleShortVersionString "$APP_VERSION"
 set_plist_string CFBundleVersion "$APP_VERSION"
 
+# 应用图标（声息：米白亚麻底 + 橄榄绿「声」字声波）
+ICON_SRC="$ROOT_DIR/resources/icons/LawFlow.icns"
+if [[ -f "$ICON_SRC" ]]; then
+  cp "$ICON_SRC" "$APP_PATH/Contents/Resources/LawFlow.icns"
+  set_plist_string CFBundleIconFile "LawFlow"
+  touch "$APP_PATH"
+fi
+
 if [[ -n "$SIGNING_IDENTITY" ]]; then
   codesign --force --deep --options runtime --timestamp --sign "$SIGNING_IDENTITY" "$APP_PATH"
 elif [[ "$REQUIRE_SIGNING" == "1" ]]; then
