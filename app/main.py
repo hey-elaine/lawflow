@@ -805,6 +805,30 @@ def parse_text(path: Path) -> tuple[list[dict], dict]:
     return blocks, {"parser": "plain-text-v1", "paragraph_count": sum(1 for b in blocks if b["kind"] == "paragraph"), "heading_count": sum(1 for b in blocks if b["kind"] == "heading"), "headings": []}
 
 
+OCR_SENTENCE_END = re.compile(r"[。！？.?…”\"』」）)]$")
+
+
+def _merge_ocr_lines(lines: list[str]) -> list[str]:
+    """把 OCR 逐行结果按句读合并成段落：句子被换行截断时拼回同段，并过滤界面残留文字。"""
+    paragraphs: list[str] = []
+    buffer = ""
+    for raw in lines:
+        line = raw.strip()
+        if not line or _is_ui_noise(line):
+            continue
+        if buffer:
+            joiner = " " if re.search(r"[A-Za-z]$", buffer) and re.match(r"[A-Za-z]", line) else ""
+            buffer += joiner + line
+        else:
+            buffer = line
+        if OCR_SENTENCE_END.search(line):
+            paragraphs.append(buffer)
+            buffer = ""
+    if buffer:
+        paragraphs.append(buffer)
+    return paragraphs
+
+
 def _ocr_pdf_text(path: Path, max_pages: int = 40) -> str:
     """用 macOS Vision 框架对无文本层的 PDF 做本地 OCR（离线、免费、中英文）。"""
     import io
@@ -831,8 +855,9 @@ def _ocr_pdf_text(path: Path, max_pages: int = 40) -> str:
             candidates = observation.topCandidates_(1)
             if candidates:
                 lines.append(candidates[0].string())
-        if lines:
-            pages.append("\n".join(lines))
+        paragraphs = _merge_ocr_lines(lines)
+        if paragraphs:
+            pages.append("\n\n".join(paragraphs))
     doc.close()
     return "\n\n".join(pages)
 

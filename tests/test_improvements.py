@@ -604,6 +604,22 @@ class ImprovementsTest(unittest.TestCase):
         self.assertEqual(response.content, b'preview-mp3')
         self.assertEqual(response.headers['content-type'], 'audio/mpeg')
 
+    def test_merge_ocr_lines_joins_sentences_and_drops_noise(self):
+        lines = [
+            '2026年9月25日，美国参议员宣布提出一项采购限制法案。',
+            'McCormick办公室公布的名称',
+            '是《保障国家安全系统免受中国光收发器影响法案》。',
+            '微信扫一扫',
+            '喜欢作者',
+            '这项编号 S.5548 的法案',
+        ]
+        merged = self.main._merge_ocr_lines(lines)
+        self.assertEqual(merged, [
+            '2026年9月25日，美国参议员宣布提出一项采购限制法案。',
+            'McCormick办公室公布的名称是《保障国家安全系统免受中国光收发器影响法案》。',
+            '这项编号 S.5548 的法案',
+        ])
+
     def test_parse_pdf_uses_vision_ocr_for_image_pdf(self):
         try:
             import Vision  # noqa: F401
