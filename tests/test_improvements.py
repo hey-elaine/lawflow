@@ -604,6 +604,36 @@ class ImprovementsTest(unittest.TestCase):
         self.assertEqual(response.content, b'preview-mp3')
         self.assertEqual(response.headers['content-type'], 'audio/mpeg')
 
+    def test_parse_pdf_uses_vision_ocr_for_image_pdf(self):
+        try:
+            import Vision  # noqa: F401
+        except ImportError:
+            self.skipTest('需要 macOS Vision 框架')
+        from PIL import Image, ImageDraw, ImageFont
+        img = Image.new('RGB', (1240, 900), 'white')
+        draw = ImageDraw.Draw(img)
+        font = None
+        for candidate in ('/System/Library/Fonts/Supplemental/Arial.ttf', '/System/Library/Fonts/Helvetica.ttc'):
+            try:
+                font = ImageFont.truetype(candidate, 56)
+                break
+            except Exception:
+                continue
+        if font is None:
+            self.skipTest('未找到可用的系统字体')
+        draw.text((100, 150), 'Quantum Harbor Protocol Notes', fill='black', font=font)
+        draw.text((100, 320), 'Section one describes the import pipeline.', fill='black', font=font)
+        draw.text((100, 490), 'Section two lists fallback behaviour.', fill='black', font=font)
+        path = self.main.DATA_DIR / 'ocr-fixture.pdf'
+        img.save(path, 'PDF', resolution=100.0)
+        try:
+            blocks, _ = self.main.parse_pdf(path)
+        finally:
+            path.unlink(missing_ok=True)
+        joined = ' '.join(block['text'] for block in blocks)
+        self.assertIn('Quantum', joined)
+        self.assertIn('fallback', joined)
+
     def test_fetch_article_filters_noise_and_keeps_headings(self):
         import httpx
         html = ('<html><head><meta property="og:title" content="当中国AI企业走上安理会讲台"/></head><body>'

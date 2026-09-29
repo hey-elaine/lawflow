@@ -805,8 +805,40 @@ def parse_text(path: Path) -> tuple[list[dict], dict]:
     return blocks, {"parser": "plain-text-v1", "paragraph_count": sum(1 for b in blocks if b["kind"] == "paragraph"), "heading_count": sum(1 for b in blocks if b["kind"] == "heading"), "headings": []}
 
 
+def _ocr_pdf_text(path: Path, max_pages: int = 40) -> str:
+    """用 macOS Vision 框架对无文本层的 PDF 做本地 OCR（离线、免费、中英文）。"""
+    import io
+
+    import pypdfium2 as pdfium
+    import Vision
+
+    doc = pdfium.PdfDocument(str(path))
+    pages = []
+    for index in range(min(len(doc), max_pages)):
+        bitmap = doc[index].render(scale=2.0)
+        buffer = io.BytesIO()
+        bitmap.to_pil().save(buffer, format="PNG")
+        handler = Vision.VNImageRequestHandler.alloc().initWithData_options_(buffer.getvalue(), None)
+        request = Vision.VNRecognizeTextRequest.alloc().init()
+        request.setRecognitionLevel_(Vision.VNRequestTextRecognitionLevelAccurate)
+        request.setRecognitionLanguages_(["zh-Hans", "en-US"])
+        request.setUsesLanguageCorrection_(True)
+        ok, _error = handler.performRequests_error_([request], None)
+        if not ok:
+            continue
+        lines = []
+        for observation in request.results() or []:
+            candidates = observation.topCandidates_(1)
+            if candidates:
+                lines.append(candidates[0].string())
+        if lines:
+            pages.append("\n".join(lines))
+    doc.close()
+    return "\n\n".join(pages)
+
+
 def parse_pdf(path: Path) -> tuple[list[dict], dict]:
-    """提取 PDF 文本后复用 Markdown/纯文本的结构解析。扫描件无文本层时给出明确提示。"""
+    """提取 PDF 文本后复用 Markdown/纯文本的结构解析。无文本层时在 Mac 上自动走本机 OCR。"""
     reader = pypdf.PdfReader(str(path))
     pages = []
     for page in reader.pages:
@@ -815,8 +847,13 @@ def parse_pdf(path: Path) -> tuple[list[dict], dict]:
         except Exception:
             pages.append("")
     text = "\n\n".join(page.strip() for page in pages if page.strip())
+    if len(clean_text(text)) < 40 and sys.platform == "darwin":
+        try:
+            text = _ocr_pdf_text(path)
+        except Exception:
+            text = ""
     if len(clean_text(text)) < 40:
-        raise HTTPException(status_code=400, detail="这份 PDF 没有可提取的文字（可能是扫描件或图片版），请换文字版。")
+        raise HTTPException(status_code=400, detail="这份 PDF 没有可提取的文字，本机 OCR 也未成功；请换文字版 PDF，或打开原文复制正文后用「粘贴文本」导入。")
     with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8") as handle:
         handle.write(text)
         temp_path = Path(handle.name)

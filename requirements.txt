@@ -10,3 +10,5 @@ mcp>=1.10,<2.0
 edge-tts>=7.2,<8.0
 pywebview>=5.4,<6.0
 pypdf>=5.0,<7.0
+pypdfium2>=4.0,<7.0
+pyobjc-framework-Vision>=10.0; sys_platform == "darwin"
