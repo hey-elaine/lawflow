@@ -1837,10 +1837,13 @@ function orderedListenTracks(detail) {
   if (!content) return [];
   const ready = (detail.audio_outputs || []).filter(output => output.audio_available && output.narrative_content_id === content.id);
   const headings = [...(content.markdown || '').matchAll(/^##[ \t]+(.+?)\s*$/gm)].map(match => match[1].trim());
-  const chapters = headings.map(heading => ready.find(output => output.title === content.title + ' · ' + heading));
+  const chapters = headings.map(heading => {
+    const output = ready.find(item => item.title === content.title + ' · ' + heading);
+    return output ? { ...output, display_title: heading } : null;
+  });
   if (chapters.length && chapters.every(Boolean)) return chapters;
   const full = ready.find(output => output.title === content.title);
-  return full ? [full] : chapters.filter(Boolean);
+  return full ? [{ ...full, display_title: content.title }] : chapters.filter(Boolean);
 }
 
 function renderListenPlayer(projectName, projectId) {
@@ -1851,7 +1854,7 @@ function renderListenPlayer(projectName, projectId) {
   const lastTrack = localStorage.getItem('shengxi-last-track:' + projectId);
   listenState.index = Math.max(0, listenState.tracks.findIndex(track => track.id === lastTrack));
   list.innerHTML = listenState.tracks.map((track, index) =>
-    '<li><button type="button" class="listen-chapter" data-listen-index="' + index + '"><span class="listen-no">' + String(index + 1).padStart(2, '0') + '</span><span class="listen-name">' + escapeHtml(track.title || ('第 ' + (index + 1) + ' 章')) + '</span><span class="listen-duration" data-listen-duration="' + track.id + '">' + (track.duration_seconds ? formatListenTime(track.duration_seconds) : '') + '</span></button></li>'
+    '<li><button type="button" class="listen-chapter" data-listen-index="' + index + '" title="' + escapeHtml(track.title || track.display_title || '') + '"><span class="listen-no">' + String(index + 1).padStart(2, '0') + '</span><span class="listen-name">' + escapeHtml(track.display_title || track.title || ('第 ' + (index + 1) + ' 章')) + '</span><span class="listen-duration" data-listen-duration="' + track.id + '">' + (track.duration_seconds ? formatListenTime(track.duration_seconds) : '') + '</span></button></li>'
   ).join('');
   $$('#listen-chapters .listen-chapter').forEach(button => button.addEventListener('click', () => playListenTrack(Number(button.dataset.listenIndex))));
   $('#listen-meta').textContent = '共 ' + listenState.tracks.length + ' 段 · ' + projectName;
@@ -1908,7 +1911,7 @@ function playListenTrack(index) {
 function syncListenUi() {
   const track = listenState.tracks[listenState.index];
   if (!track) return;
-  $('#listen-title').textContent = track.title || ('第 ' + (listenState.index + 1) + ' 段');
+  $('#listen-title').textContent = track.display_title || track.title || ('第 ' + (listenState.index + 1) + ' 段');
   $('#listen-total').textContent = track.duration_seconds ? formatListenTime(track.duration_seconds) : '0:00';
   $$('#listen-chapters .listen-chapter').forEach((button, i) => button.classList.toggle('active', i === listenState.index));
 }

@@ -692,7 +692,7 @@ body { background-color: var(--linen); background-image: url("data:image/svg+xml
 .listen-chapter:hover { background: #f1ecdd; }
 .listen-chapter.active { background: #ebe4d0; }
 .listen-no { font: 500 11px "DM Mono", monospace; color: #a89a76; }
-.listen-name { flex: 1; min-width: 0; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.listen-name { display:-webkit-box; flex:1; min-width:0; overflow:hidden; -webkit-box-orient:vertical; -webkit-line-clamp:2; font-size:14px; line-height:1.5; overflow-wrap:anywhere; }
 .listen-duration { flex: none; font: 500 11px "DM Mono", monospace; color: #8d8264; }
 .listen-empty { margin: 42px 0 0; color: #8d8264; text-align: center; letter-spacing: 0.08em; }
 
@@ -705,8 +705,17 @@ body { background-color: var(--linen); background-image: url("data:image/svg+xml
 .eyebrow.light { color: var(--tea-light); }
 .trust-points b { color: #3b3428; }
 .trust-points p { color: #6d6450; }
+.trust-summary { display:grid; grid-template-columns:190px minmax(0,1fr); gap:55px; align-items:start; }
+.trust-section { padding:48px 0; }
+.trust-summary .eyebrow { margin:3px 0 0; }
+.trust-summary .trust-points { grid-template-columns:repeat(3,minmax(0,1fr)); gap:34px; }
+.trust-summary .trust-points div { padding:0; border:0; }
+.trust-summary .trust-points b { font-size:15px; }
+.trust-summary .trust-points p { margin-top:6px; font-size:13px; line-height:1.8; }
 @media (max-width: 850px) { .workflow-heading,.skill-heading { align-items:flex-start; flex-direction:column; gap:16px; }.section-intro { max-width:620px; }.workflow-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media (max-width: 850px) { .trust-summary { grid-template-columns:1fr; gap:18px; }.trust-summary .trust-points { gap:20px; } }
 @media (max-width: 560px) { .workflow-grid { grid-template-columns:1fr; }.workflow-grid article { min-height:0; } }
+@media (max-width: 560px) { .trust-summary .trust-points { grid-template-columns:1fr; gap:17px; } }
 
 @media (max-width: 1020px) {
   .listen-player { grid-template-columns: 1fr; }

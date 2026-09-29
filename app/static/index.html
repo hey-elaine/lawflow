@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>声息｜把没有时间读完的东西，带到路上</title>
-  <link rel="stylesheet" href="/styles.css?v=20260929-43" />
+  <link rel="stylesheet" href="/styles.css?v=20260929-44" />
 </head>
 <body>
   <header class="nav shell">
@@ -77,7 +77,7 @@
       </div>
     </section>
 
-    <section id="trust" class="trust-section"><div class="shell trust-grid"><div><p class="eyebrow light">内容由你把关</p><h2>从原文到成稿，<br/>每一步都能核对。</h2></div><div class="trust-points"><div><b>核对原文</b><p>导入前可以展开查看抓取到的完整正文，确认文章内容和结尾是否齐全。</p></div><div><b>审阅生成内容</b><p>AI 整理的大纲和讲稿需要你确认；待核验提示不等于已完成事实核查。</p></div><div><b>明确材料去向</b><p>材料和进度保存在这台电脑。使用外部模型生成内容时，所选材料会发送给对应的模型服务。</p></div></div></div></section>
+    <section id="trust" class="trust-section"><div class="shell trust-summary"><p class="eyebrow light">材料与审阅</p><div class="trust-points"><div><b>保存在本机</b><p>文章、整理进度和生成结果保存在这台电脑。</p></div><div><b>模型由你选择</b><p>使用外部模型时，所选材料会发送给对应的模型服务。</p></div><div><b>生成稿需要确认</b><p>待核验提示只标出疑点，不代表已经完成事实核查。</p></div></div></div></section>
 
     <section id="workspace" class="workspace shell">
       <div class="workspace-top"><div><button type="button" class="back-home" id="back-home">← 回主页</button><p class="eyebrow">我的书架</p><h2>把存下来的东西，再遇见一次。</h2><p>新文章先核对原文；已经整理过的，从上次停下的地方继续。</p></div><div class="workspace-actions"><button class="button button-outline" id="open-daily-brief">每日速听订阅</button><button class="button button-outline" id="new-project">自定义整理任务</button></div></div>
@@ -148,6 +148,6 @@
 
   <dialog id="daily-brief-dialog" class="dialog"><form id="daily-brief-form"><div class="dialog-header"><h2>每日速听</h2><button type="button" aria-label="关闭" class="icon-button" data-close-dialog="daily-brief-dialog">×</button></div><p class="form-note">订阅公开 RSS 或 Atom 源。系统每天只收集新文章并建立待审速听任务；不会自动发布，也不会自动生成最终 MP3。</p><label>订阅名称<input required name="name" maxlength="120" placeholder="例如：数据合规资讯" /></label><label>RSS / Atom 地址<input required name="feed_url" type="url" placeholder="https://example.com/feed.xml" /></label><div class="plan-settings"><div class="field"><label>每日运行时间<input name="daily_time" type="time" value="08:00" /></label></div><div class="field"><label>每次最多收集<input name="max_items" type="number" min="1" max="10" value="3" /> 篇</label></div></div><label class="check-label"><input type="checkbox" name="auto_generate" /> 允许自动生成待审速听稿与音频脚本（仅在模型已配置且允许发送素材时）</label><div class="dialog-actions"><button type="button" class="button button-outline" data-close-dialog="daily-brief-dialog">取消</button><button type="submit" class="button button-primary">保存订阅</button></div></form></dialog>
 
-  <script src="/app.js?v=20260929-43"></script>
+  <script src="/app.js?v=20260929-44"></script>
 </body>
 </html>
