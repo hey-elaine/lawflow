@@ -3980,8 +3980,15 @@ def get_provider():
     row = conn.execute("SELECT setting_value FROM settings WHERE setting_key = 'provider' ").fetchone()
     conn.close()
     value = parse_json(row["setting_value"], {}) if row else {}
-    if value.get("api_key"):
-        value["api_key"] = "已配置（本地不回显）"
+    # 每个服务商一个独立 Key 槽位；兼容旧版单一 api_key
+    keys = dict(value.get("api_keys") or {})
+    if not keys and value.get("api_key"):
+        keys[value.get("provider_preset") or "openai"] = value["api_key"]
+        value["api_keys"] = keys
+    preset = value.get("provider_preset") or "openai"
+    active = keys.get(preset) or ""
+    value["api_keys"] = {name: ("已配置（本地不回显）" if stored else "") for name, stored in keys.items()}
+    value["api_key"] = "已配置（本地不回显）" if active else ""
     if value.get("tts_api_key"):
         value["tts_api_key"] = "已配置（本地不回显）"
     if value.get("asr_api_key"):
@@ -4009,11 +4016,20 @@ def save_provider(payload: ProviderSettings):
             value["tts_model"] = preset["tts_model"]
     conn = db()
     prior = conn.execute("SELECT setting_value FROM settings WHERE setting_key = 'provider'").fetchone()
-    if prior:
-        prior_value = parse_json(prior["setting_value"], {})
-        for key in ("api_key", "tts_api_key", "asr_api_key"):
-            if value.get(key) == "已配置（本地不回显）":
-                value[key] = prior_value.get(key, "")
+    prior_value = parse_json(prior["setting_value"], {}) if prior else {}
+    prior_keys = dict(prior_value.get("api_keys") or {})
+    if prior_value.get("api_key") and not prior_keys:
+        # 旧版迁移：唯一的 api_key 归到当时所选服务商名下
+        prior_keys[prior_value.get("provider_preset") or "openai"] = prior_value["api_key"]
+    preset_key = value["provider_preset"]
+    incoming = str(value.get("api_key", ""))
+    if incoming == "已配置（本地不回显）":
+        # 表单回显的占位符：沿用该服务商已存的 Key
+        value["api_key"] = prior_keys.get(preset_key, "")
+    else:
+        value["api_key"] = incoming
+    prior_keys[preset_key] = value["api_key"]
+    value["api_keys"] = prior_keys
     conn.execute("INSERT INTO settings (setting_key, setting_value, updated_at) VALUES ('provider', ?, ?) ON CONFLICT(setting_key) DO UPDATE SET setting_value = excluded.setting_value, updated_at = excluded.updated_at", (json.dumps(value, ensure_ascii=False), timestamp))
     conn.commit()
     conn.close()

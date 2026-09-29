@@ -640,6 +640,28 @@ class ImprovementsTest(unittest.TestCase):
         stored = self.main.get_internal_provider_settings()
         self.assertEqual(stored['api_key'], 'sk-secret-key')
 
+    def test_save_provider_keeps_keys_per_preset(self):
+        base = {'model_name': '', 'allow_source_upload': True}
+        # 1. 先给 deepseek 配一个 Key
+        response = self.client.put('/api/settings/provider', json={**base, 'provider_preset': 'deepseek', 'api_key': 'sk-ds-123'})
+        self.assertEqual(response.status_code, 200)
+        # 2. 切到 openai：前端会把已配置的 Key 回显成占位符，这里填新 Key
+        response = self.client.put('/api/settings/provider', json={**base, 'provider_preset': 'openai', 'api_key': 'sk-oai-456'})
+        self.assertEqual(response.status_code, 200)
+        stored = self.main.get_internal_provider_settings()
+        self.assertEqual(stored['api_key'], 'sk-oai-456')
+        self.assertEqual(stored['api_keys']['deepseek'], 'sk-ds-123')
+        # 3. 切回 deepseek：占位符意味着沿用该服务商已存的 Key
+        response = self.client.put('/api/settings/provider', json={**base, 'provider_preset': 'deepseek', 'api_key': '已配置（本地不回显）'})
+        self.assertEqual(response.status_code, 200)
+        stored = self.main.get_internal_provider_settings()
+        self.assertEqual(stored['api_key'], 'sk-ds-123')
+        # 4. GET 接口返回按服务商打码的 Key 表
+        response = self.client.get('/api/settings/provider')
+        data = response.json()
+        self.assertEqual(data['api_keys'], {'deepseek': '已配置（本地不回显）', 'openai': '已配置（本地不回显）'})
+        self.assertEqual(data['api_key'], '已配置（本地不回显）')
+
     def test_parse_pdf_uses_vision_ocr_for_image_pdf(self):
         try:
             import Vision  # noqa: F401

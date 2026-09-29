@@ -1582,6 +1582,7 @@ function bindDialogs() {
         }
       }
       ['provider_preset','provider_name','base_url','model_name','api_key','tts_base_url','tts_model','tts_voice','tts_api_key','tts_provider','tts_speed','tts_instructions','asr_base_url','asr_model','asr_api_key'].forEach(key => { form.elements[key].value = config[key] ?? (key === 'provider_preset' ? 'openai' : key === 'tts_provider' ? 'compatible' : key === 'tts_speed' ? '1' : ''); });
+      appState.providerApiKeys = config.api_keys || {};
       form.elements.allow_source_upload.checked = !!config.allow_source_upload;
       form.elements.output_directory.value = exportConfig.output_directory || exportConfig.default_directory || '';
       applyProviderPreset(form, false);
@@ -1606,6 +1607,7 @@ function bindDialogs() {
         request('/api/settings/provider', { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) }),
         request('/api/settings/export', { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(exportBody) }),
       ]);
+      await refreshProviderApiKeys();
       $('#settings-dialog').close();
       showMessage('本机设置已保存。');
     } catch(error) {
@@ -1622,6 +1624,7 @@ function bindDialogs() {
       const form = $('#settings-form'); const body = Object.fromEntries(new FormData(form)); body.allow_source_upload = form.elements.allow_source_upload.checked;
       const exportBody = {output_directory: body.output_directory || ''}; delete body.output_directory;
       await Promise.all([request('/api/settings/provider', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)}), request('/api/settings/export', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(exportBody)})]);
+      await refreshProviderApiKeys();
       const test = await request('/api/settings/provider/test', {method:'POST'});
       const provider = typeof test.provider_name === 'string' ? test.provider_name : '已选服务商';
       const model = typeof test.model_name === 'string' ? test.model_name : '已配置模型';
@@ -1640,6 +1643,7 @@ function bindDialogs() {
       const form = $('#settings-form'); const body = Object.fromEntries(new FormData(form)); body.allow_source_upload = form.elements.allow_source_upload.checked;
       const exportBody = {output_directory: body.output_directory || ''}; delete body.output_directory;
       await Promise.all([request('/api/settings/provider', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)}), request('/api/settings/export', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(exportBody)})]);
+      await refreshProviderApiKeys();
       const response = await request('/api/settings/tts/test', {method:'POST'});
       const audio = await response.blob();
       if (player.src.startsWith('blob:')) URL.revokeObjectURL(player.src);
@@ -1678,6 +1682,11 @@ function applyProviderPreset(form, overwrite = false) {
   const item = mapping[preset]; const custom = preset === 'custom';
   ['provider_name','base_url','model_name'].forEach(key => { form.elements[key].closest('label').style.display = custom ? '' : 'none'; });
   if (item && (overwrite || !form.elements.base_url.value)) { form.elements.provider_name.value = item.name; form.elements.base_url.value = item.url; form.elements.model_name.value = item.model; }
+  // 每个服务商独立 Key：切换预设时填回各自已存的 Key（未配置则为空），避免把 A 家 Key 存给 B 家
+  if (form.elements.api_key) form.elements.api_key.value = (appState.providerApiKeys || {})[preset] || '';
+}
+async function refreshProviderApiKeys() {
+  try { const config = await request('/api/settings/provider'); appState.providerApiKeys = config.api_keys || {}; } catch (error) { /* 保持旧值 */ }
 }
 async function initHomeSkillSection() {
   const tag = $('#home-skill-status');
