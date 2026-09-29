@@ -733,6 +733,17 @@ body.in-shelf #quick-import .eyebrow { display: block; margin: 0 0 8px; }
 .quick-link-preview h4 { margin: 6px 0 7px; font: 500 17px/1.5 "Noto Serif SC", serif; }
 .quick-link-preview p { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 3; -webkit-box-orient: vertical; margin: 0 0 8px; color: #665d4a; font-size: 12.5px; line-height: 1.75; }
 .quick-link-preview small { color: #817661; }
+.quick-preview-details { margin: 14px 0 4px; border-top: 1px solid #e0d7c3; border-bottom: 1px solid #e0d7c3; }
+.quick-preview-details summary { padding: 11px 2px; color: var(--moss-dark); cursor: pointer; font-size: 12.5px; font-weight: 600; list-style-position: inside; }
+.quick-preview-details .quick-preview-close { display: none; }
+.quick-preview-details[open] .quick-preview-open { display: none; }
+.quick-preview-details[open] .quick-preview-close { display: inline; }
+.quick-preview-full { max-height: min(52vh, 560px); margin: 0 0 13px; overflow: auto; border: 1px solid #ded5c0; border-radius: 3px; background: #fffdf8; }
+.quick-preview-full:focus { outline: 2px solid rgba(111, 125, 84, .35); outline-offset: 1px; }
+.quick-preview-full pre { margin: 0; padding: 18px; color: #514938; font: 13px/1.95 "Noto Serif SC", serif; white-space: pre-wrap; word-break: break-word; }
+.quick-preview-ending { padding: 13px 18px; border-top: 1px solid #e6dfcf; background: #f4f0e5; }
+.quick-preview-ending b { display: block; margin-bottom: 5px; color: #6f7d54; font-size: 11px; letter-spacing: .12em; }
+.quick-link-preview .quick-preview-ending p { display: block; margin: 0; overflow: visible; color: #665d4a; font-size: 12px; -webkit-line-clamp: unset; }
 .quick-link-preview fieldset { display: flex; flex-wrap: wrap; gap: 12px; margin: 15px 0; padding: 0; border: 0; }
 .quick-link-preview legend { margin-bottom: 8px; color: #5f5543; font-size: 12px; }
 .quick-link-preview label { color: #5f5543; font-size: 12px; }

@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>声息｜把没有时间读完的东西，带到路上</title>
-  <link rel="stylesheet" href="/styles.css?v=20260929-35" />
+  <link rel="stylesheet" href="/styles.css?v=20260929-36" />
 </head>
 <body>
   <header class="nav shell">
@@ -86,7 +86,7 @@
         <form id="quick-link-form">
           <div class="quick-link-entry"><input id="quick-link-input" type="url" required aria-label="公众号或网页链接" placeholder="粘贴公众号或网页链接" /><button type="submit" class="button button-primary" id="quick-link-submit">预览文章</button></div>
           <p class="quick-link-status" id="quick-link-status" role="status" aria-live="polite"></p>
-          <div class="quick-link-preview hidden" id="quick-link-preview"><span class="quick-preview-label">抓取预览</span><h4 id="quick-preview-title"></h4><p id="quick-preview-excerpt"></p><small id="quick-preview-length"></small><fieldset><legend>这次想怎么整理？</legend><label><input type="radio" name="quick_scenario" value="daily_brief" checked /> 先听要点 · 约 5 分钟</label><label><input type="radio" name="quick_scenario" value="topic_learning" /> 分章节学习 · 先确认大纲</label></fieldset><button type="button" class="button button-primary" id="quick-link-create">加入书架并查看素材 →</button></div>
+          <div class="quick-link-preview hidden" id="quick-link-preview"><span class="quick-preview-label">抓取预览</span><h4 id="quick-preview-title"></h4><p id="quick-preview-excerpt"></p><small id="quick-preview-length"></small><details class="quick-preview-details" id="quick-preview-details"><summary><span class="quick-preview-open">展开全文检查</span><span class="quick-preview-close">收起全文</span></summary><div class="quick-preview-full" tabindex="0" aria-label="抓取到的完整正文"><pre id="quick-preview-full"></pre><div class="quick-preview-ending"><b>正文结尾</b><p id="quick-preview-ending"></p></div></div></details><fieldset><legend>确认正文完整后，这次想怎么整理？</legend><label><input type="radio" name="quick_scenario" value="daily_brief" checked /> 先听要点 · 约 5 分钟</label><label><input type="radio" name="quick_scenario" value="topic_learning" /> 分章节学习 · 先确认大纲</label></fieldset><button type="button" class="button button-primary" id="quick-link-create">确认无误，加入书架 →</button></div>
         </form>
         <label class="quick-upload">或上传文件 <span>PDF · DOCX · TXT · Markdown</span><input id="quick-upload-input" type="file" accept=".docx,.txt,.md,.pdf" /></label>
       </section>
@@ -148,6 +148,6 @@
 
   <dialog id="daily-brief-dialog" class="dialog"><form id="daily-brief-form"><div class="dialog-header"><h2>每日速听</h2><button type="button" aria-label="关闭" class="icon-button" data-close-dialog="daily-brief-dialog">×</button></div><p class="form-note">订阅公开 RSS 或 Atom 源。系统每天只收集新文章并建立待审速听任务；不会自动发布，也不会自动生成最终 MP3。</p><label>订阅名称<input required name="name" maxlength="120" placeholder="例如：数据合规资讯" /></label><label>RSS / Atom 地址<input required name="feed_url" type="url" placeholder="https://example.com/feed.xml" /></label><div class="plan-settings"><div class="field"><label>每日运行时间<input name="daily_time" type="time" value="08:00" /></label></div><div class="field"><label>每次最多收集<input name="max_items" type="number" min="1" max="10" value="3" /> 篇</label></div></div><label class="check-label"><input type="checkbox" name="auto_generate" /> 允许自动生成待审速听稿与音频脚本（仅在模型已配置且允许发送素材时）</label><div class="dialog-actions"><button type="button" class="button button-outline" data-close-dialog="daily-brief-dialog">取消</button><button type="submit" class="button button-primary">保存订阅</button></div></form></dialog>
 
-  <script src="/app.js?v=20260929-35"></script>
+  <script src="/app.js?v=20260929-36"></script>
 </body>
 </html>

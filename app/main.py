@@ -2457,7 +2457,17 @@ def read_link_article(url: str) -> tuple[str, str, str]:
 def preview_link(url: str):
     address, title, text = read_link_article(url)
     readable = clean_text(text)
-    return {"url": address, "title": title, "character_count": len(readable), "excerpt": readable[:180]}
+    paragraphs = [clean_text(item) for item in re.split(r"\n\s*\n|\r?\n", text) if clean_text(item)]
+    full_text = "\n\n".join(paragraphs) or readable
+    return {
+        "url": address,
+        "title": title,
+        "character_count": len(readable),
+        "paragraph_count": len(paragraphs) or 1,
+        "excerpt": readable[:180],
+        "ending_excerpt": readable[-180:],
+        "full_text": full_text,
+    }
 
 
 @app.post("/api/projects/from-link", status_code=201)

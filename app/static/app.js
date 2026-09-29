@@ -166,6 +166,7 @@ async function startFromFile(file) {
 function resetQuickLinkPreview() {
   quickLinkPreview = null;
   $('#quick-link-preview')?.classList.add('hidden');
+  if ($('#quick-preview-details')) $('#quick-preview-details').open = false;
   $('#quick-link-status').textContent = '';
 }
 
@@ -187,9 +188,11 @@ function bindQuickImport() {
       quickLinkPreview = preview;
       $('#quick-preview-title').textContent = preview.title;
       $('#quick-preview-excerpt').textContent = preview.excerpt;
-      $('#quick-preview-length').textContent = '已读取约 ' + preview.character_count.toLocaleString('zh-CN') + ' 字，请核对是否为要导入的文章。';
+      $('#quick-preview-full').textContent = preview.full_text;
+      $('#quick-preview-ending').textContent = preview.ending_excerpt;
+      $('#quick-preview-length').textContent = '已读取约 ' + preview.character_count.toLocaleString('zh-CN') + ' 字 · ' + preview.paragraph_count.toLocaleString('zh-CN') + ' 段。请展开全文检查正文是否完整。';
       $('#quick-link-preview').classList.remove('hidden');
-      status.textContent = '已读取文章。请核对预览，再加入书架。';
+      status.textContent = '已读取文章。请核对标题、正文和结尾，再加入书架。';
     } catch (error) {
       resetQuickLinkPreview();
       status.textContent = readableError(error) + ' 也可以上传文件，或打开文章复制正文后粘贴导入。';
