@@ -1301,10 +1301,11 @@ function renderAudioPanel() {
   const contents = appState.selectedProject.narrative_contents || [];
   const outputs = sortAudioOutputs(appState.selectedProject.audio_outputs || [], contents);
   const audiobookReady = contents.some(item => item.status === 'confirmed' && ((item.markdown || '').match(/^##\s+/gm) || []).length >= 2);
-  const audiobookCard = audiobookReady ? '<details class="panel-card audio-extra"><summary>需要把多章音频合成一本有声书？</summary><p>有声书（m4b）把已确认讲稿的各章合为一个文件，并保留章节标记。单篇原文朗读直接导出 MP3 即可。</p><button class="button button-outline button-small" id="export-audiobook">合成有声书 m4b</button></details>' : '';
+  const audiobookCard = audiobookReady ? '<details class="panel-card audio-extra"><summary>需要把多章音频合成一本有声书？</summary><p>有声书（M4B）把已确认讲稿的各章合为一个文件，并保留章节标记。单篇原文朗读直接导出 MP3 即可。</p><button class="button button-outline button-small" id="export-audiobook">合成有声书 M4B</button></details>' : '';
+  const mobileGuide = outputs.some(item => item.audio_available) ? '<details class="panel-card audio-extra"><summary>如何在 iPhone 收听？</summary><p>希望在“图书”中按章收听：先在 Mac“图书”中通过“文件 → 导入”添加 M4B，再连接 iPhone，在访达中选择有声书同步。首次同步前请核对访达提示。</p><p>只想快速带到手机：导出 MP3，通过隔空投送或 iCloud 云盘存入 iPhone“文件”后播放。声息目前不会同步两端的播放进度。</p></details>' : '';
   const sourceCard = contents.length ? '<details class="panel-card audio-extra"' + (outputs.length ? '' : ' open') + '><summary>从已确认讲稿制作新音频</summary><p>可制作整篇音频，也可逐章制作。未确认的讲稿可先整理脚本试听。</p><label class="audio-naturalize"><input type="checkbox" id="naturalize-audio"/><span>使用文本模型改善口语节奏<span class="audio-naturalize-note">额外调用一次模型；生成后仍需核对事实</span></span></label><div class="audio-source-list">' + contents.map(renderAudioSourceRow).join('') + '</div></details>' : '';
   const empty = contents.length ? '请在下方选择讲稿，先生成音频脚本。' : '还没有音频。返回“素材”可选择原文朗读。';
-  panel.innerHTML = '<section class="panel-card audio-intro"><p class="eyebrow">收听与导出</p><h3>先试听，再保存音频</h3><p>已有音频可直接播放和导出。原文朗读保留文章内容；整理后的讲稿可以制作整篇或分章音频。</p></section><section class="panel-card"><h3>我的音频</h3><div class="audio-output-list">' + (outputs.length ? outputs.map(renderAudioOutput).join('') : '<p class="form-note">' + empty + '</p>') + '</div></section>' + sourceCard + audiobookCard;
+  panel.innerHTML = '<section class="panel-card audio-intro"><p class="eyebrow">收听与导出</p><h3>先试听，再保存音频</h3><p>已有音频可直接播放和导出。原文朗读保留文章内容；整理后的讲稿可以制作整篇或分章音频。</p></section><section class="panel-card"><h3>我的音频</h3><div class="audio-output-list">' + (outputs.length ? outputs.map(renderAudioOutput).join('') : '<p class="form-note">' + empty + '</p>') + '</div></section>' + mobileGuide + sourceCard + audiobookCard;
   $$('[data-save-audio]').forEach(button => button.addEventListener('click', () => saveAudioScript(button.dataset.saveAudio, button)));
   $$('[data-preview-audio]').forEach(button => button.addEventListener('click', () => previewAudio(button.dataset.previewAudio, button)));
   $$('[data-create-audio-script]').forEach(button => button.addEventListener('click', () => createAudioScript(button.dataset.createAudioScript, button)));
@@ -1369,7 +1370,7 @@ function renderAudioOutput(output) {
   const stats = script.length ? '共 ' + script.length + ' 字 · 预计朗读约 ' + mediaMinutes + ' 分钟' : '脚本为空';
   const opened = appState.openAudioScript === output.id ? ' open' : '';
   const primaryAction = output.audio_available
-    ? '<button class="button button-primary button-small" data-export-audio="' + output.id + '">导出 MP3</button>' + (!output.narrative_content_id ? '<button class="button button-outline button-small" data-export-direct-audiobook="' + output.id + '">导出有声书 m4b</button>' : '')
+    ? '<button class="button button-primary button-small" data-export-audio="' + output.id + '">导出 MP3</button>' + (!output.narrative_content_id ? '<button class="button button-outline button-small" data-export-direct-audiobook="' + output.id + '">导出有声书 M4B</button>' : '')
     : '<button class="button button-primary button-small" data-synthesize-audio="' + output.id + '" ' + (readyForMp3 && !synthesizing ? '' : 'disabled') + '>' + (synthesizing ? '合成中…' : '生成 MP3') + '</button>' + mp3Hint;
   return '<article class="audio-output-card"><div class="audio-output-main"><div class="audio-output-head"><span class="tag">' + statusLabel + '</span><h4>' + escapeHtml(output.title) + '</h4></div><details class="audio-tools"><summary>脚本、试听与更多操作</summary><details class="audio-script-details" data-audio-id="' + output.id + '"' + opened + '><summary>查看 / 编辑完整口播脚本</summary><div class="audio-script-body"><textarea class="audio-script-editor" data-audio-editor="' + output.id + '">' + escapeHtml(script) + '</textarea><div class="audio-script-meta"><span class="audio-script-stats">' + stats + '</span><button class="button button-outline button-small" data-save-audio="' + output.id + '">保存脚本</button></div><p class="audio-script-hint">修改脚本后，原有 MP3 会失效，需要重新生成。</p></div></details><div class="audio-tool-actions">' + (output.audio_available ? '' : player) + '<button class="button button-outline button-small" data-speak-script="' + output.id + '">浏览器校对朗读</button><button class="button button-outline button-small" data-preview-audio="' + output.id + '">合成短片试听</button>' + (output.audio_available ? '<button class="button button-outline button-small" data-synthesize-audio="' + output.id + '" ' + (readyForMp3 ? '' : 'disabled') + '>重新生成 MP3</button>' : '<button class="button button-outline button-small" data-export-audio="' + output.id + '">仅导出脚本</button>') + '</div></details></div><div class="audio-actions">' + (output.audio_available ? player : '') + primaryAction + '</div></article>';
 }
@@ -1456,12 +1457,12 @@ async function exportAudiobook(button) {
 }
 
 async function exportDirectAudiobook(outputId, button) {
-  if (!window.confirm('导出有声书会按原文标题分章、逐章重新合成音频（约需几分钟），然后打包成 m4b。继续吗？')) return;
+  if (!window.confirm('导出有声书会按原文标题分章、逐章重新合成音频（约需几分钟），然后打包成 M4B。继续吗？')) return;
   try {
     setBusy(button, true, '合成有声书…');
     const result = await request('/api/projects/' + appState.selectedProject.project.id + '/audiobook/direct', { method: 'POST' });
     await revealExportedFile(result.audiobook_path);
-    showMessage('有声书已生成（' + result.chapters + ' 章），已在访达中定位；AirDrop 到手机选择「图书」即可逐章收听。');
+    showMessage('有声书已生成（' + result.chapters + ' 章），已在访达中定位。iPhone 收听方法见本页“如何在 iPhone 收听？”。');
   } catch (error) { showMessage(error.message, true); } finally { setBusy(button, false); }
 }
 

@@ -3695,7 +3695,7 @@ def _ffmetadata_escape(value: str) -> str:
 
 
 def _patch_m4b_brand(path: Path) -> None:
-    """把 ffmpeg 写出的 M4A/isom 容器品牌改成 M4B，iPhone 图书 App 才会当作有声书接收。"""
+    """把 ffmpeg 写出的 M4A/isom 容器标记为 M4B；手机接收方式仍取决于目标应用。"""
     try:
         with open(path, "r+b") as handle:
             head = handle.read(64)
@@ -3754,7 +3754,7 @@ def pick_audiobook_cover(project_id: str) -> Path | None:
 
 @app.post("/api/projects/{project_id}/audiobook", status_code=201)
 def export_project_audiobook(project_id: str):
-    """把已确认讲稿按章节合成单一 m4b 有声书（含章节标记与封面），可在 iPhone 图书/文件 app 中逐章收听。"""
+    """把已确认讲稿按章节合成单一 M4B 文件，供支持该格式的播放器导入。"""
     project = project_or_404(project_id)
     conn = db()
     contents = conn.execute("SELECT * FROM narrative_contents WHERE project_id = ? AND status = 'confirmed' ORDER BY updated_at DESC", (project_id,)).fetchall()
@@ -3833,7 +3833,7 @@ def direct_audiobook_chapters(document_id: str, fallback_title: str) -> list[tup
 
 @app.post("/api/projects/{project_id}/audiobook/direct", status_code=201)
 def export_direct_audiobook(project_id: str):
-    """把原文直读音频按素材标题分章，逐章合成后打成带章节标记的 m4b（iPhone 图书 app 可逐章收听）。"""
+    """把原文直读音频逐章合成为带章节标记的 M4B 文件。"""
     project = project_or_404(project_id)
     conn = db()
     output = conn.execute(
