@@ -524,7 +524,13 @@ async function directDocumentAudio(documentId, button) {
     appState.selectedProject = await request('/api/projects/' + appState.selectedProject.project.id);
     renderProjectDetail();
     showMessage('原文音频已生成，可直接播放或导出。');
-  } catch (error) { appState.synthesizingAudio = null; showMessage(error.message, true); } finally { setBusy(button, false); }
+  } catch (error) {
+appState.synthesizingAudio = null;
+showMessage(error.message, true);
+if (appState.selectedProject) { // 失败也要刷新界面，避免「合成中…」残留
+try { appState.selectedProject = await request('/api/projects/' + appState.selectedProject.project.id); renderProjectDetail(); } catch (_) { /* 保持当前视图 */ }
+}
+} finally { setBusy(button, false); }
 }
 
 async function deleteDocument(documentId, button) {
@@ -1374,7 +1380,7 @@ function renderAudioOutput(output) {
   const source = (appState.selectedProject.narrative_contents || []).find(content => content.id === output.narrative_content_id);
   const readyForMp3 = !output.narrative_content_id || source?.status === 'confirmed';
   const mp3Hint = readyForMp3 || !output.narrative_content_id ? '' : '<small class="audio-gate-hint">确认对应讲稿后可生成完整 MP3</small>';
-  const synthesizing = appState.synthesizingAudio === output.id;
+  const synthesizing = appState.synthesizingAudio === output.id && output.status !== 'ready'; // 已就绪的音频不再显示合成中（防止请求失败后状态残留）
   const statusLabel = synthesizing ? '正在合成音频…' : output.status === 'source_changed' ? '源讲稿已更新，请重新整理脚本' : output.status === 'ready' ? 'MP3 已生成 · ' + output.duration_seconds + ' 秒' : '脚本待校对';
   const script = output.script || '';
   const mediaMinutes = script.length ? Math.max(1, Math.round(script.length / 240)) : 0;
