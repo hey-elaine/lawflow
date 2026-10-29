@@ -12,6 +12,7 @@ import secrets
 import shutil
 import socket
 import sqlite3
+import threading
 import subprocess
 import sys
 import tempfile
@@ -28,7 +29,7 @@ from xml.etree import ElementTree as ET
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi import Request
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from starlette.background import BackgroundTask
 from fastapi.staticfiles import StaticFiles
 from docx import Document
@@ -42,8 +43,13 @@ from app.version import __version__
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 if getattr(sys, "frozen", False):
-    # 打包为 macOS App 后，程序资源位于只读 App Bundle；用户项目必须写入 Application Support。
-    DATA_DIR = Path(os.getenv("LAWFLOW_DATA_DIR", str(Path.home() / "Library/Application Support/LawFlow/data"))).expanduser()
+    # 打包为桌面 App 后，程序资源位于只读目录；用户数据必须写入系统用户目录。
+    # macOS：Application Support；Windows：%LOCALAPPDATA%。
+    if sys.platform == "win32":
+        _default_data_dir = Path(os.getenv("LOCALAPPDATA") or Path.home() / "AppData" / "Local") / "LawFlow" / "data"
+    else:
+        _default_data_dir = Path.home() / "Library/Application Support/LawFlow/data"
+    DATA_DIR = Path(os.getenv("LAWFLOW_DATA_DIR", str(_default_data_dir))).expanduser()
     STATIC_DIR = Path(getattr(sys, "_MEIPASS", ROOT_DIR)) / "app" / "static"
 else:
     DATA_DIR = Path(os.getenv("LAWFLOW_DATA_DIR", str(ROOT_DIR / "data"))).expanduser()
@@ -51,6 +57,55 @@ else:
 PROJECTS_DIR = DATA_DIR / "projects"
 EXPORTS_DIR = DATA_DIR / "exports"
 DB_PATH = DATA_DIR / "app.db"
+
+
+def register_bundled_ffmpeg(search_roots: list[Path] | None = None) -> list[Path]:
+    """自动发现随包分发的 FFmpeg 并注入 PATH 前缀。
+
+    Windows 用户普遍没有把 FFmpeg 装进 PATH，直接 which('ffmpeg') 会失败，
+    导致「生成 MP3」按钮请求永远返回 400（前端提示又短暂，看起来像没反应）。
+    搜索顺序：打包资源目录（_MEIPASS/tools/ffmpeg[./*/bin]）→ 项目 tools/ffmpeg/。
+    返回实际生效的可执行目录列表（供测试断言）。
+    """
+    exe_name = "ffmpeg.exe" if sys.platform == "win32" else "ffmpeg"
+    if search_roots is None:
+        roots: list[Path] = []
+        if getattr(sys, "frozen", False):
+            roots.append(Path(getattr(sys, "_MEIPASS", ROOT_DIR)) / "tools" / "ffmpeg")
+        roots.append(ROOT_DIR / "tools" / "ffmpeg")
+    else:
+        roots = list(search_roots)
+    found: list[Path] = []
+    path_value = os.environ.get("PATH", "")
+    path_entries = path_value.split(os.pathsep) if path_value else []
+    # 本机踩坑：用户级 PATHEXT 被改成只剩 ".CPL"，覆盖了系统默认值，
+    # shutil.which('ffmpeg') 只会尝试 ffmpeg.CPL，永远找不到 ffmpeg.exe。
+    # 防御性补上 .EXE，保证 end-user 机器上同类环境异常也能工作。
+    if sys.platform == "win32":
+        pathext = [item for item in os.environ.get("PATHEXT", "").split(os.pathsep) if item.strip()]
+        if ".EXE" not in [item.upper() for item in pathext]:
+            pathext.append(".EXE")
+            os.environ["PATHEXT"] = os.pathsep.join(pathext)
+    for root in roots:
+        if not root.is_dir():
+            continue
+        # 兼容两种布局：开发态 tools/ffmpeg/<version>_build/bin/，
+        # 打包态 spec 直接映射为 tools/ffmpeg/bin/（bin 是直接子目录）。
+        candidate_dirs = [root, root / "bin", *sorted(root.glob("*/bin")), *sorted(root.glob("*/*/bin"))]
+        for candidate in candidate_dirs:
+            if not candidate.is_dir() or not (candidate / exe_name).exists():
+                continue
+            resolved = str(candidate)
+            if resolved not in path_entries:
+                path_entries.insert(0, resolved)
+                os.environ["PATH"] = os.pathsep.join(path_entries)
+                path_entries = os.environ["PATH"].split(os.pathsep)
+            if resolved not in [str(item) for item in found]:
+                found.append(candidate)
+    return found
+
+
+register_bundled_ffmpeg()
 DEFAULT_EXPORT_DIR = Path(os.getenv("LAWFLOW_EXPORT_DIR", str(Path.home() / "Desktop" / "ai_law"))).expanduser()
 
 for directory in (DATA_DIR, PROJECTS_DIR, EXPORTS_DIR, DATA_DIR / "temp", DATA_DIR / "logs"):
@@ -71,7 +126,7 @@ async def restrict_non_local_requests(request: Request, call_next):
         return Response(status_code=403, content="声息的完整功能仅限本机访问。")
     return await call_next(request)
 
-RELEASE_REPOSITORY = os.getenv("LAWFLOW_RELEASE_REPOSITORY", "hey-elaine/lawflow").strip()
+RELEASE_REPOSITORY = os.getenv("LAWFLOW_RELEASE_REPOSITORY", "donghyq/ListenWise").strip()
 SCHEMA_VERSION = 2
 
 MODEL_PRESETS = {
@@ -130,6 +185,8 @@ TRANSFORM_MODES = {
     "enrich": {"name": "内容丰富", "description": "在来源可追溯的前提下补充背景信息，适合培训、分享和公开表达。"},
 }
 
+PODCAST_CHAPTER_PROFILE = "law_podcast_v4"  # 速听/分章学习路径默认使用深度播客改写画像
+
 VERIFICATION_MODES = {
     "source_only": {"name": "资讯转译", "description": "仅按输入材料整理，标明来源和时间，不进行外部核验。"},
     "material_check": {"name": "材料一致性检查", "description": "检查输入材料中的重复、冲突、日期差异和缺失事实。"},
@@ -148,7 +205,7 @@ class ProjectCreate(BaseModel):
     audio_enabled: bool = True
     minimum_output_mode: Literal["auto", "none", "custom"] = "auto"
     minimum_output_ratio: float = Field(default=0.3, ge=0.1, le=1.0)
-    web_research_mode: Literal["off", "discover", "augment"] = "discover"
+    web_research_mode: Literal["off", "discover", "augment", "auto"] = "discover"
     collection: str = Field(default="", max_length=60)
 
 
@@ -185,6 +242,8 @@ class PlanCreate(BaseModel):
     include_audio: bool = False
     auto_split: bool = False
     split_mode: Literal["rules", "ai"] = "rules"
+    # 用户对上一版 AI 分章的意见；仅在 auto_split + split_mode=ai 时进入提示词。
+    feedback: str = Field(default="", max_length=2000)
 
 
 class PlanConfirm(BaseModel):
@@ -202,7 +261,7 @@ class ProviderSettings(BaseModel):
     tts_model: str = ""
     tts_voice: str = ""
     tts_api_key: str = ""
-    tts_provider: Literal["compatible", "minimax", "macos_say", "edge_tts"] = "compatible"
+    tts_provider: Literal["compatible", "minimax", "macos_say", "windows_sapi", "edge_tts"] = "compatible"
     tts_speed: float = Field(default=1.0, ge=0.5, le=2.0)
     tts_instructions: str = Field(default="", max_length=1000)
     asr_base_url: str = ""
@@ -311,6 +370,10 @@ class ContentRequest(BaseModel):
     audience: str = "企业法务与业务负责人"
     output_type: Literal["partner_brief", "client_brief", "lexcast"] = "client_brief"
     style_name: str = "专业、克制、结论先行"
+    # 播客风改写：默认取项目偏好，前端可覆盖；question 来自章节方案的学习问题。
+    transform_mode: Literal["condense", "adapt", "enrich"] | None = None
+    style_profile: str = PODCAST_CHAPTER_PROFILE
+    question: str = Field(default="", max_length=200)
 
 
 class NarrativeOutlineRequest(BaseModel):
@@ -329,7 +392,7 @@ class NarrativeOutlineRequest(BaseModel):
     target_duration: Literal[3, 5, 10, 20, 30] = 10
     minimum_output_mode: Literal["auto", "none", "custom"] = "auto"
     minimum_output_ratio: float = Field(default=0.3, ge=0.1, le=1.0)
-    web_research_mode: Literal["off", "discover", "augment"] = "discover"
+    web_research_mode: Literal["off", "discover", "augment", "auto"] = "discover"
     revision_of: str = ""
     revision_instructions: str = Field(default="", max_length=3000)
 
@@ -743,11 +806,17 @@ def is_toc_line(text: str) -> bool:
 
 
 def detect_heading_level(text: str, style: str, position: int, toc_end: int) -> int:
-    if style in {"2", "16", "Title", "Heading1"}:
+    # style 可能是 styleId（如 "Heading1"），也可能是样式名（如 "heading 1"，WPS 导出的文档
+    # styleId 常被压缩成 "a" 这类短 ID，只能靠样式名识别）。
+    normalized = style.strip().lower().replace(" ", "")
+    # 网页链接即使被套上标题样式也不是标题（常见于简讯类文档的参考资料区）。
+    if re.match(r"^https?://", text.strip()):
+        return 0
+    if "title" in normalized or normalized in {"1", "2", "16", "heading1"}:
         return 1
-    if style in {"3", "19", "Heading2"}:
+    if normalized in {"3", "19", "heading2"}:
         return 2
-    if style in {"5", "13", "Heading3"}:
+    if normalized in {"5", "13", "heading3"}:
         return 3
     if position < toc_end:
         return 0
@@ -763,27 +832,53 @@ def detect_heading_level(text: str, style: str, position: int, toc_end: int) -> 
     return 0
 
 
+def read_docx_style_names(archive: zipfile.ZipFile) -> dict:
+    """读取 styles.xml，返回 styleId -> 样式名（如 "a" -> "Title"）。"""
+    mapping: dict[str, str] = {}
+    try:
+        root = ET.fromstring(archive.read("word/styles.xml"))
+    except (KeyError, ET.ParseError):
+        return mapping
+    namespace = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    for node in root.findall(".//w:style", namespace):
+        style_id = node.attrib.get("{%s}styleId" % namespace["w"], "")
+        name_node = node.find("./w:name", namespace)
+        if style_id and name_node is not None:
+            mapping[style_id] = name_node.attrib.get("{%s}val" % namespace["w"], "")
+    return mapping
+
+
 def parse_docx(path: Path) -> tuple[list[dict], dict]:
     namespace = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
     with zipfile.ZipFile(path) as archive:
         root = ET.fromstring(archive.read("word/document.xml"))
+        style_names = read_docx_style_names(archive)
     raw: list[dict] = []
     for node in root.findall(".//w:body/w:p", namespace):
         text = clean_text("".join(element.text or "" for element in node.findall(".//w:t", namespace)))
         if not text:
             continue
         style_node = node.find("./w:pPr/w:pStyle", namespace)
-        style = style_node.attrib.get("{%s}val" % namespace["w"], "") if style_node is not None else ""
-        raw.append({"text": text, "style": style})
+        style_id = style_node.attrib.get("{%s}val" % namespace["w"], "") if style_node is not None else ""
+        # 同时带上 styleId 和样式名：不同导出器（Word / WPS）的 styleId 规则不同，
+        # 样式名才是稳定的判断依据。
+        raw.append({"text": text, "style": " ".join(filter(None, {style_id, style_names.get(style_id, "")}))})
 
     toc_end = 0
     for index, item in enumerate(raw[:100]):
         if is_toc_line(item["text"]):
             toc_end = index + 1
+    levels = [detect_heading_level(item["text"], item["style"], sequence - 1, toc_end) for sequence, item in enumerate(raw, start=1)]
+    # 简讯/月刊类文档：一级标题里同时存在栏目名（综合合规）和条目标题（【巴西】……）时，
+    # 把【】条目降为二级标题，让栏目成为自然的学习章节。
+    top_texts = [item["text"] for item, level in zip(raw, levels) if level == 1]
+    bracketed = sum(1 for text in top_texts if re.match(r"^【", text.strip()))
+    plain = len(top_texts) - bracketed
+    if bracketed >= 3 and plain >= 2:
+        levels = [2 if level == 1 and re.match(r"^【", item["text"].strip()) else level for item, level in zip(raw, levels)]
     blocks: list[dict] = []
     headings = ["", "", ""]
-    for sequence, item in enumerate(raw, start=1):
-        level = detect_heading_level(item["text"], item["style"], sequence - 1, toc_end)
+    for sequence, (item, level) in enumerate(zip(raw, levels), start=1):
         if level:
             headings[level - 1] = item["text"]
             for clear in range(level, 3):
@@ -936,6 +1031,97 @@ def extract_document(path: Path, suffix: str) -> tuple[list[dict], dict]:
     raise HTTPException(status_code=400, detail="支持 DOCX、TXT、Markdown 和 PDF。网页内容请用「粘贴链接」。")
 
 
+AI_PARSE_MAX_BLOCKS = 220  # 超长文档全量送模型的成本过高，先限制范围
+
+
+def ai_parse_structure(blocks: list[dict], feedback: str = "") -> tuple[list[dict], dict]:
+    """让模型重新判断整份材料的标题结构，返回重建后的 (blocks, structure)。
+
+    适用规则解析失败的文档：样式混乱的 WPS 导出 docx、无层级标记的纯文本、
+    扫描转写的 PDF。块 id 与顺序保持不变，因此已建立的章节引用不受影响，
+    可以按意见反复重试。feedback 是用户对上一版解析的意见。
+    """
+    if not model_generation_ready():
+        raise HTTPException(status_code=400, detail="AI 解析需要先在「本地设置」中连接文本模型。")
+    if len(blocks) > AI_PARSE_MAX_BLOCKS:
+        raise HTTPException(status_code=400, detail=f"这份材料有 {len(blocks)} 个块，超过 AI 解析上限（{AI_PARSE_MAX_BLOCKS}）。请拆分后分别导入，或手动挑选章节。")
+    lines = []
+    for block in sorted(blocks, key=lambda item: item["sequence_no"]):
+        snippet = clean_text(block["text"])[:120]
+        lines.append(f"{block['id']}|{snippet}")
+    numbered = "\n".join(lines)
+    system = "你是文档结构分析师，负责从纯文本块序列中恢复文档的章节结构，判断克制、只输出 JSON。"
+    user = f"""下面是一份文档的全部内容块，每行格式为「块ID|文字」（过长的块已截断）。
+请判断哪些块实际是文档的章节标题（而非正文句子、网页链接、页眉页脚），并给出层级。
+
+判断标准：
+1. 标题通常是简短的独立行，概括其后正文的主题；正文句子不是标题。
+2. 简讯/月刊常见格式：顶部栏目名（如"综合合规"）是一级标题，【国家】开头的条目标题是二级标题。
+3. 网页链接（http 开头）永远不是标题。
+4. 如果整份文档只有正文、确实没有标题，headings 返回空数组。
+5. 不要把正文段落升格为标题来凑数；宁缺毋滥。
+
+只输出 JSON：{{"headings": [{{"id": "块ID", "level": 1}}]}}（level 只能是 1、2 或 3）
+
+内容块：
+{numbered}"""
+    if feedback.strip():
+        user += "\n\n用户对上一版结构解析的意见（必须遵守，优先级高于上述默认规则）：\n" + feedback.strip()[:2000]
+    content = model_chat([{"role": "system", "content": system}, {"role": "user", "content": user}], temperature=0.1, max_tokens=4000)
+    data = parse_model_json(content)
+    if not isinstance(data.get("headings"), list):
+        raise HTTPException(status_code=502, detail="模型未返回标题结构，请重试或调整意见。")
+    id_set = {block["id"]: block for block in blocks}
+    level_by_id: dict[str, int] = {}
+    for item in data["headings"]:
+        if not isinstance(item, dict):
+            continue
+        block_id = str(item.get("id", "")).strip()
+        block = id_set.get(block_id)
+        if block is None or re.match(r"^https?://", clean_text(block["text"])):
+            continue
+        try:
+            level = int(item.get("level", 1))
+        except (TypeError, ValueError):
+            continue
+        level_by_id[block_id] = min(3, max(1, level))
+    # 防御：模型把大半正文都判成标题时，多半是幻觉，直接拒绝。
+    if len(level_by_id) > max(8, len(blocks) // 2):
+        raise HTTPException(status_code=502, detail="模型把过多正文判成了标题，结果不可信；请补充意见后重试。")
+    rebuilt: list[dict] = []
+    heading_stack = ["", "", ""]
+    headings_summary = []
+    for block in sorted(blocks, key=lambda item: item["sequence_no"]):
+        level = level_by_id.get(block["id"], 0)
+        text = clean_text(block["text"])
+        if level:
+            heading_stack[level - 1] = text
+            for clear in range(level, 3):
+                heading_stack[clear] = ""
+            kind = "heading"
+        else:
+            kind = "paragraph"
+        heading_path = " / ".join(part for part in heading_stack if part)
+        rebuilt.append({
+            **block,
+            "kind": kind,
+            "heading_level": level,
+            "heading_path": heading_path,
+            "source_locator": f"段落 {block['sequence_no']}" + (f" · {heading_path}" if heading_path else ""),
+        })
+        if kind == "heading":
+            headings_summary.append({"text": text, "level": level, "id": block["id"]})
+    structure = {
+        "parser": "ai-structure-v1",
+        "paragraph_count": len(blocks),
+        "heading_count": len(headings_summary),
+        "toc_detected": False,
+        "headings": headings_summary[:120],
+        "ai_parsed": True,
+    }
+    return rebuilt, structure
+
+
 STOP_TOPIC_GRAMS = {
     "我们", "他们", "自己", "一个", "这个", "那个", "什么", "为什么", "可以", "因为", "所以",
     "但是", "如果", "就是", "还是", "不是", "没有", "的话", "时候", "现在", "已经", "需要",
@@ -1073,10 +1259,11 @@ def build_chapter_question(heading_text: str, excerpt_text: str = "") -> str:
     return f"围绕“{shorten(cleaned_h or heading_text, 24)}”梳理核心事实与规则，重点核查哪些边界条件与落地任务？"
 
 
-def ai_chapter_proposal(blocks: list[dict]) -> tuple[list[tuple[str, str]], dict[str, str]]:
+def ai_chapter_proposal(blocks: list[dict], feedback: str = "") -> tuple[list[tuple[str, str]], dict[str, str]]:
     """让模型按学习逻辑划分章节，返回 (按出现顺序的 (heading_id, question) 列表, 模型起的章节标题字典)。
 
     候选集是全部带正文的标题（含各级），模型负责选择切分粒度并为每章设计学习问题；
+    feedback 是用户对上一版划分的意见（太粗/太细/主题错），会作为必须遵守的要求进入提示词。
     解析或校验失败时抛出 ValueError，由调用方决定是否回退到规则切分。
     """
     candidates = []
@@ -1123,6 +1310,8 @@ def ai_chapter_proposal(blocks: list[dict]) -> tuple[list[tuple[str, str]], dict
         "候选标题：\n" + listing + "\n\n"
         '只输出 JSON，格式：{"chapters":[{"heading_id":"候选中的 id","title":"章节标题","question":"学习问题"}]}'
     )
+    if feedback.strip():
+        user += "\n\n用户对上一版章节划分的意见（必须遵守，优先级高于上述默认规则）：\n" + feedback.strip()[:2000]
     content = model_chat([{"role": "system", "content": system}, {"role": "user", "content": user}], temperature=0.2, max_tokens=6000)
     text = re.sub(r"^```(?:json)?|```$", "", content.strip(), flags=re.MULTILINE).strip()
     try:
@@ -1382,6 +1571,71 @@ def draft_content(title: str, blocks: list[dict], audience: str, output_type: st
     return markdown, claims
 
 
+PODCAST_TARGET_RATIOS = {"condense": 0.45, "adapt": 1.0, "enrich": 1.25}  # 目标字数相对正文字数的比例
+
+
+def generate_chapter_podcast_markdown(title: str, blocks: list[dict], audience: str, transform_mode: str, style_profile: str, question: str = "") -> tuple[str, list[dict], dict]:
+    """用模型 + 播客风画像把一章材料改写为可收听讲稿；返回 (markdown, claims, metadata)。
+
+    与 draft_content 的模板摘要不同：这里完整送材料给模型，按画像改写，
+    并按 transform_mode 设置输出下限，避免关键信息被压缩丢失。
+    """
+    profile = get_style_profiles().get(style_profile) or STYLE_PROFILES[PODCAST_CHAPTER_PROFILE]
+    claims = build_claims(blocks)
+    if not claims:
+        raise HTTPException(status_code=400, detail="所选章节没有可用于改写的正文材料，请扩大章节范围后重试。")
+    source_chars = sum(len(clean_text(block.get("text") or "")) for block in blocks if block["kind"] != "heading")
+    ratio = PODCAST_TARGET_RATIOS.get(transform_mode, 1.0)
+    # 深度播客改写：目标字数按改写深度比例计算，绝对上限对齐 podcast-rewriter
+    # （每章 5000-10000 字的体量；压缩比红线：原文每 1 万字 ≥ 3000 字）。
+    target_words = max(350, min(9000, round(source_chars * ratio)))
+    transform = TRANSFORM_MODES.get(transform_mode, TRANSFORM_MODES["adapt"])
+    dossier = source_dossier(blocks, max_chars_per_block=2400, max_total_chars=SOURCE_BUDGET_CHARS)
+    prompt = """请把下方材料改写成一章适合朗读收听的播客讲稿。
+
+章节标题：{title}
+本章要回答的问题：{question}
+面向听众：{audience}
+目标长度：约 {words} 字（允许上下两成浮动）
+加工方式：{transform_name}。{transform_description}
+写作画像：{style}
+
+写作边界：
+1. 只根据下方材料改写，不得编造材料外的事实、数字、引述和观点。
+2. 原文引用的专家或机构观点必须完整保留：姓名、机构、核心论点与论据。
+3. 不要输出免责声明或"根据材料"等元话语；不要输出来源列表。
+4. 口语化但保留专业深度：先框架后逐层拆解，术语先定义再使用，每段结尾收束核心判断。
+5. 只输出 Markdown 正文（可用小标题分层），不要重复章节标题。
+
+材料：
+{dossier}""".format(title=title, question=question or "讲清楚材料的核心内容", audience=audience, words=target_words, transform_name=transform["name"], transform_description=transform["description"], style=profile["instruction"], dossier=dossier)
+    markdown = model_chat([
+        {"role": "system", "content": "你是面向专业听众的深度播客主播，忠实于材料，不编造事实。"},
+        {"role": "user", "content": prompt},
+    ], temperature=0.55, max_tokens=max(1500, min(16000, target_words * 2)))
+    markdown = re.sub(r"^```(?:markdown|md)?\s*\n|\n```\s*$", "", markdown.strip()).strip()
+    markdown = re.sub(r"^(?:#{1,2}[ \t]+[^\n]*\r?\n+)+", "", markdown).strip()
+    if not markdown:
+        raise HTTPException(502, "模型未返回可用正文，请重试。")
+    floor = output_floor(source_chars, transform_mode, "auto", 0.3)
+    output_chars = len(re.sub(r"[#*_`>\-\[\]]", "", markdown))
+    settings = get_internal_provider_settings()
+    metadata = {
+        "generator": "model", "style_profile": style_profile, "transform_mode": transform_mode,
+        "provider_name": settings.get("provider_name", ""), "model_name": settings.get("model_name", ""),
+        "generated_at": now_iso(), "source_chars": source_chars, "output_chars": output_chars,
+        "target_words": target_words, "output_floor": floor,
+        "floor_status": "pass" if not floor or output_chars >= floor else "review",
+    }
+    return markdown, claims, metadata
+
+
+CHAPTER_TEMPLATE_NOTICE = (
+    "> ⚠️ 本章是**未接入 AI 时的规则摘要**：只取了要点清单，可能遗漏关键信息，也没有播客风改写。\n"
+    "> 在「设置」中连接文本模型后，点击本章的重新生成，即可获得完整改写讲稿。\n\n"
+)
+
+
 def extract_tasks(document_id: str, project_id: str, blocks: list[dict]) -> list[dict]:
     markers = ["建议", "应当", "需要", "核验", "评估", "审查", "确认", "禁止"]
     selected = [block for block in blocks if block["kind"] == "paragraph" and any(marker in block["text"] for marker in markers)]
@@ -1409,10 +1663,13 @@ STYLE_PROFILES = {
             "1）先给框架再逐层拆解，用一个具体问题或变化开场，建立收听动机；"
             "2）每个规则或概念按四层展开：出现背景与解决什么问题 → 适用对象与义务主体 → 规则细节与内在逻辑 → 实务场景与应对；"
             "3）术语先定义再分析，用已知解释未知，用反问牵引思考；"
-            "4）原文引用的专家观点必须完整保留：姓名、机构、核心论点与论据，不能只说“有专家认为”；"
+            "4）原文引用的专家观点必须完整保留并展开：姓名、机构、核心论点与论据，不能只说“有专家认为”；"
             "5）提到影响或依赖时给出数据与案例，没有原文数据时明确标注需核实，不虚构；"
-            "6）压缩比红线：原文每 1 万字，改写输出不少于 3,000 字，宁可详尽不可遗漏关键知识点；"
-            "7）口语化不等于浅薄：语言自然、句子有节奏，每段末尾用一两句收束核心判断。"
+            "6）涉及监管规则对不同企业的影响时，分别分析对中国企业和外国企业的具体影响，不能合并成“相关企业”；"
+            "7）地缘、行业或政策分析必须结合时代背景、历史脉络和深层逻辑展开，不能三言两语概括复杂关系；"
+            "8）压缩比红线：原文每 1 万字，改写输出不少于 3,000 字，宁可详尽不可遗漏关键知识点；"
+            "9）语言质感：口语化但专业深度不减——句子短、有节奏、有留白；用反问推进而不是陈述堆砌；"
+            "每段末尾用一两句收束核心判断，让听众跟得上、记得住。"
         ),
     },
     "professional_blog": {
@@ -1448,6 +1705,24 @@ NARRATIVE_LENGTHS = {
     "standard": {"label": "标准", "total_words": 3800, "section_words": 850},
     "deep": {"label": "深度", "total_words": 7000, "section_words": 1400},
 }
+
+PODCAST_TOTAL_WORDS_CAP = 12000  # 播客风压缩比红线的绝对上限，防止超长原文把单稿推到不可听
+
+
+def resolve_narrative_total_words(target_words: int | None, target_length: str, target_duration: int, style_profile: str, transform_mode: str, source_chars: int) -> int:
+    """解析成稿总字数目标。
+
+    默认按时长与篇幅档取小；但播客风改写（law_podcast_v4 + 忠实转译/扩充）遵循
+    podcast-rewriter 的压缩比红线：原文每 1 万字成稿不少于 3,000 字，
+    时长预算不能成为删减深度的理由——宁可讲长一点，不可遗漏关键知识点。
+    """
+    if target_words is not None:
+        return target_words
+    total = min(NARRATIVE_LENGTHS[target_length]["total_words"], target_duration * 240)
+    if style_profile == PODCAST_CHAPTER_PROFILE and transform_mode in {"adapt", "enrich"}:
+        floor_words = round(source_chars * 0.3)
+        total = max(total, min(floor_words, PODCAST_TOTAL_WORDS_CAP))
+    return total
 
 
 def get_internal_provider_settings() -> dict:
@@ -1632,6 +1907,77 @@ def speech_chunk_fallback_macos(text: str, speed: float, settings: dict | None =
     return audio, "macos-say:" + voice
 
 
+def list_windows_sapi_voices() -> list[str]:
+    """列出 Windows 本机已安装的 SAPI 语音名称（结果做进程内缓存）。"""
+    if sys.platform != "win32":
+        return []
+    global _WINDOWS_SAPI_VOICES_CACHE
+    if _WINDOWS_SAPI_VOICES_CACHE is not None:
+        return _WINDOWS_SAPI_VOICES_CACHE
+    try:
+        script = "Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).GetInstalledVoices() | ForEach-Object { $_.VoiceInfo.Name }"
+        raw = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script], capture_output=True, text=True, timeout=20)
+        names = [line.strip() for line in (raw.stdout or "").splitlines() if line.strip()]
+    except (subprocess.SubprocessError, OSError):
+        names = []
+    _WINDOWS_SAPI_VOICES_CACHE = names
+    return names
+
+
+_WINDOWS_SAPI_VOICES_CACHE: list[str] | None = None
+
+
+def resolve_windows_voice(preferred: str) -> str:
+    """优先选中文语音（推荐 Huihui），未找到时回落到系统默认。"""
+    installed = list_windows_sapi_voices()
+    if not installed:
+        return preferred
+    preferred = (preferred or "").strip()
+    if preferred in installed:
+        return preferred
+    chinese = [name for name in installed if re.search(r"huihui|yaoyao|kangkang|zh[-_ ]?cn|chinese", name, re.I)]
+    return chinese[0] if chinese else installed[0]
+
+
+def speech_chunk_fallback_windows(text: str, speed: float, settings: dict | None = None) -> tuple[bytes, str]:
+    """Windows 本机 SAPI 语音 + FFmpeg 合成；免费、离线，不依赖任何在线服务。"""
+    if sys.platform != "win32":
+        raise HTTPException(400, "Windows 本地语音仅能在 Windows 上使用。")
+    if not shutil.which("ffmpeg"):
+        raise HTTPException(400, "Windows 本地语音需要安装 FFmpeg 并加入 PATH。")
+    voice = resolve_windows_voice(((settings or {}).get("tts_voice") or "").strip())
+    rate = max(-10, min(10, round((speed - 1) * 10)))
+    try:
+        with tempfile.TemporaryDirectory(prefix="lawflow-win-say-") as temp:
+            temp_dir = Path(temp)
+            text_path = temp_dir / "text.txt"
+            wav_path = temp_dir / "speech.wav"
+            mp3_path = temp_dir / "speech.mp3"
+            text_path.write_text(text, encoding="utf-8")
+            # 语音名称可能包含单引号（极少见）；转成双单引号转义。
+            safe_voice = voice.replace("'", "''")
+            script = (
+                "$ErrorActionPreference = 'Stop';"
+                "Add-Type -AssemblyName System.Speech;"
+                "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer;"
+                f"$s.SelectVoice('{safe_voice}');"
+                f"$s.Rate = {rate};"
+                f"$s.SetOutputToWaveFile('{wav_path}');"
+                "$s.Speak((Get-Content -LiteralPath '" + str(text_path) + "' -Encoding UTF8 -Raw));"
+                "$s.Dispose()"
+            )
+            script_path = temp_dir / "speak.ps1"
+            script_path.write_text(script, encoding="utf-8-sig")
+            subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(script_path)], check=True, capture_output=True, timeout=180)
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(wav_path), "-codec:a", "libmp3lame", "-b:a", "128k", str(mp3_path)], check=True, capture_output=True, timeout=120)
+            audio = mp3_path.read_bytes()
+    except (subprocess.SubprocessError, OSError) as error:
+        raise HTTPException(502, "Windows 本地语音合成失败。请在「设置 → 语音合成」中选择 Windows 本地语音，并确认已安装 FFmpeg。") from error
+    if not audio:
+        raise HTTPException(502, "Windows 本地语音未生成可用音频。")
+    return audio, "windows-sapi:" + voice
+
+
 def speech_chunk(text: str, settings: dict) -> tuple[bytes, str]:
     provider = settings.get("tts_provider", "compatible")
     base = (settings.get("tts_base_url") or "").rstrip("/")
@@ -1639,6 +1985,8 @@ def speech_chunk(text: str, settings: dict) -> tuple[bytes, str]:
     speed = float(settings.get("tts_speed", 1))
     if provider == "macos_say":
         return speech_chunk_fallback_macos(text, speed, settings)
+    if provider == "windows_sapi":
+        return speech_chunk_fallback_windows(text, speed, settings)
     if provider == "edge_tts":
         voice = settings.get("tts_voice") or "zh-CN-XiaoxiaoNeural"
         rate = "{:+d}%".format(round((speed - 1) * 100))
@@ -1655,7 +2003,12 @@ def speech_chunk(text: str, settings: dict) -> tuple[bytes, str]:
             pass  # 网络或服务不可用时回落到本机语音，保证仍能出音频
         if sys.platform == "darwin" and shutil.which("say"):
             return speech_chunk_fallback_macos(text, speed)
-        raise HTTPException(502, "Edge TTS 在线合成失败，且本机语音不可用。请检查网络，或在设置中改用 macOS 本地语音。")
+        if sys.platform == "win32":
+            try:
+                return speech_chunk_fallback_windows(text, speed)
+            except HTTPException:
+                pass
+        raise HTTPException(502, "Edge TTS 在线合成失败，且本机语音不可用。请检查网络，或在设置中改用系统本地语音（macOS 用 say，Windows 用本地 SAPI 语音）。")
     if provider == "minimax":
         base = base or "https://api.minimax.cn/v1"
         model = settings.get("tts_model") or "speech-2.8-hd"
@@ -1674,7 +2027,16 @@ def speech_chunk(text: str, settings: dict) -> tuple[bytes, str]:
         if settings.get("tts_instructions"):
             payload["instructions"] = settings["tts_instructions"]
     if not base or not key:
-        raise HTTPException(400, "请先配置 TTS 服务地址和密钥。MiniMax 需独立的 TTS 密钥。")
+        # 云端 TTS 未配置时先尝试本机语音（Mac 的 say / Windows 的 SAPI），
+        # 让「原文朗读」在新装机器上开箱即用；本机语音也不可用时才报错。
+        if sys.platform == "darwin" and shutil.which("say"):
+            return speech_chunk_fallback_macos(text, speed, settings)
+        if sys.platform == "win32":
+            try:
+                return speech_chunk_fallback_windows(text, speed, settings)
+            except HTTPException:
+                pass
+        raise HTTPException(400, "请先配置 TTS 服务地址和密钥；或在设置的「语音合成」中选择本机语音（macOS / Windows 均可离线使用）。")
     try:
         response = httpx.post(endpoint, headers={"Authorization": "Bearer " + key}, json=payload, timeout=240)
         response.raise_for_status()
@@ -1697,6 +2059,7 @@ def speech_chunk(text: str, settings: dict) -> tuple[bytes, str]:
 def synthesize_audio(script: str, title: str, settings: dict) -> tuple[Path, str, int]:
     if not script.strip():
         raise HTTPException(400, "音频脚本不能为空。")
+    script = spoken_text(script)  # 合成前再过一遍口语清洗，兼容用户手改过的脚本
     if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
         raise HTTPException(400, "音频合成需要安装 FFmpeg（含 ffprobe）；Docker 镜像已包含。")
     audio_dir = DATA_DIR / "audio"
@@ -1724,6 +2087,57 @@ def synthesize_audio(script: str, title: str, settings: dict) -> tuple[Path, str
 
 SOURCE_BUDGET_CHARS = 60000  # DeepSeek 128K 上下文下安全的一次性素材预算（支持播客改写 1万→3千 的压缩比）
 GENERATION_PROGRESS: dict[str, dict] = {}  # outline_id -> {status,total,current,heading}，供前端轮询逐节写作进度
+
+
+def strip_written_markers(text: str) -> str:
+    """把口播稿里漏网的书面强调标记（**加粗标签** 等）转成平文，保留正文事实不动。"""
+    return re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
+
+
+SPOKEN_STATE_TAG_RE = re.compile(r"\s*[\[【]\s*(?:sent|draft|final|已发送|已发布|草稿)\s*[\]】]\s*", re.IGNORECASE)
+
+
+def spoken_text(text: str) -> str:
+    """把会被 TTS 念蠢的排版符号转成口语说法。
+
+    日期 2026-09-20 会被念成“二零二六杠零九杠二十”，下划线、[Sent] 这类
+    状态标签和间隔号也会被原样读出来；这里统一转成自然的口语表达。
+    """
+    value = SPOKEN_STATE_TAG_RE.sub(" ", text)
+    value = value.replace("_", " ")
+    value = re.sub(r"(\d{4})\s*[-/年]\s*(\d{1,2})\s*[-/月]\s*(\d{1,2})\s*日?", r"\1年\2月\3日", value)
+    value = re.sub(r"(\d{4})\s*[-/]\s*(\d{1,2})(?![\d/年月日-])", r"\1年\2月", value)
+    value = re.sub(r"(?<=\d)-(?=\d)", "到", value)
+    value = re.sub(r"(?<=[年月])0(?=\d)", "", value)  # 2026年09月 → 2026年9月，避免 TTS 念“零九月”
+    return value.replace("·", "，")
+
+
+def _is_ai_preamble_line(line: str) -> bool:
+    if line.startswith("#") or len(line) > 100:
+        return False
+    if re.match(r"^(?:好的|当然|明白|收到|没问题|OK)[，,！!。：:]?", line) and re.search(r"以下是|下面是|这是|为您|为你", line):
+        return True
+    return bool(re.search(r"(?:以下是|下面是)(?:为?你|我)?(?:整理|撰写|生成|改写|准备)?的?(?:这篇|一份|一期|如下)?(?:讲稿|文稿|成稿|播客|Markdown|markdown)", line))
+
+
+def _is_ai_closing_line(line: str) -> bool:
+    if line.startswith("#") or len(line) > 100:
+        return False
+    return bool(re.match(r"^(?:希望|以上内容|如果需要|如需|需要我|要不要我|请问需要|需要调整|祝你)", line))
+
+
+def clean_pasted_markdown(text: str) -> str:
+    """清理外部 AI 助手粘贴回来的成稿：去掉寒暄开头、收尾客套和整体代码围栏，只留讲稿正文。"""
+    value = text.strip().replace("\r\n", "\n")
+    fence = re.match(r"^```[a-zA-Z0-9]*\n([\s\S]*?)\n?```$", value)
+    if fence and "\n" in fence.group(1):
+        value = fence.group(1).strip()
+    lines = value.split("\n")
+    while lines and _is_ai_preamble_line(lines[0].strip()):
+        lines.pop(0)
+    while lines and _is_ai_closing_line(lines[-1].strip()):
+        lines.pop()
+    return "\n".join(lines).strip()
 
 
 def source_dossier(blocks: list[dict], max_chars_per_block: int = 2600, max_total_chars: int = SOURCE_BUDGET_CHARS) -> str:
@@ -1764,6 +2178,13 @@ def normalize_narrative_outline(raw: dict, request: NarrativeOutlineRequest, blo
     if not isinstance(raw_sections, list) or not minimum <= len(raw_sections) <= 12:
         raise HTTPException(status_code=400, detail=f"大纲章节数须在 {minimum}–12 节之间。")
     allowed_ids = {block["id"] for block in blocks}
+    # 与 outline_from_confirmed_plan 对齐：补充公开资料（augment 勾选的网页素材）强制进入每一节，
+    # 否则模型在大纲里没复制补充块 ID 时，联网扩充会静默失效。
+    # block 可能来自不同组装路径（部分只带 id/text），字段一律用 get 安全读取。
+    supplemental_ids = [
+        block["id"] for block in blocks
+        if block.get("id") and block.get("kind") == "paragraph" and block.get("document_id") != request.document_id
+    ]
     sections = []
     for index, section in enumerate(raw_sections, start=1):
         if not isinstance(section, dict) or not clean_text(str(section.get("heading", ""))):
@@ -1771,7 +2192,7 @@ def normalize_narrative_outline(raw: dict, request: NarrativeOutlineRequest, blo
         source_ids = section.get("source_block_ids", [])
         if not isinstance(source_ids, list) or not source_ids or any(not isinstance(item, str) or item not in allowed_ids for item in source_ids):
             raise HTTPException(502, "章节缺少有效材料回链；请重新生成或修正大纲，不自动替换为无关材料。")
-        source_ids = list(dict.fromkeys(source_ids))
+        source_ids = list(dict.fromkeys([*source_ids, *supplemental_ids]))
         raw_points = section.get("key_points", [])
         points = raw_points if isinstance(raw_points, list) else []
         sections.append({
@@ -1789,7 +2210,11 @@ def normalize_narrative_outline(raw: dict, request: NarrativeOutlineRequest, blo
     if title == sections[0]["heading"]:
         fallback_title = clean_text(str(request.title))[:200]
         title = fallback_title if fallback_title and fallback_title != sections[0]["heading"] else "{} · 导读".format(title)
-    total_words = request.target_words if request.target_words is not None else min(NARRATIVE_LENGTHS[request.target_length]["total_words"], request.target_duration * 240)
+    total_words = resolve_narrative_total_words(
+        request.target_words, request.target_length, request.target_duration,
+        request.style_profile, request.transform_mode,
+        sum(len(block.get("text", "")) for block in blocks),
+    )
     # 用户填写的目标篇幅应当与各节展示和实际生成指令一致。
     block_text = {block["id"]: len(block.get("text", "")) for block in blocks}
     source_sizes = [sum(block_text.get(block_id, 0) for block_id in section["source_block_ids"]) for section in sections]
@@ -1821,7 +2246,11 @@ def create_narrative_outline(request: NarrativeOutlineRequest, blocks: list[dict
     profile = get_style_profiles().get(request.style_profile)
     if profile is None:
         raise HTTPException(status_code=400, detail="未知的写作风格画像。")
-    target_words = request.target_words if request.target_words is not None else min(NARRATIVE_LENGTHS[request.target_length]["total_words"], request.target_duration * 240)
+    total_words = resolve_narrative_total_words(
+        request.target_words, request.target_length, request.target_duration,
+        request.style_profile, request.transform_mode,
+        sum(len(block.get("text", "")) for block in blocks),
+    )
     dossier = source_dossier(blocks)
     transform = TRANSFORM_MODES[request.transform_mode]
     verification = VERIFICATION_MODES[request.verification_mode]
@@ -1830,6 +2259,8 @@ def create_narrative_outline(request: NarrativeOutlineRequest, blocks: list[dict
         "off": "不使用联网检索；只根据已导入材料规划。",
         "discover": "联网检索仅用于发现候选公开来源；不要把搜索结果直接写入大纲。",
         "augment": "允许使用用户后续明确导入的公开来源补充背景；未导入、未审阅的网页不得写入大纲。",
+        "auto": "允许使用系统自动检索并导入的公开来源补充背景、行业数据和公开案例；这类来源未经人工审阅，"
+                "不得据此安排断言具体法条条文、生效日期或裁判结论的章节。",
     }[request.web_research_mode]
     prompt = """你是资深法律内容主笔。请基于下列已选材料规划一篇适合听、讲或学习的中文专业内容大纲。
 
@@ -1856,12 +2287,14 @@ def create_narrative_outline(request: NarrativeOutlineRequest, blocks: list[dict
 {allowed_ids}
 
     已选材料：
-{dossier}""".format(scenario=scenario["name"], audience=request.audience, title=request.title, duration=max(1, round(target_words / 240)), words=target_words, transform_name=transform["name"], transform_description=transform["description"], verification_name=verification["name"], verification_description=verification["description"], research_instruction=research_instruction, quality_rules=scenario_quality_rules(request.scenario), style=profile["instruction"], allowed_ids="\n".join(block["id"] for block in blocks if block["kind"] != "heading"), dossier=dossier)
+{dossier}""".format(scenario=scenario["name"], audience=request.audience, title=request.title, duration=max(1, round(total_words / 240)), words=total_words, transform_name=transform["name"], transform_description=transform["description"], verification_name=verification["name"], verification_description=verification["description"], research_instruction=research_instruction, quality_rules=scenario_quality_rules(request.scenario), style=profile["instruction"], allowed_ids="\n".join(block["id"] for block in blocks if block["kind"] != "heading"), dossier=dossier)
     if request.revision_instructions.strip():
         prompt += "\n\n当前大纲（供调整章节划分和顺序）：\n" + json.dumps(previous_outline or {}, ensure_ascii=False)
         prompt += "\n用户的结构调整意见：\n" + request.revision_instructions.strip()
         prompt += "\n请按意见重新规划章节，可以合并或拆分章节。仍须遵守材料边界，返回完整的新大纲，等待用户确认。"
-    raw = model_chat([{"role": "system", "content": "你严格遵守材料边界，并只返回可解析 JSON。"}, {"role": "user", "content": prompt}], temperature=0.25, max_tokens=3600)
+    # 大纲 JSON 需逐字复制材料块 ID（UUID 较长），6 节 × 多 ID + key_points 很容易超过 3600 token，
+    # 截断会直接变成非法 JSON；上限放宽到 8000 保证完整性。
+    raw = model_chat([{"role": "system", "content": "你严格遵守材料边界，并只返回可解析 JSON。"}, {"role": "user", "content": prompt}], temperature=0.25, max_tokens=8000)
     return normalize_narrative_outline(parse_model_json(raw), request, blocks)
 
 
@@ -1953,6 +2386,30 @@ def build_reviewer_guidance(project_id: str) -> str:
     return "\n\n".join(parts)
 
 
+def generate_podcast_opening(outline: dict, audience: str, reviewer_guidance: str = "") -> str:
+    """为播客风成稿生成开场白：欢迎、本期主线预告，最后把话头交给第一章。"""
+    headings = "；".join(section["heading"] for section in outline["sections"])
+    prompt = """请为一期中文播客节目写一段开场白，直接输出可朗读的口播正文。
+
+本期总标题：{title}
+面向听众：{audience}
+今天要讲的内容依次是：{headings}
+
+要求：
+1. 像主播开播：先一句话把听众带进来，再用两三句概括本期主线，自然预告今天要讲的几块内容（可以归纳成“几件事”“几个话题”，不必逐字念标题）。
+2. 只做引入和预告：不展开任何具体事实、数字、日期或法规细节，这些留给后面各节。
+3. 不新增材料外信息；不写“作为 AI”等元话语；不用小标题、列表或加粗。
+4. 长度 120–260 字，结尾用一句话把话头交给第一节（如“我们先从……说起”），但不要直接开始讲第一节的内容。"""
+    prompt = prompt.format(title=outline["title"], audience=audience, headings=headings)
+    if reviewer_guidance:
+        prompt += "\n\n用户核对意见（必须遵守）：" + reviewer_guidance
+    system_prompt = ("你是面向专业听众的深度播客主播，忠实于材料，不编造事实。"
+                     "用说的语言写作：像在对一位聪明的听众讲课，而不是在写文章。")
+    text = model_chat([{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}], temperature=0.55, max_tokens=1000)
+    text = re.sub(r"^(?:#{1,6}[ \t]+[^\n]*\r?\n+)+", "", text.strip()).strip()
+    return strip_written_markers(text)
+
+
 def generate_narrative_markdown(outline: dict, blocks: list[dict], audience: str, style_profile: str, transform_mode: str = "adapt", scenario: str = "topic_learning", target_duration: int = 10, web_research_mode: str = "discover", progress_key: str = "", reviewer_guidance: str = "") -> tuple[str, list[dict], dict]:
     profile = get_style_profiles().get(style_profile)
     if profile is None:
@@ -1962,8 +2419,19 @@ def generate_narrative_markdown(outline: dict, blocks: list[dict], audience: str
         "off": "不得使用联网检索内容。",
         "discover": "联网检索仅用于候选来源发现；不得把未导入、未审阅的网页事实写入正文。",
         "augment": "仅可使用用户明确导入并审阅的公开来源；来源之外的网页信息不得写入正文。",
+        # auto 放宽了来源范围（系统自动检索的公开来源），但换来两条更硬的约束：
+        # 必须写明来源名称，且不得据此断言法条、日期、裁判结论——这类事实只能来自项目内材料。
+        "auto": "可使用系统自动检索并导入的公开来源补充背景、行业数据和公开案例；这类来源未经人工逐条审阅，"
+                "引用时必须写明来源名称，且不得据此断言具体法条条文、生效日期或裁判结论（这类事实只能取自项目内材料）；"
+                "来源之外的网页信息仍不得写入正文。",
     }.get(web_research_mode, "不得使用联网检索内容。")
     rendered_sections, section_sources = [], []
+    podcast_profile = style_profile == PODCAST_CHAPTER_PROFILE
+    opening_text = ""
+    if podcast_profile and len(outline["sections"]) >= 2:
+        # 播客稿先来一段开场白：欢迎、主线预告、把话头交给第一章，成稿不再突兀地直接进第一章。
+        opening_text = generate_podcast_opening(outline, audience, reviewer_guidance)
+        section_sources.append({"section_id": "opening", "heading": "开场", "source_block_ids": []})
     GENERATION_PROGRESS[progress_key] = {"status": "running", "total": len(outline["sections"]), "current": 0, "heading": ""}
     for section_index, section in enumerate(outline["sections"]):
         GENERATION_PROGRESS[progress_key] = {"status": "running", "total": len(outline["sections"]), "current": section_index + 1, "heading": section["heading"]}
@@ -1972,6 +2440,23 @@ def generate_narrative_markdown(outline: dict, blocks: list[dict], audience: str
         points = "\n".join("- " + point for point in section.get("key_points", [])) or "- 围绕本节材料展开，不添加材料外事实。"
         transform = TRANSFORM_MODES[transform_mode]
         scenario_config = CONTENT_SCENARIOS[scenario]
+        if podcast_profile:
+            # 深度播客改写：深度优先于篇幅（podcast-rewriter 红线），口播稿形态与
+            # generate_chapter_podcast_markdown 对齐：连贯口播段落，不用书面结构。
+            # 字数不设上限：字数由材料密度决定，宁详尽不可遗漏知识点。
+            length_instruction = "参考篇幅：材料量对应的自然讲透长度（不设上限，以讲透为准）"
+            budget_rule = ("5. 篇幅不设上限：材料扎实就充分展开，深度优先于篇幅（原文每万字改写不少于三千字）；"
+                           "宁可详尽，不可遗漏知识点；不为了凑短而删减关键事实、数字、日期与规则细节。")
+            form_rule = ("4. 这是给人听的口播稿，不是给人看的文章：通篇写成连贯的口播段落，不要小标题、项目符号、"
+                         "加粗标签或冒号引导的列举式。书面标签必须改写成口语引导，例如："
+                         "不要写“**西班牙。** 2026年7月28日，西班牙部长会议批准……”，要写“我们先看西班牙。2026年7月28日，西班牙部长会议批准了……”；"
+                         "不要写“电力自由市场：自2027年11月25日起……”，要写“先说电力自由市场。从2027年11月底开始……”。"
+                         "“我们先看……”“你可能会问……”这类引导语可以自然使用；每个知识层收尾用一两句收束核心判断。"
+                         "若本节不是全文第一节，开头先用一两句话自然承接上一节的话题（全文结构见提示末尾），再进入本节，不要生硬另起炉灶。")
+        else:
+            length_instruction = "目标长度：{words} 字左右（硬性上限，最多超出一到两成）".format(words=section["target_words"])
+            budget_rule = "5. 字数预算是硬性要求：材料过多时先删减次要细节、重复例证和过渡句，不要靠压缩句子密度塞进更多事实；写完自查一遍，明显超出预算就删到预算以内。"
+            form_rule = "4. 可使用小标题，但不要重复总标题。只输出这一节的 Markdown 正文，不要输出来源列表。"
         prompt = """请撰写中文法律内容中的一个完整章节或单集讲稿。
 
 应用场景：{scenario}
@@ -1979,7 +2464,7 @@ def generate_narrative_markdown(outline: dict, blocks: list[dict], audience: str
 本节标题：{heading}
 写作目的：{purpose}
 面向读者：{audience}
-目标时长：约 {duration} 分钟；目标长度：{words} 字左右（硬性上限，最多超出一到两成）
+目标时长：约 {duration} 分钟；{length_instruction}
 加工方式：{transform_name}。{transform_description}
 写作画像：{style}
 场景化质量要求：
@@ -1993,25 +2478,42 @@ def generate_narrative_markdown(outline: dict, blocks: list[dict], audience: str
 1. 只根据下方材料写作，不得编造材料外的法规、案例、事实、数字或引述。
 2. 不要出现“作为 AI”“根据材料显示”“本节内容仅供参考”等元话语或免责声明；文章会在页面层面另行标注审阅状态。
 3. 使用自然连贯、适合朗读的段落，解释必要术语和因果关系；不要把材料简单压缩成项目符号，也不要使用僵硬的三段式总结。
-4. 可使用小标题，但不要重复总标题。只输出这一节的 Markdown 正文，不要输出来源列表。
-5. 字数预算是硬性要求：材料过多时先删减次要细节、重复例证和过渡句，不要靠压缩句子密度塞进更多事实；写完自查一遍，明显超出预算就删到预算以内。
+{form_rule}{budget_rule}
 
 本节材料：
-{dossier}""".format(scenario=scenario_config["name"], title=outline["title"], heading=section["heading"], purpose=section.get("purpose", ""), audience=audience, duration=target_duration, words=section["target_words"], transform_name=transform["name"], transform_description=transform["description"], style=profile["instruction"], quality_rules=scenario_quality_rules(scenario), research_instruction=research_instruction, points=points, dossier=dossier)
+{dossier}""".format(scenario=scenario_config["name"], title=outline["title"], heading=section["heading"], purpose=section.get("purpose", ""), audience=audience, duration=target_duration, length_instruction=length_instruction, transform_name=transform["name"], transform_description=transform["description"], style=profile["instruction"], quality_rules=scenario_quality_rules(scenario), research_instruction=research_instruction, points=points, form_rule=form_rule, budget_rule=budget_rule, dossier=dossier)
         prompt += "\n全文结构：" + " → ".join(item["heading"] for item in outline["sections"])
         if reviewer_guidance:
             prompt += "\n\n用户核对意见（必须遵守）：" + reviewer_guidance
         if section_index == 0:
-            prompt += "\n请将以下开场思路写成实际口播正文，不照抄写作指令：" + outline.get("opening_angle", "")
+            if podcast_profile:
+                prompt += ("\n问候与本期预告已经放在全文最前面的“开场白”里，这一节不要重复问好或预告，"
+                           "顺着开场白的话头直接进入正题。请将以下切入思路写成实际口播正文，不照抄写作指令：" + outline.get("opening_angle", ""))
+            else:
+                prompt += "\n请将以下开场思路写成实际口播正文，不照抄写作指令：" + outline.get("opening_angle", "")
         if section_index == len(outline["sections"]) - 1:
             prompt += "\n请将以下收束思路写成实际结尾，不照抄写作指令：" + outline.get("closing_angle", "")
-        section_text = model_chat([{"role": "system", "content": "你是严谨的法律知识内容作者，忠实于材料，不编造事实。"}, {"role": "user", "content": prompt}], temperature=0.55, max_tokens=max(1200, min(8000, section["target_words"] * 2)))
+        system_prompt = ("你是面向专业听众的深度播客主播，忠实于材料，不编造事实。"
+                          "用说的语言写作：像在对一位聪明的听众讲课，而不是在写文章。") if podcast_profile \
+            else "你是严谨的法律知识内容作者，忠实于材料，不编造事实。"
+        section_text = model_chat([{"role": "system", "content": system_prompt}, {"role": "user", "content": prompt}], temperature=0.55, max_tokens=max(1200, min(8000, section["target_words"] * 2 if not podcast_profile else 8000)))
         # 模型经常自己重复本节标题；统一去掉正文开头的一至多行标题，避免与下方拼接的小标题重复。
         section_text = re.sub(r"^(?:#{1,6}[ \t]+[^\n]*\r?\n+)+", "", section_text.strip()).strip()
+        # per-section 生成撞 token 上限时会在句中截断；退回到最后一个完整句，避免半句话入库。
+        if section_text and not section_text.rstrip().endswith(("。", "！", "？", "”", "）")):
+            cut = max(section_text.rfind(mark) for mark in ("。", "！", "？"))
+            if cut > 0:
+                section_text = section_text[:cut + 1]
+        if podcast_profile:
+            # 口播稿不应残留书面强调标记；漏网的加粗标签统一转为平文。
+            # 字数不限制（podcast-rewriter 观感：深度优先、自由生长），不再做逐章压缩。
+            section_text = strip_written_markers(section_text)
         rendered_sections.append("## {}\n\n{}".format(section["heading"], section_text))
         section_sources.append({"section_id": section["id"], "heading": section["heading"], "source_block_ids": section["source_block_ids"]})
     GENERATION_PROGRESS[progress_key] = {"status": "done", "total": len(outline["sections"]), "current": len(outline["sections"]), "heading": ""}
     markdown = ("# {}\n\n".format(outline["title"]) if outline["title"] != outline["sections"][0]["heading"] else "")
+    if opening_text:
+        markdown += "## 开场\n\n{}\n\n".format(opening_text)
     markdown += "\n\n".join(rendered_sections)
     settings = get_internal_provider_settings()
     source_chars = sum(len(block.get("text", "")) for block in blocks)
@@ -2022,20 +2524,31 @@ def generate_narrative_markdown(outline: dict, blocks: list[dict], audience: str
     output_chars = len(re.sub(r"[#*_`>\-\[\]]", "", markdown))
     # 字数超标的兜底压缩：模型经常无视目标篇幅（目标 5 分钟写出 15 分钟的量）。
     # 超出较多时自动做保事实压缩；单次压缩后仍明显超标的再补一轮（最多两轮）。
+    # 播客风改写例外：深度优先于篇幅（podcast-rewriter 红线），只在超出目标八成时才压缩。
     target_total = int(outline.get("target_total_words", 0) or 0)
+    podcast_total = style_profile == PODCAST_CHAPTER_PROFILE
     overrun_condensed = False
-    if target_total >= 600:
-        overrun_limit = round(target_total * 1.4) + 300
+    # 播客分支不压缩：深度优先于篇幅（podcast-rewriter 红线），篇幅由材料密度决定。
+    if target_total >= 600 and not podcast_total:
+        overrun_limit = round(target_total * (1.8 if podcast_total else 1.4)) + (800 if podcast_total else 300)
         for _pass in range(2):
             if output_chars <= overrun_limit:
                 break
             try:
                 condensed = model_chat([
                     {"role": "system", "content": "你是严格的播客稿编辑。只做删减和压缩，不改写事实。"},
-                    {"role": "user", "content": "下面的讲稿严重超出目标篇幅，目前约 {current} 字，目标是约 {target} 字。请压缩到约 {target} 字：保留 Markdown 的 #/## 标题结构，保留全部关键事实、数字、日期、限制条件和结论；删掉重复表述、冗余铺垫和次要细节。不得新增内容，不得改变立场或结论。只输出压缩后的 Markdown。\n\n{body}".format(current=output_chars, target=target_total, body=markdown)},
-                ], temperature=0.3, max_tokens=min(16000, max(2000, target_total * 2)))
+                    {"role": "user", "content": "下面的讲稿严重超出目标篇幅，目前约 {current} 字，目标是约 {target} 字。请压缩到约 {target} 字：输出长度是硬约束，不得超过目标的1.2倍，宁可大幅删减冗余例证和铺垫也要达标。逐段做减法而不是保留原句微调。保留 Markdown 的 #/## 标题结构{podcast_form}，保留全部关键事实、数字、日期、限制条件和结论；删掉重复表述、冗余铺垫和次要细节。不得新增内容，不得改变立场或结论。只输出压缩后的 Markdown。\n\n{body}".format(
+                        current=output_chars, target=target_total, body=markdown,
+                        podcast_form="和口播段落形态（不加粗标签、不用冒号列举、不用小标题）" if podcast_total else "")},
+                ], temperature=0.3, max_tokens=min(8000, max(2000, target_total * 2)))
                 condensed = condensed.strip()
                 if "#" not in condensed:
+                    break
+                # 防截断守卫：压缩输出被 max_tokens 截断时会静默丢掉末尾章节，
+                # 表现为章节数变少或结尾戛然而止；此时宁可保留原稿也不采纳。
+                if condensed.count("## ") < markdown.count("## "):
+                    break
+                if not condensed.rstrip().endswith(("。", "！", "？", "”", "）")):
                     break
                 condensed_chars = len(re.sub(r"[#*_`>\-\[\]]", "", condensed))
                 # 只在压缩结果确实更短且没有失控缩水（不低于目标七成）时才采用
@@ -2044,6 +2557,9 @@ def generate_narrative_markdown(outline: dict, blocks: list[dict], audience: str
                 markdown = condensed
                 output_chars = condensed_chars
                 overrun_condensed = True
+                if podcast_total:
+                    # 压缩改写会重新引入书面标记（加粗标签等）；统一再清理一道。
+                    markdown = strip_written_markers(markdown)
             except HTTPException:
                 break  # 模型服务不可用时保留原稿，仅在下方的长度检查中提示
     model_metadata = {"provider_name": settings.get("provider_name", ""), "base_url": settings.get("base_url", ""), "model_name": settings.get("model_name", ""), "generated_at": now_iso(), "style_profile": style_profile, "transform_mode": transform_mode, "scenario": scenario, "target_duration": target_duration, "web_research_mode": web_research_mode, "quality_rules": SCENARIO_QUALITY_RULES.get(scenario, []), "output_floor": floor, "source_chars": source_chars, "output_chars": output_chars, "target_total_words": target_total, "overrun_condensed": overrun_condensed, "floor_status": "pass" if not floor or output_chars >= floor else "review"}
@@ -2259,6 +2775,15 @@ async def protect_chatgpt_mcp(request: Request, call_next):
     return await call_next(request)
 
 
+@app.middleware("http")
+async def revalidate_shell_pages(request: Request, call_next):
+    """入口页不缓存：否则前端 ?v= 版本号升级后，老页面拿不到新的静态资源引用。"""
+    response = await call_next(request)
+    if request.url.path in ("/", "/index.html"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 @app.get("/api/health")
 def health():
     return {"status": "ok", "product": "LawFlow", "version": __version__, "time": now_iso()}
@@ -2267,6 +2792,44 @@ def health():
 @app.get("/api/app/version")
 def app_version():
     return latest_release_status()
+
+
+def project_audio_durations(conn: sqlite3.Connection, project_id: str | None = None) -> dict[str, int]:
+    """每个项目实际可听的时长（秒）。
+
+    项目里可能同时存在整篇音频和分章音频，直接相加会重复计时。
+    同一份讲稿优先取「分章音频之和」与「整篇音频」中的较大者；
+    多个讲稿版本之间也取较大者；直达原文音频单独成组。
+    """
+    where = " WHERE project_id = ?" if project_id else ""
+    params: tuple = (project_id,) if project_id else ()
+    content_titles = {
+        row["id"]: row["title"]
+        for row in conn.execute(f"SELECT id, title FROM narrative_contents{where}", params)
+    }
+    groups: dict[tuple[str, str], dict[str, int]] = {}
+    for row in conn.execute(
+        f"SELECT project_id, narrative_content_id, title, duration_seconds, status, audio_path FROM audio_outputs{where}",
+        params,
+    ):
+        if row["status"] != "ready" or not row["audio_path"] or not Path(row["audio_path"]).is_file():
+            continue
+        content_key = row["narrative_content_id"] or "__direct__"
+        group = groups.setdefault((row["project_id"], content_key), {"chapters": 0, "whole": 0, "chapter_count": 0})
+        duration = max(0, int(row["duration_seconds"] or 0))
+        content_title = content_titles.get(row["narrative_content_id"], "")
+        if content_title and (row["title"] or "").startswith(content_title + " · "):
+            group["chapters"] += duration
+            group["chapter_count"] += 1
+        else:
+            group["whole"] = max(group["whole"], duration)
+    durations: dict[str, int] = {}
+    for (pid, _content_key), group in groups.items():
+        # 分章音频通常比整篇长（每章都有开场/收束），但只生成了一部分章节时
+        # 整篇音频才是完整时长；取较大者，避免低估或重复相加。
+        best = max(group["chapters"], group["whole"])
+        durations[pid] = max(durations.get(pid, 0), best)
+    return durations
 
 
 @app.get("/api/projects")
@@ -2301,10 +2864,12 @@ def list_projects():
         agg = progress.setdefault(row["project_id"], {"done": 0, "total": 0})
         agg["total"] += total
         agg["done"] += min(done, total)
+    durations = project_audio_durations(conn)
     conn.close()
     for item in rows:
         item["production_stage"] = stages.get(item["id"], {})
         item["learning_progress"] = progress.get(item["id"], {"done": 0, "total": 0})
+        item["audio_duration_seconds"] = durations.get(item["id"], 0)
     return rows
 
 
@@ -2535,6 +3100,7 @@ def get_project(project_id: str):
                 )
                 conn.commit()
                 tasks = [dict(row) for row in conn.execute("SELECT * FROM tasks WHERE project_id = ? ORDER BY CASE risk_level WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, created_at DESC", (project_id,)).fetchall()]
+    durations = project_audio_durations(conn, project_id)
     conn.close()
     for document in docs:
         document["structure"] = parse_json(document.pop("structure_json"), {})
@@ -2571,7 +3137,7 @@ def get_project(project_id: str):
         audio["audio_available"] = audio["status"] == "ready" and bool(audio.get("audio_path")) and Path(audio["audio_path"]).is_file()
     for task in tasks:
         task["evidence_block_ids"] = parse_json(task["evidence_block_ids"], [])
-    return {"project": project, "documents": docs, "plans": plans, "contents": contents, "narrative_outlines": narrative_outlines, "narrative_contents": narrative_contents, "audio_outputs": audio_outputs, "tasks": tasks}
+    return {"project": project, "documents": docs, "plans": plans, "contents": contents, "narrative_outlines": narrative_outlines, "narrative_contents": narrative_contents, "audio_outputs": audio_outputs, "tasks": tasks, "audio_duration_seconds": durations.get(project_id, 0)}
 
 
 def fetch_article(url: str) -> tuple[str, str]:
@@ -2608,13 +3174,15 @@ class LinkSourceCreate(BaseModel):
 class QuickLinkCreate(BaseModel):
     url: str
     scenario: Literal["daily_brief", "topic_learning"] = "daily_brief"
+    # 播客风改写的深度：忠实转译 / 提炼 / 扩充。缺省按场景默认（速听=提炼，分章学习=转译）。
+    transform_mode: Literal["condense", "adapt", "enrich"] | None = None
 
 
 def read_link_article(url: str) -> tuple[str, str, str]:
     address = valid_public_url(url)
     title, text = fetch_article(address)
     if len(clean_text(text)) < 200:
-        raise HTTPException(status_code=422, detail="这个链接没抓到足够的正文。可能是图片排版、需要登录，或链接已失效。请打开文章复制正文，再用「粘贴文本」导入。")
+        raise HTTPException(status_code=422, detail="这个链接没抓到足够的正文。可能是图片排版、需要登录，或链接已失效。可以改用文件导入，或创建任务后在「素材」页粘贴正文。")
     return address, title.strip() or "网页文章", text
 
 
@@ -2639,9 +3207,9 @@ def preview_link(url: str):
 def create_project_from_link(payload: QuickLinkCreate):
     address, title, text = read_link_article(payload.url)
     if payload.scenario == "daily_brief":
-        options = {"scenario": "daily_brief", "transform_mode": "condense", "verification_mode": "source_only", "target_duration": 5}
+        options = {"scenario": "daily_brief", "transform_mode": payload.transform_mode or "condense", "verification_mode": "source_only", "target_duration": 5}
     else:
-        options = {"scenario": "topic_learning", "transform_mode": "adapt", "verification_mode": "material_check", "target_duration": 10}
+        options = {"scenario": "topic_learning", "transform_mode": payload.transform_mode or "adapt", "verification_mode": "material_check", "target_duration": 10}
     project = create_project(ProjectCreate(name=title[:120], web_research_mode="off", **options))
     source = save_text_source(project["id"], title, text, address)
     return {"project_id": project["id"], "source": source}
@@ -2879,17 +3447,18 @@ def get_web_page_title(url: str):
     return {"title": title[:120]}
 
 
-@app.post("/api/web-search")
-def search_web_sources(payload: WebSearchRequest):
-    """Search public web pages but leave import decisions entirely to the user."""
-    query = clean_text(payload.query)
-    terms = search_terms(query)
-    errors = []
-    results = []
+def collect_web_results(query: str, max_results: int) -> tuple[list[dict], list[str]]:
+    """检索公开网页，返回 (候选结果, 检索后端错误)。导入决策完全交给调用方。
+
+    两个后端依次尝试，任一个拿到结果即停；结果按关键词命中过滤，避免返回无关网页。
+    """
+    terms = search_terms(clean_text(query))
+    errors: list[str] = []
+    results: list[dict] = []
     seen_urls = set()
     for backend in (_search_ddg, _search_bing_rss):
         try:
-            raw_results = backend(query, payload.max_results * 2)
+            raw_results = backend(query, max_results * 2)
         except (httpx.HTTPError, ET.ParseError) as error:
             errors.append(str(error))
             continue
@@ -2902,10 +3471,18 @@ def search_web_sources(payload: WebSearchRequest):
                 continue
             seen_urls.add(url)
             results.append(item)
-            if len(results) >= payload.max_results:
+            if len(results) >= max_results:
                 break
         if results:
             break
+    return results, errors
+
+
+@app.post("/api/web-search")
+def search_web_sources(payload: WebSearchRequest):
+    """Search public web pages but leave import decisions entirely to the user."""
+    query = clean_text(payload.query)
+    results, errors = collect_web_results(query, payload.max_results)
     status = "ok" if results else "limited" if errors else "no_match"
     notice = ("搜索结果仅供发现公开材料；请逐条确认来源后再导入。" if results else
               "检索服务本次未返回可靠结果。可以稍后重试，或直接粘贴文章链接导入。" if errors else
@@ -2933,6 +3510,64 @@ def import_web_source(project_id: str, payload: WebSourceImport):
     return save_text_source(project_id, payload.title, content[:500000], url)
 
 
+class AutoResearchRequest(BaseModel):
+    # 留空时用项目名作关键词；max_sources 是「抓到可用正文」的目标份数。
+    query: str = Field(default="", max_length=200)
+    max_sources: int = Field(default=3, ge=1, le=8)
+
+
+def fetch_web_article(url: str) -> str:
+    """抓取公开网页正文；失败或未提取到足够正文时抛 HTTPException。"""
+    address = valid_public_url(url)
+    try:
+        response = httpx.get(address, headers={"User-Agent": "LawFlow/0.1"}, follow_redirects=True, timeout=25.0)
+        response.raise_for_status()
+    except httpx.HTTPError as error:
+        raise HTTPException(502, "无法读取该公开网页，请检查链接或改为手动粘贴正文。") from error
+    content_type = response.headers.get("content-type", "")
+    if "html" not in content_type.lower() and content_type:
+        raise HTTPException(400, "该链接不是可直接解析的网页。")
+    content = html_to_article_text(response.text)
+    if len(content) < 100:
+        raise HTTPException(422, "该网页未提取到足够正文，可能需要登录或使用动态加载。")
+    return content[:500000]
+
+
+@app.post("/api/projects/{project_id}/auto-research", status_code=201)
+def auto_research_project_sources(project_id: str, payload: AutoResearchRequest):
+    """自动检索公开网页并导入为补充素材，省去逐个搜索和粘贴。
+
+    与手动导入的唯一区别是「未经人工逐条审阅」：这些来源只在
+    web_research_mode=auto 下允许进入正文，且提示词会要求标注来源、
+    不得据此断言具体法条或裁判结论。默认关闭，用户显式点按才触发。
+    """
+    project = project_or_404(project_id)
+    query = clean_text(payload.query) or clean_text(project["name"])
+    if not query:
+        raise HTTPException(400, "请先填写检索关键词。")
+    results, errors = collect_web_results(query, payload.max_sources * 2)
+    if not results:
+        raise HTTPException(502, "检索服务未返回可靠结果，可换更具体的关键词重试，或手动粘贴文章链接。" if errors
+                            else "检索服务已响应，但没有匹配的公开网页。请换关键词，或手动粘贴文章链接。")
+    imported, failures = [], []
+    for item in results:
+        if len(imported) >= payload.max_sources:
+            break
+        try:
+            imported.append(save_text_source(project_id, item["title"], fetch_web_article(item["url"]), item["url"]))
+        except HTTPException as error:
+            failures.append({"title": item["title"], "url": item["url"], "reason": error.detail})
+    if not imported:
+        raise HTTPException(502, "检索到候选来源，但没有一份能提取到可用正文；请手动粘贴文章链接导入。")
+    return {
+        "project_id": project_id,
+        "query": query,
+        "imported": imported,
+        "failures": failures,
+        "message": "已自动导入 {} 份公开资料，在下方逐份勾选即可使用。这些来源未经人工审阅，生成时会要求标注来源，成稿后请核对关键事实。".format(len(imported)),
+    }
+
+
 @app.get("/api/documents/{document_id}")
 def get_document(document_id: str):
     conn = db()
@@ -2946,6 +3581,51 @@ def get_document(document_id: str):
     document["material_map"] = build_material_map(blocks)
     document["blocks"] = blocks
     return document
+
+
+class AiParseRequest(BaseModel):
+    # 用户对上一版解析的意见（哪些该是标题、层级怎么定），进入 AI 解析提示词。
+    feedback: str = Field(default="", max_length=2000)
+
+
+@app.post("/api/documents/{document_id}/ai-parse")
+def ai_reparse_document(document_id: str, payload: AiParseRequest):
+    """用模型重新解析文档的标题结构，替换 source_blocks 的 kind/层级，但保留块 id 与顺序。
+
+    适用规则解析失败的文档（WPS 短样式 ID、无标记纯文本）。支持 feedback 反复重试。
+    """
+    conn = db()
+    document = conn.execute("SELECT * FROM source_documents WHERE id = ?", (document_id,)).fetchone()
+    conn.close()
+    if document is None:
+        raise HTTPException(status_code=404, detail="材料不存在")
+    blocks = read_blocks(document_id)
+    if not blocks:
+        raise HTTPException(status_code=400, detail="这份材料没有内容块，无法解析。")
+    previous_headings = document["structure_json"] and len(parse_json(document["structure_json"], {}).get("headings", []))
+    rebuilt, structure = ai_parse_structure(blocks, payload.feedback)
+    timestamp = now_iso()
+    conn = db()
+    conn.execute("DELETE FROM source_blocks WHERE document_id = ?", (document_id,))
+    conn.executemany(
+        """INSERT INTO source_blocks (id, document_id, sequence_no, heading_path, heading_level, kind, text, source_locator, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        [(block["id"], document_id, block["sequence_no"], block["heading_path"], block["heading_level"], block["kind"], block["text"], block["source_locator"], timestamp) for block in rebuilt],
+    )
+    conn.execute("UPDATE source_documents SET structure_json = ?, block_count = ? WHERE id = ?", (json.dumps(structure, ensure_ascii=False), len(rebuilt), document_id))
+    conn.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (timestamp, document["project_id"]))
+    conn.commit()
+    conn.close()
+    count = structure["heading_count"]
+    message = (
+        f"AI 解析完成：识别到 {count} 个标题，可以到「大纲」自动划分章节。"
+        if count else "AI 解析完成：这份材料确实没有可识别的标题结构，将按整篇处理。"
+    )
+    if payload.feedback.strip():
+        message += "（已按你的意见重新解析）"
+    if previous_headings and count and count == previous_headings:
+        message += "结果与上一版一致；仍不满意可在意见中写得更具体。"
+    return {"id": document_id, "heading_count": count, "previous_heading_count": previous_headings or 0, "structure": structure, "message": message}
 
 
 @app.delete("/api/projects/{project_id}/documents/{document_id}")
@@ -3037,7 +3717,7 @@ def create_plan(project_id: str, payload: PlanCreate):
     split_mode_used = "rules"
     if payload.auto_split and payload.split_mode == "ai" and not selected_heading_ids:
         try:
-            proposal, ai_titles = ai_chapter_proposal(blocks)
+            proposal, ai_titles = ai_chapter_proposal(blocks, payload.feedback)
             selected_heading_ids = [heading_id for heading_id, _ in proposal]
             custom_questions = dict(proposal)
             custom_titles = ai_titles
@@ -3269,10 +3949,13 @@ def create_skill_host_content(project_id: str, payload: SkillHostContentRequest)
     source_ids = [block_id for block_id in payload.source_block_ids if block_id in available]
     if not source_ids:
         raise HTTPException(status_code=400, detail="宿主模型成稿未关联有效的材料块。")
+    markdown = clean_pasted_markdown(payload.markdown)
+    if len(markdown) < 20:
+        raise HTTPException(status_code=400, detail="清理 AI 回复的寒暄与代码围栏后没有留下正文；请粘贴完整的 Markdown 成稿。")
     timestamp = now_iso()
     outline_id = str(uuid.uuid4())
     content_id = str(uuid.uuid4())
-    outline = {"title": payload.title, "opening_angle": "由宿主模型按选定材料范围生成。", "closing_angle": "", "sections": [], "style_profile": payload.style_profile, "target_total_words": len(payload.markdown)}
+    outline = {"title": payload.title, "opening_angle": "由宿主模型按选定材料范围生成。", "closing_angle": "", "sections": [], "style_profile": payload.style_profile, "target_total_words": len(markdown)}
     preferences = project_preferences(project)
     model_metadata = {"provider_name": "宿主模型", "model_name": "Codex/CatPaw host model", "generated_at": timestamp, "style_profile": payload.style_profile, "mode": "host_model", **preferences}
     conn = db()
@@ -3284,7 +3967,7 @@ def create_skill_host_content(project_id: str, payload: SkillHostContentRequest)
     conn.execute(
         """INSERT INTO narrative_contents (id, outline_id, project_id, document_id, title, markdown, section_sources_json, model_json, status, review_note, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending_review', ?, ?, ?)""",
-        (content_id, outline_id, project_id, payload.document_id, payload.title, payload.markdown, json.dumps([{"section_id": "host-model", "heading": payload.title, "source_block_ids": source_ids}], ensure_ascii=False), json.dumps(model_metadata, ensure_ascii=False), payload.review_note, timestamp, timestamp),
+        (content_id, outline_id, project_id, payload.document_id, payload.title, markdown, json.dumps([{"section_id": "host-model", "heading": payload.title, "source_block_ids": source_ids}], ensure_ascii=False), json.dumps(model_metadata, ensure_ascii=False), payload.review_note, timestamp, timestamp),
     )
     conn.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (timestamp, project_id))
     conn.commit()
@@ -3368,8 +4051,8 @@ def create_narrative_outline_route(project_id: str, payload: NarrativeOutlineReq
     supplemental_docs = {block["document_id"] for block in blocks if block["document_id"] != payload.document_id}
     if supplemental_docs != set(payload.supplemental_document_ids):
         raise HTTPException(400, "补充资料与选定材料块不一致，请重新选择。")
-    if supplemental_docs and payload.web_research_mode != "augment":
-        raise HTTPException(400, "只有启用‘已选公开来源补充’后，才能使用补充资料。")
+    if supplemental_docs and payload.web_research_mode not in ("augment", "auto"):
+        raise HTTPException(400, "只有启用‘已选公开来源补充’或‘自动联网补充’后，才能使用补充资料。")
     for block in blocks:
         if block["document_id"] in supplemental_docs:
             if not block["source_url"]:
@@ -3471,7 +4154,30 @@ def narrative_generation_progress(outline_id: str):
 
 
 @app.post("/api/narrative-outlines/{outline_id}/contents", status_code=201)
-def generate_narrative_content(outline_id: str):
+def generate_narrative_content(outline_id: str, background: bool = False):
+    if background:
+        # 长篇逐节生成可能超过 20 分钟，内嵌 WebView 会捾断长时间无响应的连接；
+        # 后台线程生成 + 前端轮询 progress，POST 立即返回。
+        current = GENERATION_PROGRESS.get(outline_id, {})
+        if current.get("status") == "running":
+            raise HTTPException(409, "这份大纲正在生成中，请等当前任务完成后再试。")
+        threading.Thread(target=_generate_narrative_content_job, args=(outline_id,), daemon=True).start()
+        return {"status": "generating", "outline_id": outline_id}
+    return _generate_narrative_content_job(outline_id)
+
+
+def _generate_narrative_content_job(outline_id: str):
+    try:
+        return _generate_narrative_content_impl(outline_id)
+    except HTTPException as error:
+        GENERATION_PROGRESS[outline_id] = {"status": "error", "total": 0, "current": 0, "heading": "", "message": error.detail}
+        raise
+    except Exception as error:  # 后台线程里的意外异常也要落到进度里，否则前端永远卡在 running
+        GENERATION_PROGRESS[outline_id] = {"status": "error", "total": 0, "current": 0, "heading": "", "message": "生成失败：" + str(error)}
+        raise
+
+
+def _generate_narrative_content_impl(outline_id: str):
     conn = db()
     row = conn.execute("SELECT * FROM narrative_outlines WHERE id = ?", (outline_id,)).fetchone()
     conn.close()
@@ -3783,10 +4489,12 @@ def build_audio_script(markdown: str, title: str, scenario: str, target_duration
         "legal_podcast": f"欢迎收听本期法律科普：《{title}》。",
     }
     if section_heading:
-        intro = f"接下来是《{title}》中的一节：{section_heading}。"
+        # 只报章节名，不念整篇文档标题：文件名常带下划线、日期和 [Sent] 状态标签，
+        # TTS 会念成一串“杠”和“下划线”，非常生硬。
+        intro = "接下来这一节，我们讲{}。".format(section_heading)
     else:
         intro = intro_map.get(scenario, intro_map["topic_learning"])
-    return "\n\n".join([intro, *clean_lines])
+    return spoken_text("\n\n".join([intro, *clean_lines]))
 
 
 @app.post("/api/projects/{project_id}/audio-scripts", status_code=201)
@@ -4055,13 +4763,17 @@ class RevealPathRequest(BaseModel):
 
 @app.post("/api/reveal-in-finder")
 def reveal_in_finder(payload: RevealPathRequest):
-    """在访达中定位导出的文件，让「导出到哪了」有明确答案。"""
+    """在系统文件管理器中定位导出的文件，让「导出到哪了」有明确答案。"""
     path = Path(payload.path).expanduser()
     allowed_roots = [get_configured_export_directory(), DATA_DIR]
     if not any(path.is_file() and path.resolve().is_relative_to(root.resolve()) for root in allowed_roots if root.exists()):
         raise HTTPException(403, "只能定位导出目录或应用数据目录内的文件。")
+    if sys.platform == "win32":
+        # /select 会在资源管理器中选中该文件；路径无需转义。
+        subprocess.Popen(["explorer", "/select,", str(path)])
+        return {"revealed": True}
     if sys.platform != "darwin":
-        raise HTTPException(400, "当前系统不支持访达定位。")
+        raise HTTPException(400, "当前系统不支持文件定位。")
     subprocess.Popen(["open", "-R", str(path)])
     return {"revealed": True}
 
@@ -4180,21 +4892,35 @@ def generate_content(plan_id: str, payload: ContentRequest):
     blocks = read_blocks(plan["document_id"], payload.source_block_ids)
     if not blocks:
         raise HTTPException(status_code=400, detail="未找到章节对应的材料块")
-    markdown, claims = draft_content(payload.title, blocks, payload.audience, payload.output_type, payload.style_name)
+    project = project_or_404(plan["project_id"])
+    preferences = project_preferences(project)
+    transform_mode = payload.transform_mode or preferences["transform_mode"]
+    generator = "model"
+    metadata = {}
+    if model_generation_ready():
+        # 模型已配置：走播客风 AI 改写，完整材料进模型，按改写深度控制输出下限。
+        markdown, claims, metadata = generate_chapter_podcast_markdown(
+            payload.title, blocks, payload.audience, transform_mode, payload.style_profile, payload.question,
+        )
+    else:
+        # 未配置模型：退回模板摘要并明确标注，用户能看到这不是 AI 改写。
+        generator = "template"
+        markdown, claims = draft_content(payload.title, blocks, payload.audience, payload.output_type, payload.style_name)
+        markdown = CHAPTER_TEMPLATE_NOTICE + markdown
     content_id = str(uuid.uuid4())
     timestamp = now_iso()
     conn = db()
     conn.execute("""INSERT INTO generated_contents (id, project_id, plan_id, chapter_id, title, markdown, claims_json, status, review_note, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending_review', '', ?, ?)""", (content_id, plan["project_id"], plan_id, payload.chapter_id, payload.title, markdown, json.dumps(claims, ensure_ascii=False), timestamp, timestamp))
     existing_task_count = conn.execute("SELECT COUNT(*) FROM tasks WHERE project_id = ? AND document_id = ?", (plan["project_id"], plan["document_id"])).fetchone()[0]
-    if existing_task_count == 0 and scenario_requires_tasks(project_or_404(plan["project_id"])):
+    if existing_task_count == 0 and scenario_requires_tasks(project):
         task_items = extract_tasks(plan["document_id"], plan["project_id"], blocks)
         conn.executemany("""INSERT INTO tasks (id, project_id, document_id, title, detail, risk_level, evidence_block_ids, status, owner, due_date, created_at, updated_at)
             VALUES (:id, :project_id, :document_id, :title, :detail, :risk_level, :evidence_block_ids, :status, :owner, :due_date, :created_at, :updated_at)""", task_items)
     conn.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (timestamp, plan["project_id"]))
     conn.commit()
     conn.close()
-    return {"id": content_id, "title": payload.title, "markdown": markdown, "claims": claims, "status": "pending_review", "created_at": timestamp}
+    return {"id": content_id, "title": payload.title, "markdown": markdown, "claims": claims, "status": "pending_review", "generator": generator, "model": metadata, "created_at": timestamp}
 
 
 @app.put("/api/contents/{content_id}")
@@ -4339,6 +5065,19 @@ def get_macos_voices():
     return {"available": True, "voices": voices, "enhanced_available": enhanced_available, "hint": hint}
 
 
+@app.get("/api/settings/local-voices")
+def get_local_voices():
+    """按当前操作系统检测本机语音：macOS 返回 say 音色，Windows 返回 SAPI 音色。"""
+    if sys.platform == "win32":
+        names = list_windows_sapi_voices()
+        if not names:
+            return {"available": False, "voices": [], "enhanced_available": False,
+                    "hint": "未检测到 Windows 语音。请在「设置 → 时间和语言 → 语音」中添加中文语音包后重试。"}
+        return {"available": True, "voices": [{"name": name, "lang": "zh", "enhanced": False} for name in names], "enhanced_available": False,
+                "hint": "生成 MP3 时会自动优先使用中文音色（如 Huihui）；生成 MP3 需要安装 FFmpeg。"}
+    return get_macos_voices()
+
+
 @app.get("/api/settings/export")
 def get_export_settings():
     conn = db()
@@ -4449,7 +5188,8 @@ MOBILE_SHARE_TTL = timedelta(days=7)
 def local_lan_ip() -> str:
     """探测本机局域网 IP（UDP connect 不会真正发包）。
 
-    优先返回家用/办公网段（192.168 > 10.x > 172.16-31），跳过 VPN 虚拟网段（如 198.18/15）。
+    优先返回家用/办公网段（192.168 > 10.x > 172.16-31），跳过 VPN 虚拟网段（如 198.18/15）；
+    没有 RFC1918 地址时，接受默认路由所在网卡的非回环地址（如企业网的 11.x）。
     """
     probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     candidates: list[str] = []
@@ -4483,10 +5223,14 @@ def local_lan_ip() -> str:
             address = ipaddress.ip_address(ip)
         except ValueError:
             return 99
-        if not address.is_private or address.is_loopback:
+        if address.is_loopback or address.is_link_local or address.is_unspecified:
             return 99
         if address in ipaddress.ip_network("198.18.0.0/15"):  # VPN/基准测试虚拟网段
             return 98
+        if not address.is_private:
+            # 企业/校园网常用 11.x、100.64/10 等非 RFC1918 地址；它们仍可能
+            # 是手机能访问的局域网地址，不能直接回退到 127.0.0.1。
+            return 10
         octets = [int(part) for part in str(address).split(".")]
         if octets[0] == 192 and octets[1] == 168:
             return 0
@@ -4505,6 +5249,49 @@ def valid_mobile_share(conn: sqlite3.Connection, token: str):
     if row is None or row["revoked_at"] is not None or row["expires_at"] <= now_iso():
         return None
     return row
+
+
+def mobile_share_error_page(message: str = "链接不存在或已失效。") -> HTMLResponse:
+    """失效/吊销的手机链接返回可读页面，而不是裸 JSON。"""
+    page = """<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="light" />
+<title>链接已失效 · 声息</title>
+<link rel="icon" type="image/png" href="/m/icon-180.png" />
+<style>
+  :root { --ink:#14251f; --muted:#6b766f; --accent:#1d5b49; --line:#e6e1d5; --bg:#f7f5ef; --card:#fffdf8; }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; display:grid; place-items:center; padding:28px; background:var(--bg); color:var(--ink); font:15px/1.7 -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans SC", sans-serif; }
+  main { width:min(440px,100%); padding:34px 28px 28px; border:1px solid var(--line); border-radius:20px; background:var(--card); box-shadow:0 18px 50px rgba(30,44,38,.08); text-align:center; }
+  .brand { margin-bottom:22px; color:var(--accent); font-size:11px; font-weight:700; letter-spacing:.18em; }
+  .icon { width:58px; height:58px; margin:0 auto 18px; display:grid; place-items:center; border-radius:50%; background:#eef3ea; color:var(--accent); }
+  h1 { margin:0 0 10px; font-size:21px; line-height:1.4; }
+  p { margin:0; color:var(--muted); }
+  .hint { margin-top:20px; padding-top:16px; border-top:1px solid var(--line); font-size:13px; line-height:1.8; }
+  .hint b { color:var(--ink); font-weight:600; }
+  footer { margin-top:24px; color:#9b9c92; font-size:11px; letter-spacing:.12em; }
+</style>
+</head>
+<body>
+<main>
+  <div class="brand">声息 · SHENGXI</div>
+  <div class="icon" aria-hidden="true">
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+      <path d="M10 13a5 5 0 0 0 7.1 0l2.1-2.1a5 5 0 0 0-7.1-7.1L11 5"/>
+      <path d="M14 11a5 5 0 0 0-7.1 0l-2.1 2.1a5 5 0 0 0 7.1 7.1L13 19"/>
+    </svg>
+  </div>
+  <h1>链接已失效</h1>
+  <p>__MESSAGE__</p>
+  <p class="hint"><b>请让分享者在电脑端重新生成链接。</b><br/>链接默认 7 天有效；重新生成会作废旧链接。声息退出或电脑睡眠时，手机页也会暂时不可用。</p>
+  <footer>有时只是戴上耳机，然后出发。</footer>
+</main>
+</body>
+</html>"""
+    return HTMLResponse(page.replace("__MESSAGE__", escape(message)), status_code=404)
 
 
 def mobile_chapter_suffix(content_title: str, audio_title: str) -> str:
@@ -4604,13 +5391,17 @@ def build_mobile_book(conn: sqlite3.Connection, project_id: str) -> dict:
     chapters = [chapter_payload(a) for a in audios if a["narrative_content_id"]]
     content_order = {row["id"]: index for index, row in enumerate(contents)}
     chapters.sort(key=lambda c: (content_order.get(c["content_id"], 0), int(c["section_id"].split("-")[-1]) if c["section_id"] else 0))
-    learned = sum(1 for c in chapters if c["learned"])
+    # 只有能映射到具体章节的音频才参与「已学」统计；整篇音频和无法映射的
+    # 旧音频不进入分母，否则用户永远到不了 100%。
+    learnable = [chapter for chapter in chapters if chapter["section_id"]]
+    learned = sum(1 for chapter in learnable if chapter["learned"])
     return {
         "title": project["name"],
         "whole_book": whole_book,
         "chapters": chapters,
         "learned_count": learned,
-        "total": len(chapters),
+        "total": len(learnable),
+        "audio_count": len(chapters) + len(whole_book),
     }
 
 
@@ -4681,7 +5472,7 @@ def mobile_listen_page(token: str):
     share = valid_mobile_share(conn, token)
     conn.close()
     if share is None:
-        raise HTTPException(404, "链接不存在或已失效。")
+        return mobile_share_error_page("链接不存在或已失效。")
     return FileResponse(STATIC_DIR / "mobile.html", media_type="text/html")
 
 

@@ -22,7 +22,8 @@ function chapterAudioLabel(audio) {
   if (audio.audio_available) return '音频已就绪';
   return '脚本已就绪';
 }
-function renderChapterWorkbench(content) {
+function renderChapterWorkbench(content, options = {}) {
+  const showSidebar = options.sidebar !== false;
   const chapters = content.chapters || [];
   if (!chapters.length) return '<p>请刷新项目以读取章节。</p>';
   appState.chapterFocus ||= {};
@@ -36,27 +37,27 @@ function renderChapterWorkbench(content) {
   const attr = 'data-content-id="' + content.id + '" data-section-id="' + escapeHtml(focused.id) + '"';
   const button = (action, text, cls = 'button-outline', disabled = false) => '<button class="button button-small ' + cls + '" data-chapter-action="' + action + '" ' + attr + (disabled ? ' disabled' : '') + '>' + text + '</button>';
   const audioEnabled = appState.selectedProject.project.audio_enabled;
-  const nav = '<aside class="chapter-sidebar" aria-label="章节目录"><div class="chapter-sidebar-inner"><div class="chapter-sidebar-head"><b>章节目录</b><small>' + chapters.length + ' 章 · 已学 ' + chapters.filter(c => completed.has(c.reading_id)).length + ' 章 · ' + chapters.filter(c => chapterAudio(content, c)?.audio_available).length + ' 章音频就绪</small></div><div class="chapter-nav">' + chapters.map((chapter, index) => {
+  const nav = showSidebar ? '<aside class="chapter-sidebar" aria-label="章节目录"><div class="chapter-sidebar-inner"><div class="chapter-sidebar-head"><b>章节目录</b><small>' + chapters.length + ' 章 · 已学 ' + chapters.filter(c => completed.has(c.reading_id)).length + ' 章 · ' + chapters.filter(c => chapterAudio(content, c)?.audio_available).length + ' 章音频就绪</small></div><div class="chapter-nav">' + chapters.map((chapter, index) => {
     const track = chapterAudio(content, chapter);
     const pending = appState.chapterDrafts?.[chapterDraftKey(content.id, chapter.id)];
     return '<button type="button" class="chapter-nav-item' + (chapter.id === focused.id ? ' active' : '') + '" data-chapter-select="' + content.id + '" data-section-id="' + escapeHtml(chapter.id) + '" aria-pressed="' + (chapter.id === focused.id) + '"><span class="chapter-number">' + String(index + 1).padStart(2, '0') + '</span><span><b>' + escapeHtml(chapter.heading) + '</b><small>' + chapter.body.length + ' 字' + (audioEnabled ? ' · ' + chapterAudioLabel(track) : '') + (pending?.candidate ? ' · 有候选稿' : pending?.mode === 'edit' ? ' · 编辑中' : '') + '</small></span>' + (completed.has(chapter.reading_id) ? '<i aria-label="已学">✓</i>' : '') + '</button>';
-  }).join('') + '</div><button class="button button-quiet button-small" data-outline-feedback="' + content.outline_id + '">调整章节划分与顺序 →</button></div></aside>';
+  }).join('') + '</div><button class="button button-quiet button-small" data-outline-feedback="' + content.outline_id + '">调整章节划分与顺序 →</button></div></aside>' : '';
   const player = audio?.audio_available
     ? '<div class="chapter-player"><audio controls preload="metadata" data-chapter-player="' + audio.id + '" src="/api/audio-outputs/' + audio.id + '/stream?v=' + encodeURIComponent(audio.updated_at) + '"></audio><label>倍速<select data-chapter-rate><option value="1">1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option></select></label>' + button('export-audio', '保存 MP3') + '</div>'
     : '<p class="chapter-audio-hint">' + (audio?.status === 'source_changed' ? '本章正文已修改。确认讲稿后更新音频，手机端也会使用更新后的音频。' : '本章还没有可播放音频。' + (content.status !== 'confirmed' ? '先确认讲稿，再生成正式音频。' : '')) + '</p>';
-  const audioBar = audioEnabled ? '<section class="chapter-audio-bar" aria-label="本章音频"><div class="chapter-audio-title"><b>本章音频</b><span class="tag">' + chapterAudioLabel(audio) + (audio?.audio_available ? ' · ' + formatListenTime(audio.duration_seconds || 0) : '') + '</span>' + button('audio', audio?.audio_available ? '重新生成' : audio?.status === 'source_changed' ? '更新本章音频' : '生成本章音频', 'button-outline', content.status !== 'confirmed' || draft.busy) + '</div>' + player + '</section>' : '';
+  const audioBar = audioEnabled ? '<section class="chapter-audio-bar" aria-label="本章音频"><div class="chapter-audio-title"><b>本章音频</b><span class="tag">' + chapterAudioLabel(audio) + (audio?.audio_available ? ' · ' + formatListenTime(audio.duration_seconds || 0) : '') + '</span>' + button('audio', audio?.audio_available ? '重新生成' : audio?.status === 'source_changed' ? '更新本章音频' : '生成本章音频', 'button-outline', draft.busy) + '</div>' + player + '</section>' : '';
   let body = '<div class="chapter-body narrative-article">' + renderNarrativeHtml(focused.body, content.id) + '</div>';
   if (draft.mode === 'edit') body = '<label class="chapter-edit-label">修改本章正文<textarea class="chapter-editor" data-chapter-body ' + attr + '>' + escapeHtml(draft.body) + '</textarea></label><div class="chapter-action-row">' + button('save', '保存本章修改', 'button-primary', draft.busy) + button('cancel', '取消编辑', 'button-quiet', draft.busy) + '<small>保存后仅这一章和整篇音频需要更新。</small></div>';
   const feedback = draft.mode === 'feedback' || draft.candidate ? '<section class="chapter-feedback"><h4>这章希望怎样修改？</h4><p>可以引用具体段落，说明应保留、删减或重新解释的内容。只会生成本章候选稿。</p><div class="feedback-presets">' + ['减少重复、表达更简洁', '保留更多原文细节', '解释术语，降低理解难度', '调整论述顺序和衔接'].map(text => '<button class="button button-quiet button-small" data-feedback-preset="' + text + '" ' + attr + '>' + text + '</button>').join('') + '</div><label>修改意见<textarea data-chapter-feedback ' + attr + ' placeholder="例如：第二段重复了第一段的背景。请合并说明；保留原文的日期和限制条件，最后再解释它与本章主题的关系。">' + escapeHtml(draft.instructions) + '</textarea></label><div class="chapter-action-row">' + button('preview', draft.busy ? '正在生成候选稿…' : '按意见生成候选稿', 'button-primary', draft.busy) + button('cancel', '关闭修改意见', 'button-quiet', draft.busy) + '</div></section>' : '';
   const candidate = draft.candidate ? '<section class="chapter-comparison" aria-label="修改前后对照"><div class="chapter-comparison-head"><h4>检查候选稿</h4><p>尚未替换正文。你可以继续修改右侧文字，再决定是否采用。</p></div><div class="chapter-comparison-grid"><div><b>当前正文</b><div class="chapter-original narrative-article">' + renderNarrativeHtml(draft.candidate.original, content.id) + '</div></div><label>候选稿<textarea class="chapter-editor" data-chapter-candidate ' + attr + '>' + escapeHtml(draft.candidate.body) + '</textarea></label></div><div class="chapter-action-row">' + button('apply', '采用候选稿', 'button-primary', draft.busy) + button('discard', '保留原稿', 'button-outline', draft.busy) + '</div></section>' : '';
   const status = '<p class="chapter-status" role="status">' + (draft.busy ? '正在处理本章，请稍候…' : '') + '</p>';
-  return '<article class="chapter-workbench" data-chapter-workbench="' + content.id + '"><div class="chapter-workbench-header"><div><h3>' + escapeHtml(content.title) + '</h3><p>' + chapters.length + ' 章 · <span class="status ' + content.status + '">' + statusText(content.status) + '</span></p></div><div class="chapter-action-row"><button class="button button-small button-primary" data-confirm-narrative="' + content.id + '">' + (content.status === 'confirmed' ? '讲稿已确认' : '确认讲稿') + '</button><button class="button button-small button-outline" data-toggle-narrative-view="' + content.id + '">编辑整篇</button><button class="button button-small button-outline" data-export-narrative="' + content.id + '">导出讲稿</button></div></div><div class="chapter-layout">' + nav + '<div class="chapter-main"><div class="chapter-heading"><span>第 ' + (chapters.indexOf(focused) + 1) + ' 章 / 共 ' + chapters.length + ' 章</span><h4>' + escapeHtml(focused.heading) + '</h4><small>' + focused.body.length + ' 字 · 原文依据 ' + focused.source_block_ids.length + ' 块</small></div>' + audioBar + '<div class="chapter-action-row chapter-tools">' + button('edit', '修改本章', 'button-outline', draft.busy) + button('feedback', '向 AI 提修改意见', 'button-outline', draft.busy) + button('sources', '查看原文依据', 'button-quiet', !focused.source_block_ids.length) + button('export-text', '导出本章', 'button-quiet') + button('learned', completed.has(focused.reading_id) ? '✓ 已学' : '标记已学', 'button-quiet') + '</div>' + (draft.error ? '<p class="message error" role="alert">' + escapeHtml(draft.error) + '</p>' : '') + status + (draft.candidate ? '' : body) + feedback + candidate + '</div></div></article>';
+  return '<article class="chapter-workbench" data-chapter-workbench="' + content.id + '"><div class="chapter-workbench-header"><div><h3>' + escapeHtml(content.title) + '</h3><p>' + chapters.length + ' 章 · <span class="status ' + content.status + '">' + statusText(content.status) + '</span></p></div><div class="chapter-action-row"><button class="button button-small button-primary" data-confirm-narrative="' + content.id + '">' + (content.status === 'confirmed' ? '讲稿已确认' : '确认讲稿') + '</button><button class="button button-small button-outline" data-toggle-narrative-view="' + content.id + '">编辑整篇</button><button class="button button-small button-outline" data-export-narrative="' + content.id + '">导出讲稿</button></div></div><div class="chapter-layout' + (showSidebar ? '' : ' no-sidebar') + '">' + nav + '<div class="chapter-main"><div class="chapter-heading"><span>第 ' + (chapters.indexOf(focused) + 1) + ' 章 / 共 ' + chapters.length + ' 章</span><h4>' + escapeHtml(focused.heading) + '</h4><small>' + focused.body.length + ' 字 · 原文依据 ' + focused.source_block_ids.length + ' 块</small></div>' + audioBar + '<div class="chapter-action-row chapter-tools">' + button('edit', '修改本章', 'button-outline', draft.busy) + button('feedback', '向 AI 提修改意见', 'button-outline', draft.busy) + button('sources', '查看原文依据', 'button-quiet', !focused.source_block_ids.length) + button('export-text', '导出本章', 'button-quiet') + button('learned', completed.has(focused.reading_id) ? '✓ 已学' : '标记已学', 'button-quiet') + '</div>' + (draft.error ? '<p class="message error" role="alert">' + escapeHtml(draft.error) + '</p>' : '') + status + (draft.candidate ? '' : body) + feedback + candidate + '</div></div></article>';
 }
 function hasUnsavedChapterEdits(contentId) {
   return Object.entries(appState.chapterDrafts || {}).some(([key, draft]) => key.startsWith(contentId + ':') && (draft.mode === 'edit' || draft.candidate));
 }
-function bindChapterWorkbench() {
-  const panel = $('#detail-panel');
+function bindChapterWorkbench(root = $('#detail-panel')) {
+  const panel = root;
   $$('[data-chapter-select]', panel).forEach(button => button.addEventListener('click', () => {
     stopOtherAudio();
     appState.chapterFocus[button.dataset.chapterSelect] = button.dataset.sectionId;
@@ -131,6 +132,13 @@ async function runChapterAction(button) {
       appState.selectedProject = await request('/api/projects/' + projectId);
       showMessage('本章已保存。请确认讲稿后更新本章音频。');
     } else if (action === 'audio') {
+      if (content.status !== 'confirmed') {
+        // 不再禁用按钮——禁用时点击毫无反馈，用户以为坏了。明确告知原因并带到确认按钮。
+        draft.error = '本章讲稿还未确认，所以不能生成正式 MP3。点上方「确认讲稿」后即可生成。';
+        renderActivePanel();
+        $('[data-confirm-narrative="' + content.id + '"]')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        return;
+      }
       if (hasUnsavedChapterEdits(content.id)) throw new Error('请先保存编辑或处理候选稿，再生成音频。');
       let audio = chapterAudio(content, chapter);
       if (!audio || audio.status === 'source_changed') audio = await request('/api/projects/' + projectId + '/audio-scripts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ narrative_content_id: content.id, section_heading: chapter.heading }) });

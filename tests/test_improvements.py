@@ -7,7 +7,7 @@ import sys
 import tempfile
 import types
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -42,7 +42,7 @@ class ImprovementsTest(unittest.TestCase):
         source = self.client.post(f"/api/projects/{project['id']}/text-sources", json={'title': '素材', 'content': '这是原始材料，需要保留事实和限制条件。企业应当按照实际情况评估。'}).json()
         document = self.client.get(f"/api/documents/{source['id']}").json()
         ids = [b['id'] for b in document['blocks'] if b['kind'] == 'paragraph']
-        content = self.client.post(f"/api/projects/{project['id']}/skill-host-contents", json={'document_id':source['id'], 'title':'测试讲稿', 'markdown':'# 讲稿\n\n这是**材料**正文。请参考[说明](https://example.com)。', 'source_block_ids':ids}).json()
+        content = self.client.post(f"/api/projects/{project['id']}/skill-host-contents", json={'document_id':source['id'], 'title':'测试讲稿', 'markdown':'好的，以下是为你整理的讲稿：\n\n# 讲稿\n\n这是**材料**正文。请参考[说明](https://example.com)。\n\n如果需要调整，请告诉我。', 'source_block_ids':ids}).json()
         return project, source, ids, content
 
     def test_provider_error_message_explains_openai_quota(self):
@@ -56,9 +56,9 @@ class ImprovementsTest(unittest.TestCase):
             200,
             json={
                 'tag_name': 'v0.2.0',
-                'html_url': 'https://github.com/hey-elaine/lawflow/releases/tag/v0.2.0',
+                'html_url': 'https://github.com/donghyq/ListenWise/releases/tag/v0.2.0',
             },
-            request=httpx.Request('GET', 'https://api.github.com/repos/hey-elaine/lawflow/releases/latest'),
+            request=httpx.Request('GET', 'https://api.github.com/repos/donghyq/ListenWise/releases/latest'),
         )
         with patch.object(self.main.httpx, 'get', return_value=response):
             result = self.client.get('/api/app/version')
@@ -400,6 +400,73 @@ class ImprovementsTest(unittest.TestCase):
         self.assertNotIn('请从问题切入', text)
         self.assertIn('请从问题切入', model.call_args.args[0][-1]['content'])
 
+    def test_podcast_profile_strips_written_markers_and_rejects_truncated_condensation(self):
+        project, source, ids, content = self.make_content()
+        # 各章 target_words < 200：跳过逐章压缩，让整稿压缩兜底被触发。
+        outline = {'title': '标题', 'opening_angle': '', 'closing_angle': '', 'target_total_words': 600,
+                   'sections': [{'id': 's1', 'heading': '第一章', 'source_block_ids': ids, 'target_words': 100},
+                                {'id': 's2', 'heading': '第二章', 'source_block_ids': ids, 'target_words': 100}]}
+        blocks = self.main.read_blocks(source['id'])
+        body1 = '**巴西。** 2026年8月12日，卢拉总统签署四项能源法令。' + '第一章展开的完整口播正文。' * 150
+        body2 = '第二章的口播正文，用连贯段落讲清楚。' * 100
+        # 压缩输出被 token 截断（丢掉第二章）时必须拒绝采纳。
+        truncated_condensed = '# 标题\n\n## 第一章\n\n' + '压缩后只剩第一章的长正文。' * 200
+        outputs = ['欢迎收听本期节目，今天讲两件事。', body1 + '结尾收束。', body2 + '结尾收束。', truncated_condensed]
+        with patch.object(self.main, 'model_chat', side_effect=outputs):
+            text, _, _ = self.main.generate_narrative_markdown(outline, blocks, '读者', 'law_podcast_v4')
+        self.assertNotIn('**', text)
+        # 截断的整稿压缩被守卫拒绝，原稿两章都保留。
+        self.assertIn('第一章展开的完整口播正文', text)
+        self.assertIn('第二章的口播正文', text)
+
+    def test_podcast_profile_generates_opening_before_first_chapter(self):
+        project, source, ids, content = self.make_content()
+        outline = {'title': '标题', 'opening_angle': '', 'closing_angle': '', 'target_total_words': 600,
+                   'sections': [{'id': 's1', 'heading': '第一章', 'source_block_ids': ids, 'target_words': 300},
+                                {'id': 's2', 'heading': '第二章', 'source_block_ids': ids, 'target_words': 300}]}
+        blocks = self.main.read_blocks(source['id'])
+        body = '第一章口播正文，讲清楚关键事实。' * 30
+        model = Mock(side_effect=['欢迎收听本期节目，今天我们聊两件事。', body, '第二章口播正文，承接上文讲清楚。'])
+        with patch.object(self.main, 'model_chat', model):
+            text, sources, _ = self.main.generate_narrative_markdown(outline, blocks, '读者', 'law_podcast_v4')
+        self.assertIn('## 开场', text)
+        self.assertIn('欢迎收听本期节目', text)
+        self.assertLess(text.index('## 开场'), text.index('## 第一章'))
+        self.assertEqual(sources[0]['heading'], '开场')
+        # 开场白提示词只做引入预告，不展开事实；第一次调用是开场白，第二次才是章节
+        opening_prompt = model.call_args_list[0][0][0][-1]['content']
+        self.assertIn('开场白', opening_prompt)
+        self.assertIn('第一章；第二章', opening_prompt)
+
+    def test_podcast_single_section_skips_separate_opening(self):
+        project, source, ids, content = self.make_content()
+        outline = {'title': '标题', 'opening_angle': '', 'closing_angle': '', 'target_total_words': 500,
+                   'sections': [{'id': 's1', 'heading': '第一章', 'source_block_ids': ids, 'target_words': 300}]}
+        model = Mock(return_value='单章正文，直接讲透。')
+        with patch.object(self.main, 'model_chat', model):
+            text, _, _ = self.main.generate_narrative_markdown(outline, self.main.read_blocks(source['id']), '读者', 'law_podcast_v4')
+        self.assertNotIn('## 开场', text)
+        self.assertEqual(model.call_count, 1)
+
+    def test_podcast_profile_no_length_limit_keeps_full_section(self):
+        project, source, ids, content = self.make_content()
+        outline = {'title': '标题', 'opening_angle': '', 'closing_angle': '', 'target_total_words': 500,
+                   'sections': [{'id': 's1', 'heading': '第一章', 'source_block_ids': ids, 'target_words': 300}]}
+        blocks = self.main.read_blocks(source['id'])
+        # 材料扎实的长章（远超 target_words）：podcast-rewriter 观感下不压缩、保留完整深度。
+        long_section = '先看巴西的能源法令，这是本章的关键事实，深度展开不能删。' * 120
+        model = Mock(side_effect=[long_section])
+        with patch.object(self.main, 'model_chat', model):
+            text, _, _ = self.main.generate_narrative_markdown(outline, blocks, '读者', 'law_podcast_v4')
+        # 长章完整保留，没有触发任何压缩调用（单章大纲不单独生成开场白）。
+        self.assertIn(long_section[:30], text)
+        self.assertIn(long_section[-30:], text)
+        self.assertEqual(model.call_count, 1)
+        # 提示词中不出现字数目标区间。
+        prompt = model.call_args.args[0][-1]['content']
+        self.assertNotIn('目标区间', prompt)
+        self.assertIn('不设上限', prompt)
+
     def test_audio_edit_preview_and_narrative_only_export(self):
         project, source, ids, content = self.make_content()
         result = self.client.post(f"/api/projects/{project['id']}/audio-scripts", json={'narrative_content_id':content['id']})
@@ -532,7 +599,7 @@ class ImprovementsTest(unittest.TestCase):
         state = self.client.get('/api/projects/' + project['id']).json()
         for task in state['tasks']:
             self.client.put('/api/tasks/' + task['id'], json={'status':'done'})
-        content = self.client.post(f"/api/projects/{project['id']}/skill-host-contents", json={'document_id':source['id'],'title':'播客稿','markdown':'# 播客稿\n\n正文。','source_block_ids':ids}).json()
+        content = self.client.post(f"/api/projects/{project['id']}/skill-host-contents", json={'document_id':source['id'],'title':'播客稿','markdown':'# 播客稿\n\n这是播客稿的正文内容，长度超过最小限制。','source_block_ids':ids}).json()
         audio = self.client.post(f"/api/projects/{project['id']}/audio-scripts", json={'narrative_content_id':content['id']}).json()
         self.assertEqual(self.client.post('/api/audio-outputs/' + audio['id'] + '/synthesize', json={}).status_code, 409)
         with patch.object(self.main, 'speech_chunk', return_value=(b'preview', 'test')):
@@ -802,6 +869,52 @@ class ImprovementsTest(unittest.TestCase):
         blocked = self.client.post('/api/projects/' + project['id'] + '/web-sources', json={'title': '本机', 'url': 'http://127.0.0.1:8080/'})
         self.assertEqual(blocked.status_code, 400)
 
+    def test_project_accepts_auto_research_mode(self):
+        project = self.client.post('/api/projects', json={'name': '自动补充', 'web_research_mode': 'auto'})
+        self.assertEqual(project.status_code, 201)
+        data = self.client.get('/api/projects/' + project.json()['id']).json()['project']
+        self.assertEqual(data['web_research_mode'], 'auto')
+
+    def test_auto_research_imports_sources_and_reports_unusable_candidates(self):
+        import httpx
+        project = self.client.post('/api/projects', json={'name': '人工智能治理', 'scenario': 'topic_learning'}).json()
+        search_response = httpx.Response(
+            200,
+            content='''<rss><channel><item><title>人工智能治理公开监管动态</title><link>https://example.com/news</link><description>人工智能治理公开摘要</description></item></channel></rss>'''.encode('utf-8'),
+            request=httpx.Request('GET', 'https://www.bing.com/search'),
+        )
+        page_response = httpx.Response(
+            200,
+            headers={'content-type': 'text/html; charset=utf-8'},
+            text='<html><body><h1>公开监管动态</h1><p>' + ('正文内容。' * 40) + '</p></body></html>',
+            request=httpx.Request('GET', 'https://example.com/news'),
+        )
+        # 检索走 Bing RSS（DDG 的 post 被 mock 成离线），随后抓取正文入库。
+        with patch.object(self.main.httpx, 'post', side_effect=httpx.ConnectError('offline')), \
+             patch.object(self.main.httpx, 'get', side_effect=[search_response, page_response]):
+            result = self.client.post('/api/projects/' + project['id'] + '/auto-research', json={'query': '人工智能治理'})
+        self.assertEqual(result.status_code, 201)
+        body = result.json()
+        self.assertEqual(len(body['imported']), 1)
+        self.assertEqual(body['failures'], [])
+        self.assertIn('未经人工审阅', body['message'])
+        # 自动导入的素材必须登记来源链接，否则无法追溯、也无法作为补充资料使用。
+        document = self.client.get('/api/documents/' + body['imported'][0]['id']).json()
+        self.assertEqual(document['source_url'], 'https://example.com/news')
+
+        # 候选来源都提不出正文时应明确报错，而不是留下一份空素材。
+        unusable = httpx.Response(
+            200,
+            headers={'content-type': 'text/html; charset=utf-8'},
+            text='<html><body><p>需要登录后查看</p></body></html>',
+            request=httpx.Request('GET', 'https://example.com/news'),
+        )
+        with patch.object(self.main.httpx, 'post', side_effect=httpx.ConnectError('offline')), \
+             patch.object(self.main.httpx, 'get', side_effect=[search_response, unusable]):
+            failed = self.client.post('/api/projects/' + project['id'] + '/auto-research', json={'query': '人工智能治理'})
+        self.assertEqual(failed.status_code, 502)
+        self.assertIn('手动粘贴', failed.json()['detail'])
+
     def test_real_ffmpeg_merge_and_measured_duration(self):
         path = self.main.DATA_DIR / 'fixture.mp3'
         subprocess.run(['ffmpeg','-v','error','-f','lavfi','-i','sine=frequency=440:duration=1','-y',str(path)], check=True)
@@ -989,6 +1102,36 @@ class ImprovementsTest(unittest.TestCase):
         self.assertNotIn('以上内容仅按已确认材料整理', script)
         self.assertIn('正文第一段。', script)
 
+    def test_audio_script_section_intro_skips_document_title(self):
+        title = '法律合规信息简讯（月刊）_2026年第9期_HW 2026-09-20 [Sent]'
+        script = self.main.build_audio_script('## 第一章\n\n正文第一段。', title, 'legal_podcast', 5, '巴西能源转型四项法令')
+        self.assertIn('接下来这一节，我们讲巴西能源转型四项法令。', script)
+        # 章节音频不再念整篇文档标题（下划线、日期杠、[Sent] 状态标签）
+        self.assertNotIn('简讯', script)
+        self.assertNotIn('_', script)
+        self.assertNotIn('[Sent]', script)
+
+    def test_spoken_text_converts_machine_notation_to_speech(self):
+        self.assertEqual(self.main.spoken_text('HW 2026-09-20 [Sent]'), 'HW 2026年9月20日')
+        self.assertEqual(self.main.spoken_text('2026-09 发布'), '2026年9月 发布')
+        self.assertEqual(self.main.spoken_text('文件_名'), '文件 名')
+        self.assertIn('到', self.main.spoken_text('标准 50156-2021'))
+        self.assertNotIn('·', self.main.spoken_text('甲·乙'))
+
+    def test_whole_script_intro_reads_clean_title(self):
+        script = self.main.build_audio_script('# 标题\n\n正文第一段。', '法律合规信息简讯（月刊）_2026年第9期_HW 2026-09-20 [Sent]', 'legal_podcast', 5)
+        self.assertIn('2026年9月20日', script)
+        self.assertNotIn('_', script)
+        self.assertNotIn('[Sent]', script)
+
+    def test_clean_pasted_markdown_strips_ai_chatter(self):
+        pasted = '```markdown\n好的，以下是为你整理的讲稿：\n\n# 标题\n\n正文第一段。\n\n如果需要调整，请告诉我。\n```'
+        cleaned = self.main.clean_pasted_markdown(pasted)
+        self.assertEqual(cleaned, '# 标题\n\n正文第一段。')
+        # 不误伤正文：以“当然”开头的普通句子要保留
+        kept = self.main.clean_pasted_markdown('当然，也有例外情况。\n\n正文继续。')
+        self.assertIn('当然，也有例外情况。', kept)
+
     def test_parse_ddg_results_and_unwrap(self):
         html = ('<a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fa">'
                 '美国国会<b>光模块</b>法案</a>'
@@ -1088,3 +1231,37 @@ class ImprovementsTest(unittest.TestCase):
     def test_reveal_endpoint_rejects_outside_paths(self):
         response = self.client.post('/api/reveal-in-finder', json={'path': '/etc/hosts'})
         self.assertEqual(response.status_code, 403)
+
+    def test_bundled_ffmpeg_registered_into_path(self):
+        """随包 FFmpeg 目录必须注入 PATH：否则「生成 MP3」在没装 FFmpeg 的 Windows 上必然 400。"""
+        import shutil
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'tools' / 'ffmpeg'
+            exe_dir = root / 'ffmpeg-9.0.2-essentials_build' / 'bin'
+            exe_dir.mkdir(parents=True)
+            exe_name = 'ffmpeg.exe' if sys.platform == 'win32' else 'ffmpeg'
+            (exe_dir / exe_name).write_bytes(b'fake')
+            # POSIX 上 shutil.which 要求可执行位；Windows 靠扩展名判断，此行在 win 上是 no-op
+            os.chmod(exe_dir / exe_name, 0o755)
+            original = os.environ.get('PATH', '')
+            try:
+                found = self.main.register_bundled_ffmpeg([root])
+                self.assertEqual([exe_dir], found)
+                self.assertEqual(os.environ['PATH'].split(os.pathsep)[0], str(exe_dir))
+                self.assertTrue(shutil.which('ffmpeg'))
+                # Windows 下 which 返回的实际大小写可能是 .EXE，按路径比较不区分大小写
+                self.assertEqual(Path(shutil.which('ffmpeg')).resolve(), (exe_dir / exe_name).resolve())
+                # 本机 PATHEXT 被改成只剩 .CPL 时也必须兜底补上 .EXE，否则 which 永远找不到 ffmpeg.exe（仅 Windows 有 PATHEXT）
+                if sys.platform == 'win32':
+                    self.assertIn('.EXE', [item.upper() for item in os.environ.get('PATHEXT', '').split(os.pathsep)])
+            finally:
+                os.environ['PATH'] = original
+
+    def test_bundled_ffmpeg_missing_root_is_noop(self):
+        original = os.environ.get('PATH', '')
+        try:
+            found = self.main.register_bundled_ffmpeg([Path('Z:/definitely-not-exist') / 'ffmpeg'])
+            self.assertEqual(found, [])
+            self.assertEqual(os.environ.get('PATH', ''), original)
+        finally:
+            os.environ['PATH'] = original
