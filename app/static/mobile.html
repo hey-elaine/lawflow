@@ -460,6 +460,15 @@ a.dl { color: var(--muted); font-size: 12px; text-decoration: none; }
   audio.addEventListener('play', function () { $('play').textContent = '⏸'; });
   audio.addEventListener('pause', function () { $('play').textContent = '▶'; });
   audio.addEventListener('ended', function () {
+    var ch = chapters[current];
+    // 自然听完本章（不是手动切章）：自动标记已学，与 Mac 端学习进度同步。
+    if (ch && ch.section_id && !ch.learned) {
+      var finished = current;
+      fetch(api + '/progress', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ audio_id: ch.id, completed: true }) })
+        .then(function (res) { return res.json(); })
+        .then(function (data) { if (data.saved) markLearned(finished, true); })
+        .catch(function () { markLearned(finished, true); queueProgress(ch, true); });
+    }
     if (current < chapters.length - 1) play(current + 1);
   });
   $('prev').addEventListener('click', function () { step(-1); });

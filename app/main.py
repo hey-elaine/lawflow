@@ -5389,7 +5389,9 @@ def build_mobile_book(conn: sqlite3.Connection, project_id: str) -> dict:
             chapter_text = markdown_to_plain(audio["script"] or "")
         return {
             "id": audio["id"],
-            "title": suffix or audio["title"],
+            # 整篇音频拿不到章节名时退回音频标题（文件名式）；用口语清洗去掉
+            # 下划线、[Sent] 状态标签这类手机上很难看的排版符号。
+            "title": suffix or spoken_text(audio["title"]),
             "chapter": bool(content and suffix),
             "duration_seconds": audio["duration_seconds"],
             "learned": bool(section_id and section_id in completed_map[content["id"]]),
