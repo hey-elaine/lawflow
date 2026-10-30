@@ -2914,11 +2914,22 @@ def delete_daily_brief_subscription(subscription_id: str):
 def create_project(payload: ProjectCreate):
     project_id = str(uuid.uuid4())
     timestamp = now_iso()
+    name = payload.name.strip()
     conn = db()
+    if name:
+        # 同名项目自动加日期后缀，避免书架里出现完全相同、无法区分的卡片。
+        suffix = timestamp[5:10]
+        if conn.execute("SELECT 1 FROM projects WHERE name = ? COLLATE NOCASE", (name,)).fetchone():
+            candidate = f"{name}（{suffix}）"
+            counter = 2
+            while conn.execute("SELECT 1 FROM projects WHERE name = ? COLLATE NOCASE", (candidate,)).fetchone():
+                candidate = f"{name}（{suffix}·{counter}）"
+                counter += 1
+            name = candidate
     conn.execute(
         """INSERT INTO projects (id, name, client_name, description, scenario, transform_mode, verification_mode, target_duration, audio_enabled, minimum_output_mode, minimum_output_ratio, web_research_mode, collection, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (project_id, payload.name.strip(), payload.client_name.strip(), payload.description.strip(), payload.scenario, payload.transform_mode, payload.verification_mode, payload.target_duration, int(payload.audio_enabled), payload.minimum_output_mode, payload.minimum_output_ratio, payload.web_research_mode, payload.collection.strip(), timestamp, timestamp),
+        (project_id, name, payload.client_name.strip(), payload.description.strip(), payload.scenario, payload.transform_mode, payload.verification_mode, payload.target_duration, int(payload.audio_enabled), payload.minimum_output_mode, payload.minimum_output_ratio, payload.web_research_mode, payload.collection.strip(), timestamp, timestamp),
     )
     conn.commit()
     row = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()

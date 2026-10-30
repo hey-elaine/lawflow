@@ -10,16 +10,21 @@ function chapterDraft(content, chapter) {
   return draft;
 }
 function chapterAudio(content, chapter) {
+  const outputs = appState.selectedProject.audio_outputs || [];
   const titles = [content.title + ' · ' + chapter.heading];
   if ((content.chapters || []).length === 1 || chapter.heading === content.title) titles.push(content.title);
-  return (appState.selectedProject.audio_outputs || [])
-    .filter(output => output.narrative_content_id === content.id && titles.includes(output.title))
-    .sort((a, b) => b.created_at.localeCompare(a.created_at) || b.updated_at.localeCompare(a.updated_at))[0];
+  const latest = list => list.slice().sort((a, b) => b.created_at.localeCompare(a.created_at) || b.updated_at.localeCompare(a.updated_at))[0];
+  const own = latest(outputs.filter(output => output.narrative_content_id === content.id && titles.includes(output.title)));
+  if (own) return own;
+  // 重新生成讲稿后，旧版本同名章节的音频自动沿用，不再变成界面上找不到的“孤儿”音频。
+  const tail = ' · ' + chapter.heading;
+  const inherited = latest(outputs.filter(output => titles.includes(output.title) || output.title.endsWith(tail) || output.title === chapter.heading));
+  return inherited ? { ...inherited, inherited: true } : null;
 }
 function chapterAudioLabel(audio) {
   if (!audio) return '未生成音频';
   if (audio.status === 'source_changed') return '音频待更新';
-  if (audio.audio_available) return '音频已就绪';
+  if (audio.audio_available) return audio.inherited ? '旧版音频（可重新生成）' : '音频已就绪';
   return '脚本已就绪';
 }
 function renderChapterWorkbench(content, options = {}) {

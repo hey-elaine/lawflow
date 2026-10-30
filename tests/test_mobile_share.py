@@ -63,7 +63,8 @@ class MobileShareTest(unittest.TestCase):
         self.assertEqual(page.status_code, 200)
         self.assertIn("声息", page.text)
         data = self.client.get(share["path"] + "/data").json()
-        self.assertEqual(data["title"], "手机收听测试")
+        # 同名项目会自动加日期后缀（如“手机收听测试（10-30·2）”），只断言前缀
+        self.assertTrue(data["title"].startswith("手机收听测试"))
         self.assertEqual(len(data["chapters"]), 1)
         chapter = data["chapters"][0]
         self.assertEqual(chapter["title"], "第一章 测试")

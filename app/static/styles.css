@@ -1029,3 +1029,8 @@ button:focus-visible, a:focus-visible, [role="button"]:focus-visible, summary:fo
   display: none;
 }
 .studio-player.chapters-expanded { align-items: start; }
+
+/* ===== 新手引导：模型未配置常驻提示 ===== */
+.model-banner { position: fixed; left: 0; right: 0; top: 0; z-index: 60; display: flex; align-items: center; justify-content: center; gap: 14px; padding: 10px 20px; background: #3f4a35; color: #f5f1e6; font-size: 13px; box-shadow: 0 2px 10px rgba(0,0,0,.18); }
+.model-banner .icon-button { color: #f5f1e6; }
+.model-banner button.button-small { white-space: nowrap; }

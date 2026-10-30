@@ -51,6 +51,19 @@ class LawFlowApiTest(unittest.TestCase):
             archive.writestr("word/document.xml", xml)
         return output.getvalue()
 
+    def test_duplicate_project_name_gets_date_suffix(self):
+        first = self.client.post("/api/projects", json={"name": "同名项目"})
+        self.assertEqual(first.status_code, 201)
+        second = self.client.post("/api/projects", json={"name": "同名项目"}).json()
+        self.assertNotEqual(first.json()["name"], second["name"])
+        self.assertIn("同名项目", second["name"])
+        # 第三次也不冲突（日期后缀重复时叠加序号）
+        third = self.client.post("/api/projects", json={"name": "同名项目"}).json()
+        names = {first.json()["name"], second["name"], third["name"]}
+        self.assertEqual(len(names), 3)
+        unique = self.client.post("/api/projects", json={"name": "独立名字"})
+        self.assertEqual(unique.json()["name"], "独立名字")
+
     def test_end_to_end_project_workflow(self):
         project = self.client.post("/api/projects", json={"name": "测试项目", "client_name": "测试客户", "scenario": "speaking_note", "transform_mode": "enrich", "verification_mode": "external_verify", "target_duration": 20, "audio_enabled": False})
         self.assertEqual(project.status_code, 201)

@@ -28,6 +28,10 @@ async function request(url, options = {}) {
   if (!response.ok) {
     let detail = '请求失败，请稍后重试。';
     try { detail = formatErrorDetail((await response.json()).detail) || detail; } catch (_) {}
+    // 模型服务未配置/鉴权失败是新手最常撞到的坑，报错时直接给出解决入口。
+    if (typeof detail === 'string' && /api[_ ]?key|invalid[_ ]authentication|认证|鉴权|unauthorized|模型服务|base[_ ]url|model[_ ]name/i.test(detail)) {
+      detail += '。请打开顶部「设置」检查模型服务的 API Key 与地址。';
+    }
     throw new Error(typeof detail === 'string' ? detail : '请求失败，请检查设置后重试。');
   }
   return (response.headers.get('content-type') || '').includes('application/json') ? response.json() : response;
@@ -244,6 +248,23 @@ function resetQuickLinkPreview() {
   $('#quick-link-status').textContent = '';
 }
 
+async function checkModelConfigured() {
+  // 新手引导前置：模型没配置时在页面顶部常驻提示，而不是等到生成报错才发现。
+  try {
+    const config = await request('/api/settings/provider');
+    if (config.api_key || localStorage.getItem('shengxi-model-banner-dismissed')) return;
+  } catch (_) { return; }
+  if ($('#model-banner')) return;
+  const banner = document.createElement('div');
+  banner.id = 'model-banner';
+  banner.innerHTML = '<span>要生成讲稿和播客音频，需要先在设置里配置模型服务的 API Key（仅保存在本机）。</span>'
+    + '<button type="button" class="button button-primary button-small" id="model-banner-open">打开设置</button>'
+    + '<button type="button" class="icon-button" id="model-banner-close" aria-label="关闭">×</button>';
+  document.body.appendChild(banner);
+  $('#model-banner-open', banner)?.addEventListener('click', () => { $('#open-settings')?.click(); });
+  $('#model-banner-close', banner)?.addEventListener('click', () => { localStorage.setItem('shengxi-model-banner-dismissed', '1'); banner.remove(); });
+}
+
 async function createProjectFromPastedText(event) {
   event.preventDefault();
   const form = event.currentTarget;
@@ -257,6 +278,7 @@ async function createProjectFromPastedText(event) {
     setBusy(button, true, '保存中…');
     project = await request('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: title, scenario: 'topic_learning', transform_mode: 'adapt', audio_enabled: true, web_research_mode: 'off' }) });
     await request('/api/projects/' + project.id + '/text-sources', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title, content, source_url: form.elements.source_url.value.trim() }) });
+    await applyLastCollection(project.id);
   } catch (error) {
     if (project) { try { await request('/api/projects/' + project.id, { method: 'DELETE' }); } catch (_) { /* 保留原错误 */ } }
     showMessage(error.message, true);
@@ -320,6 +342,7 @@ function bindQuickImport() {
       setBusy(button, true, '正在加入书架…');
       status.textContent = '正在保存文章并解析结构…';
       const result = await request('/api/projects/from-link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: quickLinkPreview.url, scenario, transform_mode: transformMode }) });
+      applyLastCollection(result.project_id);
       input.value = '';
       resetQuickLinkPreview();
       await loadProjects();
@@ -604,11 +627,22 @@ async function saveProjectCollection(projectId, value) {
   try {
     const updated = await request('/api/projects/' + projectId + '/collection', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ collection: value }) });
     $('#collection-dialog').close();
+    if (value) localStorage.setItem('shengxi-last-collection', value);
     if (appState.selectedProject?.project?.id === projectId) appState.selectedProject.project = updated;
     await loadProjects();
     if (appState.selectedProject?.project?.id === projectId) renderProjectDetail();
     showMessage(value ? '已归入「' + value + '」。' : '已从收藏夹移出。');
   } catch (error) { showMessage(error.message, true); }
+}
+
+async function applyLastCollection(projectId) {
+  // 新项目默认归入上次使用的收藏夹，减少“未归类”堆积；静默完成，不弹窗打断。
+  const last = (localStorage.getItem('shengxi-last-collection') || '').trim();
+  if (!last) return;
+  try {
+    const updated = await request('/api/projects/' + projectId + '/collection', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ collection: last }) });
+    if (appState.selectedProject?.project?.id === projectId) appState.selectedProject.project = updated;
+  } catch (_) { /* 归类失败不影响导入 */ }
 }
 
 function renderActivePanel() { if (appState.activeTab === 'materials') return renderMaterialsPanel(); if (appState.activeTab === 'structure') return renderStructurePanel(); if (appState.activeTab === 'review') return renderReviewPanel(); if (appState.activeTab === 'narrative') return renderNarrativeOutputPanel(); if (appState.activeTab === 'audio') return renderAudioPanel(); return renderTasksPanel(); }
@@ -1688,8 +1722,9 @@ function renderAudioPanel() {
   const readerContent = heroContent || contents[0];
   const chapterBooks = readerContent ? '<section class="panel-card"><h3>本章阅读</h3><div id="chapter-reader-slot">' + renderChapterWorkbench(readerContent, { sidebar: false }) + '</div>' + contents.filter(content => content.id !== readerContent.id).map(content => '<details class="previous-content"><summary>较早版本：' + escapeHtml(content.title) + '</summary>' + renderChapterWorkbench(content, { sidebar: false }) + '</details>').join('') + '</section>' : '';
   const directOutputs = outputs.filter(output => !output.narrative_content_id);
+  // 顶部已有播客播放器，“章节 · 收听”说明卡不再重复占一屏；首次使用提示并入空态。
   const listeningIntro = contents.length
-    ? '<section class="panel-card audio-intro"><h3>章节 · 收听</h3><p>每章的讲稿、音频和修改入口都在这一页。对某一章不满意，直接“向 AI 提修改意见”；要调整章节划分，去「大纲」。</p></section>'
+    ? ''
     : directOutputs.length
       ? '<section class="panel-card audio-intro"><h3>原文朗读</h3><p>' + (directOutputs.some(output => output.audio_available) ? '整篇音频已生成，可直接试听、导出或发送到手机。如需分章收听，可切换到「播客风改写（可选）」。' : '原文朗读不拆分章节；生成整篇音频后即可试听、导出或发送到手机。') + '</p></section>'
       : '';
@@ -1889,6 +1924,8 @@ function stepStudioTrack(step) {
     if (studioState.tracks[i].output?.audio_available) { playStudioTrack(i); return; }
   }
   setStudioToggle(false);
+  const hasAny = studioState.tracks.some(track => track.output?.audio_available);
+  showMessage(hasAny ? '已经到' + (step > 0 ? '最后一' : '第一') + '章了。' : '还没有可播放的章节音频，先点「一键生成全部章节音频」。', !hasAny);
 }
 
 function setStudioToggle(playing) {
@@ -1936,7 +1973,7 @@ function initStudioPlayer(content) {
   $('#studio-next').addEventListener('click', () => stepStudioTrack(1));
   $('#studio-bar-zone').addEventListener('click', event => {
     const audio = studioAudio();
-    if (!audio?.duration) return;
+    if (!audio?.duration) { if (!audio?.src) showMessage('先在右侧选择一章开始收听。'); return; }
     const rect = event.currentTarget.getBoundingClientRect();
     audio.currentTime = Math.min(Math.max((event.clientX - rect.left) / rect.width, 0), 1) * audio.duration;
   });
@@ -2452,6 +2489,7 @@ async function boot() {
   bindDialogs();
   bindShelfControls();
   bindQuickImport();
+  checkModelConfigured();
   $('#listen-load-demo')?.addEventListener('click', prepareListenDemo);
   enhanceSelects();
   new MutationObserver(() => { enhanceSelects(); $$('.select-box select').forEach(syncSelectBox); }).observe(document.body, { childList: true, subtree: true });
